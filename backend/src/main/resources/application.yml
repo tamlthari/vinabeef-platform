@@ -1,0 +1,35 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: farm-management
+  datasource:
+    url: jdbc:postgresql://localhost:5433/vinabeef_db
+    username: vinabeef_user
+    password: vinabeef_password
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate.dialect: org.hibernate.dialect.PostgreSQLDialect
+  data:
+    redis:
+      host: localhost
+      port: 6379
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    out-of-order: true        # <--- Allows Flyway to run version 3 even though version 4 was already applied
+    validate-on-migrate: true
+
+vinabeef:
+  ingestion:
+    # TOGGLE: "python-adapter" OR "direct-mqtt"
+    mode: python-adapter
+    safetrust:
+      broker-url: wss://sensor.demo.safetrust.com:443/mqtt
+      device-key: "728589"
+      company-key: "475"
+      token: "eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiI3YTA1MDkwNGFiODM2ODkxYXBpdG9rZW4tdGh1Y3RhbS5ob0BzYWZldHJ1c3QuY29tIiwiTE9HSU5fS0VZIjoiNjE3NzY0IiwiQVVUSEVOVElDQVRFX01FVEhPRCI6ImVtIiwiVE9LRU5fVFlQRSI6ImFwaVRva2VuIiwiQUNDT1VOVF9LRVkiOiI2MTYzNjAiLCJERVZJQ0VfS0VZIjoiNzI4NTg5IiwiVVNFUl9LRVkiOiI4OTk4OTIiLCJTRVNTSU9OX0lEIjoiYTRiYzEyMGMtNmNlNC00ZjZiLWJlODctMWIwMmExYjhhMDcxIiwiQUNDRVNTX0NPTVBBTlkiOiI0NzUiLCJBUElfU0NPUEUiOiJDT01QQU5ZIiwianRpIjoidURJZEZvckdlbmVyYXRlZFRva2VuIiwiVEFSR0VUX0NPTVBBTlkiOiI0NzUifQ.QA55Xkun-a75Dr3Rq_F-fJhXSQNkIP8jLwO7rbSG2vxnL34jOOgdtoScSxpStI2SK73v8MXm8LH3sYgzRXJdtA"

@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block header_title %}Reporting{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+
+    <!-- Report Selector Dropdown -->
+    <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-5">
+        <label class="block text-xs font-bold text-gray-700 mb-2">Select a report</label>
+        <select onchange="if(this.value!=='Audit') window.location.href='/reports';"
+                class="w-full border border-gray-300 rounded px-3 py-2 text-sm text-gray-800 font-medium bg-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+            <option value="Information">Information (Livestock Herd Balances)</option>
+            <option value="Person Activity">Person Activity (Staff Gate Passes)</option>
+            <option value="Audit" selected>Audit</option>
+            <option value="Sensor Report">Sensor Report (Gate RFID Reads)</option>
+        </select>
+    </div>
+
+    <!-- Audit Filter Box -->
+    <div class="bg-white border border-gray-200 rounded-lg shadow-sm">
+        <div class="px-5 py-3 border-b border-gray-100">
+            <span class="text-xs font-semibold text-blue-600 bg-blue-50 px-3 py-1 rounded border border-blue-200">Filter</span>
+        </div>
+
+        <div class="p-6 space-y-4 text-xs">
+            <div class="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
+                <label class="md:col-span-3 text-right font-semibold text-gray-700">Person</label>
+                <div class="md:col-span-9">
+                    <input type="text" placeholder="Email or Username"
+                           class="w-full border border-gray-300 rounded px-3 py-2 text-xs focus:outline-none focus:border-blue-500">
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
+                <label class="md:col-span-3 text-right font-semibold text-gray-700">Target object</label>
+                <div class="md:col-span-4">
+                    <input type="text" placeholder="Target identity or resource"
+                           class="w-full border border-gray-300 rounded px-3 py-2 text-xs focus:outline-none focus:border-blue-500">
+                </div>
+                <label class="md:col-span-2 text-right font-semibold text-gray-700">Asset type</label>
+                <div class="md:col-span-3">
+                    <select class="w-full border border-gray-300 rounded px-3 py-2 text-xs focus:outline-none focus:border-blue-500">
+                        <option>Select asset type</option>
+                        <option>CATTLE_TRANSFER</option>
+                        <option>GATE_CONFIGURATION</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
+                <label class="md:col-span-3 text-right font-semibold text-gray-700">Action</label>
+                <div class="md:col-span-9">
+                    <select class="w-full border border-gray-300 rounded px-3 py-2 text-xs focus:outline-none focus:border-blue-500">
+                        <option>Select action</option>
+                        <option>APPROVE_TRANSFER</option>
+                        <option>GENERATE_FARM_REPORT</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Date Time Pickers -->
+            <div class="grid grid-cols-1 md:grid-cols-12 gap-4 items-center pt-2">
+                <label class="md:col-span-3 text-right font-semibold text-gray-700">Date Time</label>
+                <div class="md:col-span-4 relative">
+                    <input type="text" value="10/16/2026 00:00" class="w-full border border-gray-300 rounded px-3 py-2 text-xs">
+                </div>
+                <div class="md:col-span-3 relative">
+                    <input type="text" value="10/17/2026 23:59" class="w-full border border-gray-300 rounded px-3 py-2 text-xs">
+                </div>
+                <div class="md:col-span-2 text-right">
+                    <button class="w-full bg-[#2f80ed] hover:bg-blue-600 text-white font-medium py-2 px-4 rounded text-xs transition shadow-sm">
+                        Search
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Audit Table Card -->
+    <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-6 space-y-4">
+        <div class="flex justify-between items-center">
+            <button hx-get="/htmx/audit-table" hx-target="#audit-table-body"
+                    class="flex items-center space-x-1 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded text-xs font-semibold text-gray-700 transition">
+                <svg class="w-3.5 h-3.5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                <span>Refresh</span>
+            </button>
+
+            <div class="text-xs text-gray-500">
+                Show
+                <select class="border border-gray-300 rounded px-1.5 py-0.5 mx-1">
+                    <option>25</option>
+                    <option>50</option>
+                </select>
+                entries
+            </div>
+        </div>
+
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs text-gray-700">
+                <thead class="bg-gray-50 border-y border-gray-200 text-gray-600 font-semibold">
+                    <tr>
+                        <th class="px-4 py-3">Person</th>
+                        <th class="px-4 py-3">Action</th>
+                        <th class="px-4 py-3">Input description</th>
+                        <th class="px-4 py-3">Output description</th>
+                        <th class="px-4 py-3">Asset type</th>
+                        <th class="px-4 py-3">Result</th>
+                        <th class="px-4 py-3 text-right">Timestamp</th>
+                    </tr>
+                </thead>
+                <tbody id="audit-table-body" hx-get="/htmx/audit-table" hx-trigger="load, every 4s" hx-swap="innerHTML" class="divide-y divide-gray-100">
+                    {% include "partials/audit_table.html" %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="flex justify-between items-center pt-4 border-t border-gray-100 text-xs text-gray-500">
+            <span>Showing entries</span>
+            <div class="flex space-x-1">
+                <button class="px-3 py-1 border border-gray-300 rounded hover:bg-gray-50">Previous</button>
+                <button class="px-3 py-1 border border-gray-300 rounded hover:bg-gray-50">Next</button>
+            </div>
+        </div>
+    </div>
+
+</div>
+{% endblock %}

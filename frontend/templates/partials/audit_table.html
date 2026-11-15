@@ -1,0 +1,25 @@
+{% for log in logs %}
+<tr class="hover:bg-blue-50/40 transition">
+    <td class="px-4 py-3 font-semibold text-gray-800">{{ log.actor_id }}</td>
+    <td class="px-4 py-3 font-mono text-[11px] text-blue-600">{{ log.action }}</td>
+    <td class="px-4 py-3 font-mono text-[11px] text-gray-500 truncate max-w-xs">{{ log.details }}</td>
+    <td class="px-4 py-3 text-gray-600">{{ log.target }}</td>
+    <td class="px-4 py-3 text-gray-500">{{ log.target }}</td>
+    <td class="px-4 py-3">
+        {% if log.outcome == 'SUCCESS' %}
+        <span class="inline-block px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+            SUCCESS
+        </span>
+        {% else %}
+        <span class="inline-block px-2 py-0.5 rounded text-[11px] font-semibold bg-red-50 text-red-700 border border-red-200">
+            {{ log.outcome }}
+        </span>
+        {% endif %}
+    </td>
+    <td class="px-4 py-3 font-mono text-[11px] text-gray-500 text-right">{{ log.event_at }}</td>
+</tr>
+{% else %}
+<tr>
+    <td colspan="7" class="py-8 text-center text-gray-400">No data available</td>
+</tr>
+{% endfor %}

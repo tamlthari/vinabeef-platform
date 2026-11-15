@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block header_title %}Cattle Transfers{% endblock %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto space-y-6">
+
+    <!-- Header Card -->
+    <div class="bg-white border border-gray-200 rounded-lg p-6 shadow-sm">
+        <div class="flex items-center space-x-2">
+            <span class="px-2.5 py-1 rounded text-[11px] font-mono font-bold bg-blue-50 text-blue-700 border border-blue-200 uppercase">ADR-005</span>
+            <h2 class="text-lg font-bold text-gray-900">Livestock Transfer Authorization</h2>
+        </div>
+        <p class="text-xs text-gray-500 mt-1.5 leading-relaxed">
+            Execute barn-to-barn or cross-farm cattle reassignments. Requests enforce role-based access control (RBAC) and verify user farm scope boundaries server-side.
+        </p>
+    </div>
+
+    <!-- HTMX Notification Target -->
+    <div id="transfer-result"></div>
+
+    <!-- Transfer Form Card -->
+    <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-6">
+        <form hx-post="/htmx/transfer-action"
+              hx-target="#transfer-result"
+              hx-swap="innerHTML"
+              class="space-y-5 text-xs">
+            
+            <div>
+                <label class="block font-semibold text-gray-700 mb-1.5 uppercase tracking-wider text-[11px]">Facility (Target Farm)</label>
+                <select name="farm_id" required
+                        class="w-full border border-gray-300 rounded px-3 py-2 text-xs text-gray-800 bg-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                    <option value="FARM-DAK-LAK">Dak Lak Cattle Station (FARM-DAK-LAK)</option>
+                    <option value="FARM-GIA-LAI">Gia Lai Grazing Facility (FARM-GIA-LAI)</option>
+                    <option value="FARM-DONG-NAI">Dong Nai Feedlot (FARM-DONG-NAI)</option>
+                </select>
+                <span class="text-[11px] text-gray-500 mt-1 block">
+                    Logged in as <strong class="text-gray-700">{{ user.username }}</strong>. 
+                    Your assigned scope: <strong class="text-blue-600 font-mono">{{ user.farm_scopes | join(', ') if user.farm_scopes else 'Global Scope' }}</strong>.
+                </span>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label class="block font-semibold text-gray-700 mb-1.5 uppercase tracking-wider text-[11px]">Animal Identifier / Ear Tag</label>
+                    <input type="text" name="animal_id" value="CI 356278" required placeholder="e.g. CI 356278 or COW-0002"
+                           class="w-full border border-gray-300 rounded px-3 py-2 text-xs text-gray-800 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 font-mono">
+                </div>
+                <div>
+                    <label class="block font-semibold text-gray-700 mb-1.5 uppercase tracking-wider text-[11px]">Destination Barn</label>
+                    <input type="text" name="target_barn_id" value="BARN-DL-02" required placeholder="e.g. BARN-DL-02"
+                           class="w-full border border-gray-300 rounded px-3 py-2 text-xs text-gray-800 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 font-mono">
+                </div>
+            </div>
+
+            <div>
+                <label class="block font-semibold text-gray-700 mb-1.5 uppercase tracking-wider text-[11px]">Reason for Reassignment</label>
+                <input type="text" name="reason" value="Grazing pasture rotation" required placeholder="State clinical or operational transfer reason"
+                       class="w-full border border-gray-300 rounded px-3 py-2 text-xs text-gray-800 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+            </div>
+
+            <div class="pt-2">
+                <button type="submit"
+                        class="w-full py-2.5 px-4 bg-[#2f80ed] hover:bg-blue-600 text-white font-medium rounded text-xs transition shadow-sm">
+                    Submit Transfer Request
+                </button>
+            </div>
+        </form>
+    </div>
+
+</div>
+{% endblock %}

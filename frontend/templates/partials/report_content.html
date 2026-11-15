@@ -1,0 +1,149 @@
+<div class="space-y-6">
+
+    {% if is_summary %}
+    <!-- Summary Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+        {% for farm in data %}
+        <div class="bg-white border border-gray-200 rounded-lg p-5 shadow-sm">
+            <span class="text-[10px] font-mono uppercase text-gray-400 tracking-wider">Facility Balances</span>
+            <h4 class="text-lg font-bold text-gray-900 mt-1">{{ farm.farm_name }}</h4>
+            <div class="mt-6 flex justify-between items-baseline border-t border-gray-100 pt-3">
+                <div>
+                    <span class="text-3xl font-extrabold text-[#1976d2]">{{ farm.total_cattle }}</span>
+                    <span class="text-xs text-gray-400 block">Total Cattle</span>
+                </div>
+                <div class="text-right">
+                    <span class="text-lg font-bold text-gray-700">{{ farm.total_barns }}</span>
+                    <span class="text-xs text-gray-400 block">Active Barns</span>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <!-- Facility Specific Barn Breakdown -->
+    <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-5">
+        <h4 class="text-sm font-bold text-gray-800 mb-3">Barn Capacity & Utilization for {{ farm_id }}</h4>
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs text-gray-700">
+                <thead class="bg-gray-50 border-b border-gray-200 text-gray-600 font-semibold">
+                    <tr>
+                        <th class="px-4 py-2.5">Barn Code</th>
+                        <th class="px-4 py-2.5">Capacity</th>
+                        <th class="px-4 py-2.5">Current Headcount</th>
+                        <th class="px-4 py-2.5">Utilization</th>
+                        <th class="px-4 py-2.5 text-right">Movements</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                    {% for b in data %}
+                    {% set util = (b.current_headcount / b.capacity * 100) if b.capacity > 0 else 0 %}
+                    <tr>
+                        <td class="px-4 py-2.5 font-bold text-gray-800">{{ b.code }}</td>
+                        <td class="px-4 py-2.5 text-gray-500">{{ b.capacity }}</td>
+                        <td class="px-4 py-2.5 font-extrabold text-[#1976d2]">{{ b.current_headcount }}</td>
+                        <td class="px-4 py-2.5">
+                            <div class="w-28 bg-gray-200 rounded-full h-1.5">
+                                <div class="bg-[#1976d2] h-1.5 rounded-full" {{ ('style="width: ' ~ (util | round) ~ '%"') | safe }}></div>
+                            </div>
+                        </td>
+                        <td class="px-4 py-2.5 text-right font-mono text-gray-500">{{ b.total_movements }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Report Table (Matches Screenshot 60) -->
+    <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-6 space-y-4">
+        <div class="flex justify-between items-center">
+            <!-- Export Button -->
+            <button class="flex items-center space-x-1.5 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded text-xs font-semibold text-gray-700 transition">
+                <svg class="w-3.5 h-3.5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                <span>Export</span>
+            </button>
+        </div>
+
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs text-gray-700 border-collapse">
+                <thead class="bg-white border-y border-gray-200 text-gray-700 font-bold">
+                    <tr>
+                        <th class="px-4 py-3 cursor-pointer whitespace-nowrap">
+                            <div class="flex items-center space-x-1">
+                                <span>Date Time</span>
+                                <span class="text-gray-400 text-[10px]">⇅</span>
+                            </div>
+                        </th>
+                        <th class="px-4 py-3 whitespace-nowrap">Person</th>
+                        <th class="px-4 py-3 whitespace-nowrap">Sensor Name</th>
+                        <th class="px-4 py-3 whitespace-nowrap">Device access</th>
+                        <th class="px-4 py-3 whitespace-nowrap">Sensor Description</th>
+                        <th class="px-4 py-3 whitespace-nowrap">Event</th>
+                        <th class="px-4 py-3 whitespace-nowrap">Result</th>
+                        <th class="px-4 py-3 text-center w-12"></th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100 text-gray-600">
+                    {% for item in logs %}
+                    <tr class="hover:bg-blue-50/30 transition">
+                        <td class="px-4 py-3 whitespace-nowrap font-mono text-[11px] text-gray-800">{{ item.date_time }}</td>
+                        <td class="px-4 py-3 font-semibold text-gray-900">{{ item.person }}</td>
+                        <td class="px-4 py-3 font-mono text-gray-700">{{ item.sensor_name }}</td>
+                        <td class="px-4 py-3 text-gray-600">{{ item.device_access }}</td>
+                        <td class="px-4 py-3 text-gray-600">{{ item.sensor_description }}</td>
+                        <td class="px-4 py-3 text-gray-700">{{ item.event }}</td>
+                        <td class="px-4 py-3">
+                            <span class="text-emerald-600 font-semibold">{{ item.result }}</span>
+                        </td>
+                        <td class="px-4 py-3 text-center">
+                            <!-- Info Icon Button matching Screenshot 60 -->
+                            <button class="w-6 h-6 rounded border border-blue-200 text-blue-500 hover:bg-blue-500 hover:text-white inline-flex items-center justify-center text-xs font-serif font-bold transition">
+                                i
+                            </button>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="8" class="py-12 text-center text-gray-400">No data available</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Footer Info & Pagination matching Screenshot 60 -->
+        <div class="flex flex-col sm:flex-row justify-between items-center pt-4 border-t border-gray-100 text-xs text-gray-600 gap-3">
+            <div>
+                Showing 1 to 25 of 153 total entries
+            </div>
+
+            <div class="flex items-center space-x-4">
+                <div class="flex items-center space-x-1">
+                    <span>Show</span>
+                    <select class="border border-gray-300 rounded px-1.5 py-0.5 text-xs bg-white">
+                        <option selected>25</option>
+                        <option>50</option>
+                        <option>100</option>
+                    </select>
+                    <span>entries</span>
+                </div>
+
+                <!-- Numbered Pagination matching Screenshot 60 -->
+                <div class="inline-flex rounded-md shadow-sm -space-x-px">
+                    <button class="px-3 py-1 border border-gray-300 rounded-l hover:bg-gray-50 text-gray-500">Previous</button>
+                    <button class="px-3 py-1 border border-blue-600 bg-blue-600 text-white font-semibold">1</button>
+                    <button class="px-3 py-1 border border-gray-300 hover:bg-gray-50 text-gray-700">2</button>
+                    <button class="px-3 py-1 border border-gray-300 hover:bg-gray-50 text-gray-700">3</button>
+                    <button class="px-3 py-1 border border-gray-300 hover:bg-gray-50 text-gray-700">4</button>
+                    <button class="px-3 py-1 border border-gray-300 hover:bg-gray-50 text-gray-700">5</button>
+                    <button class="px-3 py-1 border border-gray-300 hover:bg-gray-50 text-gray-700">6</button>
+                    <button class="px-3 py-1 border border-gray-300 hover:bg-gray-50 text-gray-700">7</button>
+                    <button class="px-3 py-1 border border-gray-300 rounded-r hover:bg-gray-50 text-gray-500">Next</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>

@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block header_title %}Welcome{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+
+    <!-- Welcome Hero Card -->
+    <div class="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden flex flex-col md:flex-row justify-between">
+        <div class="p-8 flex flex-col justify-between max-w-xl">
+            <div>
+                <div class="flex items-center space-x-2 text-2xl font-bold text-gray-800 tracking-tight">
+                    <span>🎉</span>
+                    <span>Welcome to VinaFarm, {{ user.username }}!</span>
+                </div>
+                <p class="text-sm text-gray-500 mt-2">
+                    Your barns at your fingertips, review the live gate readers and barn occupancy balances below.
+                </p>
+            </div>
+
+            <!-- Date Pill -->
+            <div class="mt-6 flex items-center space-x-2">
+                <div class="inline-flex items-center space-x-2 bg-gray-100 border border-gray-200 px-3.5 py-1.5 rounded-md text-xs font-semibold text-gray-700">
+                    <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2" stroke-width="2"/><line x1="16" y1="2" x2="16" y2="6" stroke-width="2"/><line x1="8" y1="2" x2="8" y2="6" stroke-width="2"/><line x1="3" y1="10" x2="21" y2="10" stroke-width="2"/></svg>
+                    <span>Today, {{ current_date.strftime("%B") }} {{ current_date.day }}, {{ current_date.year }}</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Phone App / Wallet Graphic Preview -->
+        <div class="bg-gradient-to-r from-slate-700 to-[#1e2a3d] p-8 hidden lg:flex items-center justify-center min-w-[340px]">
+            <div class="text-center text-white space-y-2">
+                <div class="text-xs font-semibold uppercase tracking-wider text-slate-300">VinaFarm Connected Reader</div>
+                <div class="text-xl font-bold">IoT Edge Active</div>
+                <span class="inline-block px-3 py-1 bg-white/10 rounded-full text-xs font-mono text-emerald-400 border border-emerald-400/30">
+                    MQTT TLS v1.2 : Port 443
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Facility Livestock Distribution Cards -->
+    <div>
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-base font-bold text-gray-800">Facility Livestock Distribution</h2>
+            <div class="flex items-center gap-3">
+                <span class="text-xs text-gray-500">Live telemetry across Dak Lak, Gia Lai, and Dong Nai</span>
+                <button type="button"
+                        hx-get="/htmx/barns"
+                        hx-target="#barn-cards"
+                        hx-swap="innerHTML"
+                        class="px-3 py-1.5 text-xs font-semibold text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50">
+                    Refresh
+                </button>
+            </div>
+        </div>
+        <div id="barn-cards" hx-get="/htmx/barns" hx-trigger="every 3s" hx-swap="innerHTML">
+            {% include "partials/headcount_cards.html" %}
+        </div>
+    </div>
+
+    <!-- Live Gate Movement Stream -->
+    <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-6">
+        <div class="flex justify-between items-center mb-4">
+            <div>
+                <h3 class="text-base font-bold text-gray-800">Gate Passage Stream</h3>
+                <p class="text-xs text-gray-500">Real-time RFID detections at barn gates</p>
+            </div>
+            <div class="flex items-center gap-3">
+                <span class="text-xs px-2.5 py-1 bg-blue-50 text-blue-700 font-semibold rounded border border-blue-200">
+                    Auto-refreshing
+                </span>
+                <button type="button"
+                        hx-get="/htmx/movements"
+                        hx-target="#movement-table-body"
+                        hx-swap="innerHTML"
+                        class="px-3 py-1.5 text-xs font-semibold text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50">
+                    Refresh
+                </button>
+            </div>
+        </div>
+
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs text-gray-600">
+                <thead class="bg-gray-50 border-b border-gray-200 uppercase text-[11px] font-semibold text-gray-700">
+                    <tr>
+                        <th class="px-4 py-3">Movement ID</th>
+                        <th class="px-4 py-3">Animal ID</th>
+                        <th class="px-4 py-3">Gate Reader</th>
+                        <th class="px-4 py-3">Direction</th>
+                        <th class="px-4 py-3">Occurred At</th>
+                    </tr>
+                </thead>
+                <tbody id="movement-table-body" hx-get="/htmx/movements" hx-trigger="every 2s" hx-swap="innerHTML" class="divide-y divide-gray-100">
+                    {% include "partials/movement_rows.html" %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- System Diagnostics & Ingestion Status (Relocated to bottom to remove clutter) -->
+    <div class="pt-4 border-t border-gray-200">
+        <div class="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-2">System Diagnostics & Ingestion Pipeline</div>
+        <div id="ingestion-badge-container"
+             hx-get="/htmx/ingestion-status"
+             hx-trigger="load, every 2s"
+             hx-swap="innerHTML">
+            {% include "partials/ingestion_status.html" %}
+        </div>
+    </div>
+
+</div>
+{% endblock %}

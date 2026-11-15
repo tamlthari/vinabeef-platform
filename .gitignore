@@ -1,0 +1,54 @@
+# ==========================================
+# Backend: Java & Maven (backend/)
+# ==========================================
+target/
+!.mvn/wrapper/maven-wrapper.jar
+*.jar
+*.war
+*.ear
+*.class
+*.log
+*.backup
+hs_err_pid*
+
+# ==========================================
+# Frontend & Scripts: Python (frontend/, mqtt/)
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environments
+vinabeef/
+mqtt/
+venv/
+.venv/
+env/
+ENV/
+
+# ==========================================
+# Secrets, Tokens & Runtime Data
+# ==========================================
+.env
+.env.*
+*.csv
+*.db
+*.sqlite
+*.sqlite3
+*.pem
+config.csv
+
+# ==========================================
+# IDEs & OS Generated Files
+# ==========================================
+.idea/
+*.iml
+.vscode/
+.settings/
+.classpath
+.project
+.DS_Store
+Thumbs.db
+tree.txt

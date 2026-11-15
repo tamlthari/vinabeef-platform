@@ -1,0 +1,28 @@
+<div class="bg-white border border-gray-200 rounded-lg p-4 flex flex-wrap items-center justify-between shadow-sm">
+    <div class="flex items-center space-x-4">
+        <div class="flex items-center space-x-2">
+            {% if status and status.activeIngressRoute == 'DIRECT_MQTT' %}
+            <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span class="text-xs font-semibold text-gray-800">Direct Ingestion Active</span>
+            {% else %}
+            <span class="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse"></span>
+            <span class="text-xs font-semibold text-amber-700">Failover Mode (Python Adapter Active)</span>
+            {% endif %}
+        </div>
+        <span class="text-gray-300">|</span>
+        <span class="text-xs text-gray-500">
+            Broker Status: 
+            <strong class="{% if status and status.directMqttConnected %}text-emerald-600{% else %}text-red-500{% endif %} font-medium">
+                {{ 'ONLINE' if (status and status.directMqttConnected) else ('OFFLINE (' + (status.disconnectReason if status else 'Unavailable') + ')') }}
+            </strong>
+        </span>
+        <span class="text-gray-300">|</span>
+        <span class="text-xs text-gray-500">
+            Avg Latency: 
+            <strong class="text-gray-800 font-mono">{{ status.recentAvgLatencyMs if status else 0.0 }} ms</strong>
+        </span>
+    </div>
+    <span class="text-[11px] px-2.5 py-1 bg-gray-100 rounded text-gray-600 font-mono">
+        Active Route: {{ status.activeIngressRoute if status else 'DIRECT_MQTT' }}
+    </span>
+</div>
