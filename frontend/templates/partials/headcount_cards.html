@@ -1,10 +1,6 @@
 <div class="space-y-6">
-    {% if dashboard_error %}
-    <div class="bg-white border border-rose-200 rounded-lg p-6 text-center text-rose-600 text-sm shadow-sm">
-        Unable to load facility data: {{ dashboard_error }}
-    </div>
-    {% else %}
     {% for farm in farms %}
+    {% set top_barn = farm.barns[0] if farm.barns else None %}
     <!-- ================= FARM GROUP CARD ================= -->
     <div class="bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
         
@@ -23,22 +19,19 @@
 
             <!-- Farm Aggregate Metrics Bar -->
             <div class="flex flex-wrap items-center gap-3 text-xs">
-                <!-- Headcount -->
-                <div class="bg-white border border-gray-200 px-3.5 py-1.5 rounded-md flex items-center space-x-2 shadow-xs">
+                <div class="bg-white border border-gray-200 px-3.5 py-1.5 rounded-md flex items-center space-x-2">
                     <span class="text-gray-400 font-medium">Headcount:</span>
-                    <strong class="text-gray-900 font-bold font-mono text-sm">{{ farm.totalHeadcount }}</strong>
+                    <strong class="text-gray-900 font-bold font-mono text-sm">{{ "{:,}".format(farm.totalHeadcount) }}</strong>
                     <span class="text-[10px] text-gray-400">cattle</span>
                 </div>
 
-                <!-- Capacity & Utilization -->
-                <div class="bg-white border border-gray-200 px-3.5 py-1.5 rounded-md flex items-center space-x-2 shadow-xs">
+                <div class="bg-white border border-gray-200 px-3.5 py-1.5 rounded-md flex items-center space-x-2">
                     <span class="text-gray-400 font-medium">Capacity:</span>
-                    <strong class="text-gray-900 font-bold font-mono text-sm">{{ farm.totalCapacity }}</strong>
+                    <strong class="text-gray-900 font-bold font-mono text-sm">{{ "{:,}".format(farm.totalCapacity) }}</strong>
                     <span class="text-[10px] font-mono text-blue-600 font-semibold">({{ farm.utilizationRate }}% full)</span>
                 </div>
 
-                <!-- Vaccination Statistics -->
-                <div class="px-3.5 py-1.5 rounded-md flex items-center space-x-2 border shadow-xs
+                <div class="px-3.5 py-1.5 rounded-md flex items-center space-x-2 border
                     {% if farm.vaccinationRate >= 80 %} bg-emerald-50 text-emerald-700 border-emerald-200
                     {% elif farm.vaccinationRate >= 50 %} bg-blue-50 text-blue-700 border-blue-200
                     {% else %} bg-amber-50 text-amber-700 border-amber-200 {% endif %}">
@@ -46,61 +39,135 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
                     </svg>
                     <span class="font-semibold">Vaccinated:</span>
-                    <strong class="font-mono text-xs">{{ farm.vaccinatedAnimals }}/{{ farm.totalAnimals }}</strong>
+                    <strong class="font-mono text-xs">{{ "{:,}".format(farm.vaccinatedAnimals) }}/{{ "{:,}".format(farm.totalAnimals) }}</strong>
                     <span class="font-mono font-bold">({{ farm.vaccinationRate }}%)</span>
                 </div>
             </div>
         </div>
 
-        <!-- Sub-Grid: Barns Belonging to this Farm -->
-        <div class="p-6">
-            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                {% for barn in farm.barns %}
-                <div class="bg-gray-50/50 hover:bg-white border border-gray-200 hover:border-blue-400 rounded-lg p-4 transition shadow-xs">
-                    <!-- Barn Code & Capacity Pill -->
-                    <div class="flex justify-between items-start">
-                        <div>
-                            <span class="text-[10px] font-mono text-gray-400 uppercase tracking-wider">{{ barn.barnId }}</span>
-                            <h4 class="text-sm font-bold text-gray-900 mt-0.5">{{ barn.code }}</h4>
-                        </div>
-                        <span class="text-[10px] px-2 py-0.5 rounded font-mono bg-white text-gray-600 border border-gray-200">
-                            Cap: {{ barn.capacity }}
+        <!-- Body: Left Featured Barn Card (1 per Farm) + Right Sorted Barn List -->
+        {% if top_barn %}
+        <div class="p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            
+            <!-- LEFT: 1 Featured / Selected Barn Card -->
+            <div class="lg:col-span-4 bg-gradient-to-b from-blue-50/50 to-white border-2 border-blue-200 rounded-xl p-5 shadow-xs"
+                 id="featured-card-{{ farm.farmId }}">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <span id="card-badge-{{ farm.farmId }}"
+                              class="inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-blue-600 text-white mb-1.5">
+                            Top Barn #1
                         </span>
+                        <h4 id="card-code-{{ farm.farmId }}" class="text-lg font-extrabold text-gray-900">{{ top_barn.code }}</h4>
+                        <span id="card-id-{{ farm.farmId }}" class="text-[11px] font-mono text-gray-400">{{ top_barn.barnId }}</span>
                     </div>
+                    <span id="card-cap-{{ farm.farmId }}"
+                          class="text-xs px-2.5 py-1 rounded-md font-mono font-semibold bg-white text-gray-700 border border-gray-200">
+                        Cap: {{ top_barn.capacity }}
+                    </span>
+                </div>
 
-                    <!-- Headcount Large Metric -->
-                    <div class="mt-4 flex items-baseline justify-between">
-                        <span class="text-2xl font-extrabold text-[#1976d2] font-mono">{{ barn.currentHeadcount }}</span>
-                        <span class="text-[11px] text-gray-400">cattle inside</span>
+                <!-- Headcount Metric -->
+                <div class="mt-5 flex items-baseline justify-between">
+                    <div>
+                        <span id="card-headcount-{{ farm.farmId }}" class="text-3xl font-black text-[#1976d2] font-mono">{{ top_barn.currentHeadcount }}</span>
+                        <span class="text-xs text-gray-500 ml-1">cattle in barn</span>
                     </div>
+                    <span id="card-assigned-{{ farm.farmId }}" class="text-[11px] font-mono text-gray-400">
+                        {{ top_barn.assignedAnimals }} assigned
+                    </span>
+                </div>
 
-                    <!-- Barn Utilization Bar -->
-                    <div class="mt-3">
-                        <div class="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
-                            <div class="bg-[#2f80ed] h-1.5 rounded-full transition-all duration-500" style="width: {{ barn.utilizationRate }}%"></div>
-                        </div>
-                        <div class="flex justify-between items-center text-[10px] text-gray-400 mt-1 font-mono">
-                            <span>Utilization</span>
-                            <span class="font-semibold text-gray-600">{{ barn.utilizationRate }}%</span>
-                        </div>
+                <!-- Utilization Progress Bar -->
+                <div class="mt-4">
+                    <div class="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                        <div id="card-util-bar-{{ farm.farmId }}"
+                             class="bg-[#2f80ed] h-2 rounded-full transition-all duration-300"
+                             style="width: {{ top_barn.utilizationRate }}%"></div>
                     </div>
-
-                    <!-- Barn Vaccination Status -->
-                    <div class="mt-3 pt-3 border-t border-gray-200/70 flex justify-between items-center text-[11px]">
-                        <span class="text-gray-500 text-[10px]">Vaccinated:</span>
-                        <span class="font-mono font-semibold 
-                            {% if barn.vaccinationRate >= 80 %} text-emerald-600
-                            {% elif barn.vaccinationRate >= 50 %} text-blue-600
-                            {% else %} text-gray-500 {% endif %}">
-                            {{ barn.vaccinatedAnimals }}/{{ barn.assignedAnimals }} ({{ barn.vaccinationRate }}%)
-                        </span>
+                    <div class="flex justify-between items-center text-[11px] text-gray-500 mt-1.5 font-mono">
+                        <span>Occupancy Utilization</span>
+                        <span id="card-util-text-{{ farm.farmId }}" class="font-bold text-gray-800">{{ top_barn.utilizationRate }}%</span>
                     </div>
                 </div>
-                {% else %}
-                <div class="col-span-full py-6 text-center text-gray-400 text-xs">No barns configured for this facility.</div>
-                {% endfor %}
+
+                <!-- Vaccination Coverage Box -->
+                <div class="mt-4 pt-3.5 border-t border-gray-200/80 flex justify-between items-center text-xs">
+                    <span class="text-gray-500 font-medium">Vaccination Coverage:</span>
+                    <span id="card-vac-{{ farm.farmId }}" class="font-mono font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded">
+                        {{ top_barn.vaccinatedAnimals }}/{{ top_barn.assignedAnimals }} ({{ top_barn.vaccinationRate }}%)
+                    </span>
+                </div>
             </div>
+
+            <!-- RIGHT: Sorted Barn List (Click any row to replace card) -->
+            <div class="lg:col-span-8 border border-gray-200 rounded-lg overflow-hidden">
+                <div class="px-4 py-2.5 bg-gray-50 border-b border-gray-200 flex justify-between items-center text-[11px]">
+                    <span class="font-bold text-gray-700 uppercase tracking-wider">Barns Ranked by Cattle Count & Vaccination %</span>
+                    <span class="text-gray-400">Click a row to inspect card</span>
+                </div>
+
+                <div class="max-h-64 overflow-y-auto">
+                    <table class="w-full text-left text-xs text-gray-700">
+                        <thead class="bg-white border-b border-gray-200 text-[11px] text-gray-500 font-semibold sticky top-0 z-10">
+                            <tr>
+                                <th class="px-4 py-2.5 w-12">Rank</th>
+                                <th class="px-4 py-2.5">Barn</th>
+                                <th class="px-4 py-2.5">In-Barn Cattle</th>
+                                <th class="px-4 py-2.5">Capacity / Util</th>
+                                <th class="px-4 py-2.5 text-right">Vaccination %</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-100">
+                            {% for barn in farm.barns %}
+                            <tr id="barn-row-{{ farm.farmId }}-{{ barn.barnId }}"
+                                onclick="selectBarnForFarm(this)"
+                                data-farm-id="{{ farm.farmId }}"
+                                data-barn-id="{{ barn.barnId }}"
+                                data-rank="{{ loop.index }}"
+                                data-code="{{ barn.code }}"
+                                data-capacity="{{ barn.capacity }}"
+                                data-headcount="{{ barn.currentHeadcount }}"
+                                data-assigned="{{ barn.assignedAnimals }}"
+                                data-util="{{ barn.utilizationRate }}"
+                                data-vaccinated="{{ barn.vaccinatedAnimals }}"
+                                data-vac-rate="{{ barn.vaccinationRate }}"
+                                class="barn-list-row-{{ farm.farmId }} cursor-pointer transition hover:bg-blue-50/60 {% if loop.first %}bg-blue-50/80 font-semibold{% endif %}">
+                                <td class="px-4 py-2.5 font-mono text-[11px] text-gray-400">#{{ loop.index }}</td>
+                                <td class="px-4 py-2.5">
+                                    <span class="font-bold text-gray-900">{{ barn.code }}</span>
+                                    <span class="text-[10px] font-mono text-gray-400 ml-1.5">{{ barn.barnId }}</span>
+                                </td>
+                                <td class="px-4 py-2.5 font-mono font-bold text-[#1976d2]">
+                                    {{ barn.currentHeadcount }} <span class="text-gray-400 font-normal text-[10px]">/ {{ barn.assignedAnimals }}</span>
+                                </td>
+                                <td class="px-4 py-2.5">
+                                    <div class="flex items-center space-x-2">
+                                        <div class="w-20 bg-gray-200 rounded-full h-1.5">
+                                            <div class="bg-[#2f80ed] h-1.5 rounded-full" style="width: {{ barn.utilizationRate }}%"></div>
+                                        </div>
+                                        <span class="font-mono text-[11px] text-gray-600">{{ barn.utilizationRate }}%</span>
+                                    </div>
+                                </td>
+                                <td class="px-4 py-2.5 text-right font-mono">
+                                    <span class="px-2 py-0.5 rounded text-[11px] font-semibold
+                                        {% if barn.vaccinationRate >= 80 %} bg-emerald-50 text-emerald-700
+                                        {% elif barn.vaccinationRate >= 50 %} bg-blue-50 text-blue-700
+                                        {% else %} bg-gray-100 text-gray-600 {% endif %}">
+                                        {{ barn.vaccinatedAnimals }}/{{ barn.assignedAnimals }} ({{ barn.vaccinationRate }}%)
+                                    </span>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
         </div>
+        {% else %}
+        <div class="p-8 text-center text-gray-400 text-xs">No barns configured for this facility.</div>
+        {% endif %}
 
     </div>
     {% else %}
@@ -108,5 +175,54 @@
         No facility data loaded. Verifying connection to Spring Boot backend...
     </div>
     {% endfor %}
-    {% endif %}
 </div>
+
+<script>
+window.selectedBarnByFarm = window.selectedBarnByFarm || {};
+
+function renderBarnCardFromRow(row) {
+    if (!row) return;
+    const farmId = row.dataset.farmId;
+    const barnId = row.dataset.barnId;
+    const rank = row.dataset.rank;
+
+    window.selectedBarnByFarm[farmId] = barnId;
+
+    // Highlight active row in this farm's table
+    document.querySelectorAll('.barn-list-row-' + farmId).forEach(r => {
+        r.classList.remove('bg-blue-50/80', 'font-semibold');
+    });
+    row.classList.add('bg-blue-50/80', 'font-semibold');
+
+    // Update featured card fields
+    const badge = document.getElementById('card-badge-' + farmId);
+    if (badge) {
+        badge.textContent = (rank === '1') ? 'Top Barn #1' : ('Selected Barn #' + rank);
+    }
+    document.getElementById('card-code-' + farmId).textContent = row.dataset.code;
+    document.getElementById('card-id-' + farmId).textContent = barnId;
+    document.getElementById('card-cap-' + farmId).textContent = 'Cap: ' + row.dataset.capacity;
+    document.getElementById('card-headcount-' + farmId).textContent = row.dataset.headcount;
+    document.getElementById('card-assigned-' + farmId).textContent = row.dataset.assigned + ' assigned';
+    document.getElementById('card-util-bar-' + farmId).style.width = row.dataset.util + '%';
+    document.getElementById('card-util-text-' + farmId).textContent = row.dataset.util + '%';
+    document.getElementById('card-vac-' + farmId).textContent =
+        row.dataset.vaccinated + '/' + row.dataset.assigned + ' (' + row.dataset.vacRate + '%)';
+}
+
+function selectBarnForFarm(row) {
+    renderBarnCardFromRow(row);
+}
+
+// Re-apply selected barn card after HTMX 3-second polling swap
+document.body.addEventListener('htmx:afterSwap', function(evt) {
+    if (evt.detail.target && evt.detail.target.id === 'barn-cards') {
+        Object.entries(window.selectedBarnByFarm).forEach(([farmId, barnId]) => {
+            const savedRow = document.getElementById('barn-row-' + farmId + '-' + barnId);
+            if (savedRow) {
+                renderBarnCardFromRow(savedRow);
+            }
+        });
+    }
+});
+</script>

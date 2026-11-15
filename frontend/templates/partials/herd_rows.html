@@ -1,0 +1,69 @@
+{% set avatar_colors = ['bg-blue-600', 'bg-sky-500', 'bg-slate-800', 'bg-amber-700', 'bg-pink-700', 'bg-emerald-600', 'bg-lime-600', 'bg-indigo-600'] %}
+{% for c in cattle_list %}
+{% set color = avatar_colors[loop.index0 % avatar_colors|length] %}
+<tr onclick="window.location.href='/herd/{{ c.animal_id }}'" class="hover:bg-blue-50/40 cursor-pointer transition">
+    <!-- Avatar + Animal ID + Tag EPC -->
+    <td class="px-5 py-3.5">
+        <div class="flex items-center space-x-3.5">
+            <span class="w-9 h-9 rounded-full {{ color }} text-white flex items-center justify-center text-xs font-bold flex-shrink-0 shadow-xs">
+                +
+            </span>
+            <div>
+                <div class="font-bold text-gray-900 text-sm">{{ c.animal_id }}</div>
+                <div class="text-[11px] font-mono text-gray-400">
+                    {{ c.active_tag_epc if c.active_tag_epc else 'No active tag' }} &bull; {{ c.breed }}
+                </div>
+            </div>
+        </div>
+    </td>
+
+    <!-- Barn & Facility Badge -->
+    <td class="px-5 py-3.5">
+        <div class="inline-flex items-center space-x-2 bg-gray-50 border border-gray-200 px-2.5 py-1 rounded-md">
+            <span class="font-semibold text-gray-700">{{ c.barn_code or c.assigned_barn_id }}</span>
+            <span class="w-4 h-4 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-bold flex items-center justify-center">
+                1
+            </span>
+        </div>
+        <div class="text-[10px] text-gray-400 mt-0.5">{{ c.farm_name or '' }}</div>
+    </td>
+
+    <!-- Status Pill -->
+    <td class="px-5 py-3.5">
+        {% if c.lifecycle_status == 'ACTIVE' %}
+        <span class="inline-block px-3 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+            Active
+        </span>
+        {% else %}
+        <span class="inline-block px-3 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">
+            {{ c.lifecycle_status }}
+        </span>
+        {% endif %}
+    </td>
+
+    <!-- RFID Tag Count Box -->
+    <td class="px-5 py-3.5">
+        <div class="inline-flex items-center space-x-3 border border-gray-200 rounded px-3 py-1 bg-white">
+            <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/></svg>
+            <span class="font-semibold text-gray-700 font-mono">{{ c.active_tag_count }}</span>
+        </div>
+    </td>
+
+    <!-- Vaccination Count Box -->
+    <td class="px-5 py-3.5">
+        <div class="inline-flex items-center space-x-3 border border-gray-200 rounded px-3 py-1 bg-white">
+            <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+            <span class="font-semibold text-gray-700 font-mono">{{ c.vaccination_count }}</span>
+        </div>
+    </td>
+
+    <!-- Ellipsis Menu -->
+    <td class="px-5 py-3.5 text-right text-gray-400 font-bold tracking-widest">
+        &bull;&bull;&bull;
+    </td>
+</tr>
+{% else %}
+<tr>
+    <td colspan="6" class="py-12 text-center text-gray-400">No cattle records found matching filter.</td>
+</tr>
+{% endfor %}

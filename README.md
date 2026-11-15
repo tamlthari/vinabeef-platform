@@ -1,6 +1,13 @@
 ## Start Guide
 
 ## Backend
+### Start Docker containers for the database
+```bash
+docker compose up -d postgres redis
+
+# check containers' statuses
+docker compose ps
+```
 ### Initialize Spring project
 ```bash
 curl https://start.spring.io/starter.zip \
@@ -32,11 +39,16 @@ brew install openjdk@21
 sudo ln -sfn $(brew --prefix openjdk@21)/libexec/openjdk.jdk /Library/Java/JavaVirtualMachines/openjdk-21.jdk
 export JAVA_HOME=$(/usr/libexec/java_home -v 21)
 ```
+
+### Run the project
 #### Prepare the Flyway schema
 ```bash
 backend/src/main/resources/db/migration/*.sql
 ```
-Run the project
+#### Compile using Maven
+```
+./mvnw clean package -DskipTests
+```
 For the first time
 ```bash
 cd backend
@@ -49,7 +61,25 @@ export JAVA_HOME="$(/usr/libexec/java_home -v 21)"
 export PATH="$JAVA_HOME/bin:$PATH"
 ./mvnw clean spring-boot:run
 ```
-
+### Populate the database with large data of ~25,000 cattle
+```bash
+docker exec -i vinabeef-postgres psql -U vinabeef_user -d vinabeef_db < scripts/seed_25k_cattle.sql
+```
+Check the data is loaded correctly
+```bash
+docker exec -it vinabeef-postgres psql -U vinabeef_user -d vinabeef_db -c "
+SELECT 
+    f.farm_id,
+    COUNT(DISTINCT b.barn_id) AS total_barns,
+    SUM(b.capacity) AS total_capacity,
+    SUM(b.current_headcount) AS total_in_barn_headcount,
+    (SELECT COUNT(*) FROM animals a JOIN barns b2 ON a.assigned_barn_id = b2.barn_id WHERE b2.farm_id = f.farm_id) AS total_registered_cattle
+FROM farms f
+LEFT JOIN barns b ON f.farm_id = b.farm_id
+GROUP BY f.farm_id
+ORDER BY f.farm_id;
+"
+```
 ## Frontend
 ```bash
 cd vinabeef-platform
@@ -83,4 +113,15 @@ python3 multi_webs_sub_mqtt_threads.py \
   -d 0 \
   -e true \
   -w 1
+```
+
+## Performance
+### Add database index to PostGres data base
+```bash
+docker exec -it vinabeef-postgres psql -U vinabeef_user -d vinabeef_db -c "
+CREATE INDEX IF NOT EXISTS idx_tag_assignments_animal_id ON tag_assignments(animal_id);
+CREATE INDEX IF NOT EXISTS idx_tag_assignments_tag_id ON tag_assignments(tag_id);
+CREATE INDEX IF NOT EXISTS idx_health_records_animal_id ON health_records(animal_id);
+CREATE INDEX IF NOT EXISTS idx_rfid_read_events_reader_name ON rfid_read_events(reader_name);
+"
 ```

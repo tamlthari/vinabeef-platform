@@ -6,12 +6,62 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import httpx
 import json
+import math
 
 app = FastAPI(title="VinaBeef Enterprise Portal")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
 BACKEND_BASE_URL = "http://localhost:8080/api/v1"
+
+# --- Herd Count & Display ---
+
+def build_page_range(current_page: int, total_pages: int) -> list:
+    if total_pages <= 7:
+        return list(range(1, total_pages + 1))
+    if current_page <= 4:
+        return [1, 2, 3, 4, 5, "...", total_pages]
+    if current_page >= total_pages - 3:
+        return [1, "...", total_pages - 4, total_pages - 3, total_pages - 2, total_pages - 1, total_pages]
+    return [1, "...", current_page - 1, current_page, current_page + 1, "...", total_pages]
+
+async def fetch_paginated_cattle(client: httpx.AsyncClient, headers: dict, q: str = "", page: int = 1, size: int = 100) -> dict:
+    page = max(1, page)
+    size = 100
+    try:
+        res = await client.get(
+            f"{BACKEND_BASE_URL}/cattle",
+            params={"q": q, "page": page, "size": size},
+            headers=headers
+        )
+        if res.status_code == 200:
+            cattle = res.json()
+            total_cattle = int(res.headers.get("X-Total-Count", len(cattle)))
+        else:
+            print(f"[ERROR] Spring Boot /cattle returned {res.status_code}: {res.text}")
+            cattle = []
+            total_cattle = 0
+    except Exception as e:
+        print(f"[ERROR] FastAPI httpx request failed: {e}")
+        cattle = []
+        total_cattle = 0
+
+    total_pages = max(1, math.ceil(total_cattle / size))
+    page = min(page, total_pages)
+    start_item = ((page - 1) * size + 1) if total_cattle > 0 else 0
+    end_item = min(page * size, total_cattle)
+
+    return {
+        "cattle_list": cattle,
+        "total_cattle": total_cattle,
+        "page": page,
+        "size": size,
+        "total_pages": total_pages,
+        "start_item": start_item,
+        "end_item": end_item,
+        "page_range": build_page_range(page, total_pages),
+        "q": q
+    }
 
 # --- Authentication & Session Helper ---
 
@@ -365,3 +415,250 @@ async def htmx_transfer_action(
                 <strong>Failure:</strong> {str(e)}
             </div>
             """
+
+# ================= CATTLE & RFID TAG MANAGEMENT =================
+
+@app.get("/herd", response_class=HTMLResponse)
+async def herd_page(request: Request, page: int = 1, q: str = "", user: dict = Depends(get_current_user)):
+    if not user:
+        return RedirectResponse(url="/login")
+
+    headers = get_auth_headers(user)
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        pagination = await fetch_paginated_cattle(client, headers, q=q, page=page, size=100)
+        try:
+            barns_res = await client.get(f"{BACKEND_BASE_URL}/barns", headers=headers)
+            barns = barns_res.json() if barns_res.status_code == 200 else []
+        except Exception:
+            barns = []
+
+    return templates.TemplateResponse("herd.html", {
+        "request": request,
+        "user": user,
+        "barns": barns,
+        **pagination
+    })
+
+@app.get("/htmx/herd-list", response_class=HTMLResponse)
+async def htmx_herd_list(request: Request, page: int = 1, q: str = "", user: dict = Depends(get_current_user)):
+    headers = get_auth_headers(user) if user else {}
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        pagination = await fetch_paginated_cattle(client, headers, q=q, page=page, size=100)
+
+    return templates.TemplateResponse("partials/herd_table_content.html", {
+        "request": request,
+        "oob_update": True,
+        **pagination
+    })
+
+@app.post("/htmx/herd/create", response_class=HTMLResponse)
+async def htmx_herd_create(
+    request: Request,
+    animal_id: str = Form(...),
+    barn_id: str = Form(...),
+    breed: str = Form("Brahman Cross"),
+    weight_kg: float = Form(420.0),
+    tag_epc: str = Form(""),
+    user: dict = Depends(get_current_user)
+):
+    if not user:
+        return "<div class='p-4 text-red-600 text-xs'>Session expired.</div>"
+
+    headers = get_auth_headers(user)
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        res = await client.post(
+            f"{BACKEND_BASE_URL}/cattle",
+            json={
+                "animalId": animal_id,
+                "barnId": barn_id,
+                "breed": breed,
+                "weightKg": weight_kg,
+                "tagEpc": tag_epc
+            },
+            headers=headers
+        )
+        if res.status_code != 200:
+            err = res.json().get("error", "Failed to register cattle")
+            return f"<div class='p-4 rounded bg-red-50 border border-red-200 text-red-700 text-xs'>{err}</div>"
+
+        pagination = await fetch_paginated_cattle(client, headers, q="", page=1, size=100)
+
+    return templates.TemplateResponse("partials/herd_table_content.html", {
+        "request": request,
+        "oob_update": True,
+        **pagination
+    })
+
+@app.get("/herd/{animal_id}", response_class=HTMLResponse)
+async def cattle_detail_page(request: Request, animal_id: str, user: dict = Depends(get_current_user)):
+    if not user:
+        return RedirectResponse(url="/login")
+
+    headers = get_auth_headers(user)
+    async with httpx.AsyncClient(timeout=4.0) as client:
+        res = await client.get(f"{BACKEND_BASE_URL}/cattle/{animal_id}", headers=headers)
+        if res.status_code != 200:
+            raise HTTPException(status_code=404, detail="Animal not found")
+        detail = res.json()
+
+    return templates.TemplateResponse("cattle_detail.html", {
+        "request": request,
+        "user": user,
+        "animal": detail["profile"],
+        "tags": detail["tags"],
+        "vaccinations": detail["vaccinations"],
+        "movements": detail["movements"]
+    })
+
+@app.post("/herd/{animal_id}/assign-tag")
+async def cattle_assign_tag(
+    animal_id: str,
+    tag_epc: str = Form(...),
+    credential_identifier: str = Form("EPC-26"),
+    user: dict = Depends(get_current_user)
+):
+    if not user:
+        return RedirectResponse(url="/login")
+
+    async with httpx.AsyncClient(timeout=4.0) as client:
+        await client.post(
+            f"{BACKEND_BASE_URL}/cattle/{animal_id}/tags",
+            json={"tagEpc": tag_epc, "credentialIdentifier": credential_identifier},
+            headers=get_auth_headers(user)
+        )
+    return RedirectResponse(url=f"/herd/{animal_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+@app.post("/herd/{animal_id}/vaccinate")
+async def cattle_record_vaccination(
+    animal_id: str,
+    vaccine_name: str = Form(...),
+    batch_number: str = Form(...),
+    notes: str = Form(""),
+    user: dict = Depends(get_current_user)
+):
+    if not user:
+        return RedirectResponse(url="/login")
+
+    async with httpx.AsyncClient(timeout=4.0) as client:
+        await client.post(
+            f"{BACKEND_BASE_URL}/cattle/{animal_id}/vaccinations",
+            json={"vaccineName": vaccine_name, "batchNumber": batch_number, "notes": notes},
+            headers=get_auth_headers(user)
+        )
+    return RedirectResponse(url=f"/herd/{animal_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+# ================= GATE READER MANAGEMENT =================
+
+@app.get("/readers", response_class=HTMLResponse)
+async def readers_page(request: Request, user: dict = Depends(get_current_user)):
+    if not user:
+        return RedirectResponse(url="/login")
+
+    headers = get_auth_headers(user)
+    async with httpx.AsyncClient(timeout=4.0) as client:
+        try:
+            res = await client.get(f"{BACKEND_BASE_URL}/readers", headers=headers)
+            if res.status_code in (401, 403):
+                return RedirectResponse(url="/login")
+            readers = res.json() if res.status_code == 200 else []
+        except Exception:
+            readers = []
+
+        try:
+            barns_res = await client.get(f"{BACKEND_BASE_URL}/barns", headers=headers)
+            barns = barns_res.json() if barns_res.status_code == 200 else []
+        except Exception:
+            barns = []
+
+    return templates.TemplateResponse("readers.html", {
+        "request": request,
+        "user": user,
+        "readers": readers,
+        "barns": barns
+    })
+
+@app.get("/htmx/readers-list", response_class=HTMLResponse)
+async def htmx_readers_list(request: Request, q: str = "", user: dict = Depends(get_current_user)):
+    headers = get_auth_headers(user) if user else {}
+    async with httpx.AsyncClient(timeout=3.0) as client:
+        try:
+            res = await client.get(f"{BACKEND_BASE_URL}/readers", params={"q": q}, headers=headers)
+            readers = res.json() if res.status_code == 200 else []
+        except Exception:
+            readers = []
+    return templates.TemplateResponse("partials/reader_rows.html", {"request": request, "readers": readers})
+
+@app.post("/htmx/readers/create", response_class=HTMLResponse)
+async def htmx_readers_create(
+    request: Request,
+    reader_name: str = Form(...),
+    label: str = Form(...),
+    barn_id: str = Form(...),
+    direction_mode: str = Form("BIDIRECTIONAL"),
+    firmware_version: str = Form("1.58.1998"),
+    user: dict = Depends(get_current_user)
+):
+    if not user:
+        return ""
+
+    async with httpx.AsyncClient(timeout=4.0) as client:
+        await client.post(
+            f"{BACKEND_BASE_URL}/readers",
+            json={
+                "readerName": reader_name,
+                "label": label,
+                "barnId": barn_id,
+                "directionMode": direction_mode,
+                "firmwareVersion": firmware_version
+            },
+            headers=get_auth_headers(user)
+        )
+        readers = (await client.get(f"{BACKEND_BASE_URL}/readers", headers=get_auth_headers(user))).json()
+    return templates.TemplateResponse("partials/reader_rows.html", {"request": request, "readers": readers})
+
+@app.get("/readers/{gate_id}", response_class=HTMLResponse)
+async def reader_detail_page(request: Request, gate_id: str, user: dict = Depends(get_current_user)):
+    if not user:
+        return RedirectResponse(url="/login")
+
+    headers = get_auth_headers(user)
+    async with httpx.AsyncClient(timeout=4.0) as client:
+        res = await client.get(f"{BACKEND_BASE_URL}/readers/{gate_id}", headers=headers)
+        if res.status_code != 200:
+            raise HTTPException(status_code=404, detail="Gate reader not found")
+        detail = res.json()
+        barns = (await client.get(f"{BACKEND_BASE_URL}/barns", headers=headers)).json()
+
+    return templates.TemplateResponse("reader_detail.html", {
+        "request": request,
+        "user": user,
+        "reader": detail["reader"],
+        "transactions": detail["transactions"],
+        "barns": barns
+    })
+
+@app.post("/readers/{gate_id}/update")
+async def reader_update_action(
+    gate_id: str,
+    barn_id: str = Form(...),
+    label: str = Form(...),
+    direction_mode: str = Form(...),
+    firmware_version: str = Form("1.58.1998"),
+    user: dict = Depends(get_current_user)
+):
+    if not user:
+        return RedirectResponse(url="/login")
+
+    async with httpx.AsyncClient(timeout=4.0) as client:
+        await client.put(
+            f"{BACKEND_BASE_URL}/readers/{gate_id}",
+            json={
+                "barnId": barn_id,
+                "label": label,
+                "directionMode": direction_mode,
+                "firmwareVersion": firmware_version
+            },
+            headers=get_auth_headers(user)
+        )
+    return RedirectResponse(url=f"/readers/{gate_id}", status_code=status.HTTP_303_SEE_OTHER)

@@ -1,0 +1,225 @@
+{% extends "base.html" %}
+{% block header_title %}
+<div class="flex items-center space-x-3">
+    <a href="/readers" class="text-gray-500 hover:text-gray-800 transition">&larr;</a>
+    <span>Gate Reader Details</span>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+
+    <!-- Top Sensor Header Card -->
+    <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-6 space-y-6">
+        <div class="flex items-center space-x-4">
+            <div class="w-12 h-12 rounded-xl bg-blue-50 border border-blue-100 text-[#2f80ed] flex items-center justify-center">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2" stroke-width="2"/><circle cx="12" cy="12" r="3" stroke-width="2"/></svg>
+            </div>
+            <div>
+                <div class="flex items-center space-x-2">
+                    <h2 class="text-lg font-bold text-gray-900 font-mono">{{ reader.reader_name }}</h2>
+                    <span class="w-2.5 h-2.5 rounded-full {% if reader.last_seen %}bg-emerald-500{% else %}bg-rose-500{% endif %}"></span>
+                </div>
+                <div class="text-xs text-gray-400">{{ reader.label }} ({{ reader.gate_id }})</div>
+            </div>
+        </div>
+
+        <!-- Metadata Row -->
+        <div class="grid grid-cols-2 sm:grid-cols-5 gap-6 pt-4 border-t border-gray-100 text-xs">
+            <div>
+                <span class="text-gray-400 block mb-1">Status</span>
+                <span class="inline-block px-2.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold">
+                    {{ reader.status }}
+                </span>
+            </div>
+            <div>
+                <span class="text-gray-400 block mb-1">Facility</span>
+                <strong class="text-gray-800">{{ reader.farm_name or 'Dak Lak Station' }}</strong>
+            </div>
+            <div>
+                <span class="text-gray-400 block mb-1">Direction Mode</span>
+                <strong class="text-gray-800 font-mono">{{ reader.direction_mode }}</strong>
+            </div>
+            <div>
+                <span class="text-gray-400 block mb-1">Friendly Name</span>
+                <strong class="text-gray-800">{{ reader.label }}</strong>
+            </div>
+            <div>
+                <span class="text-gray-400 block mb-1">Assigned Barn</span>
+                <strong class="text-blue-600 font-mono">{{ reader.barn_code or reader.barn_id }}</strong>
+            </div>
+        </div>
+
+        <!-- Sub-Navigation Tabs -->
+        <div class="flex space-x-8 border-b border-gray-200 pt-2 text-xs font-semibold">
+            <button onclick="switchReaderTab('transactions')" id="rtab-btn-transactions" class="pb-3 border-b-2 border-[#2f80ed] text-gray-900">
+                Transactions
+            </button>
+            <button onclick="switchReaderTab('config')" id="rtab-btn-config" class="pb-3 border-b-2 border-transparent text-gray-400 hover:text-gray-700">
+                Reader Management
+            </button>
+        </div>
+    </div>
+
+    <!-- TAB: Transactions -->
+    <div id="rtab-transactions" class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <!-- Left Sub-Sidebar -->
+        <div class="lg:col-span-3 bg-white border border-gray-200 rounded-lg shadow-sm p-3 h-fit space-y-1 text-xs font-semibold">
+            <button onclick="filterTx('ALL')" class="w-full flex items-center space-x-2.5 px-3.5 py-2.5 rounded-md bg-blue-50 text-[#2f80ed]">
+                <span>⇄</span>
+                <span>Gate Events</span>
+            </button>
+            <button onclick="filterTx('SYSTEM')" class="w-full flex items-center space-x-2.5 px-3.5 py-2.5 rounded-md text-gray-600 hover:bg-gray-50">
+                <span>≡</span>
+                <span>System Heartbeats</span>
+            </button>
+        </div>
+
+        <!-- Right Transactions Table -->
+        <div class="lg:col-span-9 bg-white border border-gray-200 rounded-lg shadow-sm p-5 space-y-4">
+            <div class="flex flex-wrap justify-between items-center gap-3">
+                <div class="relative flex-1 min-w-[220px]">
+                    <input type="text" id="tx-search" onkeyup="searchTx()" placeholder="Search by action or animal ID..."
+                           class="w-full border border-gray-300 rounded px-3 py-1.5 text-xs focus:outline-none focus:border-blue-500">
+                </div>
+                <button onclick="window.location.reload()"
+                        class="px-3 py-1.5 border border-gray-300 rounded text-xs font-semibold text-gray-700 hover:bg-gray-50">
+                    Refresh
+                </button>
+            </div>
+
+            <div class="overflow-x-auto">
+                <table class="w-full text-left text-xs text-gray-700">
+                    <thead class="border-b border-gray-200 text-gray-600 font-semibold">
+                        <tr>
+                            <th class="py-3 px-3">Action</th>
+                            <th class="py-3 px-3">Cattle / Tag</th>
+                            <th class="py-3 px-3">DateTime</th>
+                            <th class="py-3 px-3 text-right">Result</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tx-tbody" class="divide-y divide-gray-100">
+                        {% for tx in transactions %}
+                        <tr class="tx-row hover:bg-gray-50 transition" data-type="{{ 'PASSAGE' if tx.movement_id else ('ANOMALY' if tx.card_uuid else 'SYSTEM') }}">
+                            <td class="py-3.5 px-3 font-medium text-gray-900">
+                                {% if tx.movement_id %}
+                                    Passage {{ tx.direction }}
+                                {% elif tx.card_uuid %}
+                                    Unregistered Tag Read
+                                {% else %}
+                                    {{ tx.gate_action or 'READER_HEARTBEAT' }}
+                                {% endif %}
+                            </td>
+                            <td class="py-3.5 px-3">
+                                {% if tx.animal_id %}
+                                <a href="/herd/{{ tx.animal_id }}" class="inline-flex items-center space-x-2 text-gray-800 font-semibold hover:text-blue-600">
+                                    <span class="w-4 h-4 rounded-full bg-gray-100 text-gray-500 inline-flex items-center justify-center text-[10px] font-serif">i</span>
+                                    <span>{{ tx.animal_id }}</span>
+                                </a>
+                                {% elif tx.card_uuid %}
+                                <span class="font-mono text-amber-700 text-[11px]">Tag: {{ tx.card_uuid }}</span>
+                                {% else %}
+                                <span class="text-gray-400">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="py-3.5 px-3 font-mono text-[11px] text-gray-500">{{ tx.observed_at }}</td>
+                            <td class="py-3.5 px-3 text-right">
+                                {% if tx.movement_id or not tx.card_uuid %}
+                                <span class="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                    <span>&#10003;</span>
+                                    <span>Success</span>
+                                </span>
+                                {% else %}
+                                <span class="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                                    <span>!</span>
+                                    <span>Alert Raised</span>
+                                </span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="4" class="py-10 text-center text-gray-400">No reader transactions recorded yet.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- TAB: Reader Configuration -->
+    <div id="rtab-config" class="hidden bg-white border border-gray-200 rounded-lg shadow-sm p-6 max-w-2xl">
+        <h3 class="text-sm font-bold text-gray-800 mb-4">Station Binding & Configuration</h3>
+        <form action="/readers/{{ reader.gate_id }}/update" method="POST" class="space-y-4 text-xs">
+            <div>
+                <label class="block font-semibold text-gray-700 mb-1">Friendly Gate Label</label>
+                <input type="text" name="label" value="{{ reader.label }}" required
+                       class="w-full border border-gray-300 rounded px-3 py-2 focus:outline-none focus:border-blue-500">
+            </div>
+            <div>
+                <label class="block font-semibold text-gray-700 mb-1">Assigned Barn</label>
+                <select name="barn_id" class="w-full border border-gray-300 rounded px-3 py-2 bg-white">
+                    {% for b in barns %}
+                    <option value="{{ b.barnId }}" {% if b.barnId == reader.barn_id %}selected{% endif %}>
+                        {{ b.code }} ({{ b.farmId }})
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <label class="block font-semibold text-gray-700 mb-1">Direction Mode</label>
+                    <select name="direction_mode" class="w-full border border-gray-300 rounded px-3 py-2 bg-white">
+                        <option value="BIDIRECTIONAL" {% if reader.direction_mode == 'BIDIRECTIONAL' %}selected{% endif %}>BIDIRECTIONAL</option>
+                        <option value="IN_ONLY" {% if reader.direction_mode == 'IN_ONLY' %}selected{% endif %}>IN_ONLY</option>
+                        <option value="OUT_ONLY" {% if reader.direction_mode == 'OUT_ONLY' %}selected{% endif %}>OUT_ONLY</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block font-semibold text-gray-700 mb-1">Firmware Version</label>
+                    <input type="text" name="firmware_version" value="{{ reader.firmware_version }}" class="w-full border border-gray-300 rounded px-3 py-2 font-mono">
+                </div>
+            </div>
+            <div class="pt-2">
+                <button type="submit" class="px-5 py-2 bg-[#2f80ed] hover:bg-blue-600 text-white rounded-md font-semibold">
+                    Save Station Settings
+                </button>
+            </div>
+        </form>
+    </div>
+
+</div>
+
+<script>
+function switchReaderTab(tab) {
+    ['transactions', 'config'].forEach(t => {
+        document.getElementById('rtab-' + t).classList.add('hidden');
+        const btn = document.getElementById('rtab-btn-' + t);
+        btn.classList.remove('border-[#2f80ed]', 'text-gray-900');
+        btn.classList.add('border-transparent', 'text-gray-400');
+    });
+    document.getElementById('rtab-' + tab).classList.remove('hidden');
+    const active = document.getElementById('rtab-btn-' + tab);
+    active.classList.remove('border-transparent', 'text-gray-400');
+    active.classList.add('border-[#2f80ed]', 'text-gray-900');
+}
+
+function searchTx() {
+    const q = document.getElementById('tx-search').value.toLowerCase();
+    document.querySelectorAll('.tx-row').forEach(row => {
+        row.style.display = row.textContent.toLowerCase().includes(q) ? '' : 'none';
+    });
+}
+
+function filterTx(type) {
+    document.querySelectorAll('.tx-row').forEach(row => {
+        if (type === 'ALL') {
+            row.style.display = '';
+        } else {
+            row.style.display = (row.dataset.type === type) ? '' : 'none';
+        }
+    });
+}
+</script>
+{% endblock %}

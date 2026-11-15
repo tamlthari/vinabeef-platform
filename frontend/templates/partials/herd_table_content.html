@@ -1,0 +1,81 @@
+{% if oob_update %}
+<span id="herd-total-badge" hx-swap-oob="true">({{ "{:,}".format(total_cattle) }})</span>
+{% endif %}
+
+<div class="overflow-x-auto">
+    <table class="w-full text-left text-xs text-gray-700">
+        <thead class="bg-gray-50/70 border-b border-gray-200 text-gray-600 font-semibold">
+            <tr>
+                <th class="px-5 py-3.5">Cattle <span class="text-gray-400">^</span></th>
+                <th class="px-5 py-3.5">Barn & Facility</th>
+                <th class="px-5 py-3.5">Status</th>
+                <th class="px-5 py-3.5">RFID Tags</th>
+                <th class="px-5 py-3.5">Vaccinations</th>
+                <th class="px-5 py-3.5 text-right"></th>
+            </tr>
+        </thead>
+        <tbody id="herd-table-body" class="divide-y divide-gray-100">
+            {% include "partials/herd_rows.html" %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Pagination Footer (100 per page) -->
+<div class="px-5 py-3.5 border-t border-gray-100 bg-gray-50/40 flex flex-wrap justify-between items-center gap-4 text-xs text-gray-500">
+    <div class="flex items-center space-x-2">
+        <span>Showing</span>
+        <strong class="text-gray-800 font-mono">{{ "{:,}".format(start_item) }}</strong>
+        <span>to</span>
+        <strong class="text-gray-800 font-mono">{{ "{:,}".format(end_item) }}</strong>
+        <span>of</span>
+        <strong class="text-gray-800 font-mono">{{ "{:,}".format(total_cattle) }}</strong>
+        <span>entries (100 per page)</span>
+    </div>
+
+    <div class="flex items-center space-x-1">
+        <!-- Previous Page -->
+        <button type="button"
+                {% if page > 1 %}
+                hx-get="/htmx/herd-list?page={{ page - 1 }}"
+                hx-include="#herd-search-input"
+                hx-target="#herd-table-container"
+                class="px-2.5 py-1 rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 font-semibold transition"
+                {% else %}
+                disabled
+                class="px-2.5 py-1 rounded border border-gray-200 bg-gray-50 text-gray-300 cursor-not-allowed"
+                {% endif %}>
+            &lt;
+        </button>
+
+        <!-- Page Numbers -->
+        {% for p in page_range %}
+            {% if p == "..." %}
+            <span class="px-2 py-1 text-gray-400">...</span>
+            {% elif p == page %}
+            <span class="px-3 py-1 rounded bg-[#2f80ed] text-white font-semibold shadow-xs">{{ p }}</span>
+            {% else %}
+            <button type="button"
+                    hx-get="/htmx/herd-list?page={{ p }}"
+                    hx-include="#herd-search-input"
+                    hx-target="#herd-table-container"
+                    class="px-3 py-1 rounded border border-gray-200 bg-white text-gray-700 hover:bg-blue-50 hover:border-blue-300 font-medium transition">
+                {{ p }}
+            </button>
+            {% endif %}
+        {% endfor %}
+
+        <!-- Next Page -->
+        <button type="button"
+                {% if page < total_pages %}
+                hx-get="/htmx/herd-list?page={{ page + 1 }}"
+                hx-include="#herd-search-input"
+                hx-target="#herd-table-container"
+                class="px-2.5 py-1 rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 font-semibold transition"
+                {% else %}
+                disabled
+                class="px-2.5 py-1 rounded border border-gray-200 bg-gray-50 text-gray-300 cursor-not-allowed"
+                {% endif %}>
+            &gt;
+        </button>
+    </div>
+</div>
