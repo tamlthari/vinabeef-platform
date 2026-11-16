@@ -2,7 +2,7 @@
 {% block header_title %}
 <div class="flex items-center space-x-3">
     <a href="/herd" class="text-gray-500 hover:text-gray-800 transition">&larr;</a>
-    <span>Cattle Information</span>
+    <span>Longitudinal Animal Profile</span>
 </div>
 {% endblock %}
 
@@ -17,27 +17,52 @@
                     +
                 </span>
                 <div>
-                    <h2 class="text-lg font-bold text-gray-900">{{ animal.animal_id }}</h2>
-                    <div class="text-xs font-mono text-gray-400">Tag: {{ animal.activeTagEpc }} &bull; {{ animal.breed }}</div>
+                    <div class="flex items-center space-x-2.5">
+                        <h2 class="text-lg font-bold text-gray-900">{{ animal.animal_id }}</h2>
+                        {% if animal.health_status == 'HEALTHY' %}
+                        <span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">HEALTHY</span>
+                        {% elif animal.health_status == 'UNDER_TREATMENT' %}
+                        <span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">UNDER TREATMENT</span>
+                        {% else %}
+                        <span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200">{{ animal.health_status }}</span>
+                        {% endif %}
+                    </div>
+                    <div class="text-xs font-mono text-gray-400 mt-0.5">
+                        Tag: {{ animal.activeTagEpc }} &bull; {{ animal.breed }} &bull; {{ animal.weight_kg }} kg
+                    </div>
                 </div>
             </div>
 
-            <div class="flex items-center space-x-2.5">
+            <div class="flex flex-wrap items-center gap-2">
+                <a href="/herd/{{ animal.animal_id }}/dossier"
+                   class="px-3.5 py-2 bg-gray-50 hover:bg-gray-100 border border-gray-300 text-gray-700 rounded-md text-xs font-semibold transition">
+                    Export Dossier (JSON)
+                </a>
                 <button onclick="document.getElementById('tag-modal').classList.remove('hidden')"
                         class="px-3.5 py-2 bg-white hover:bg-gray-50 border border-gray-300 text-gray-700 rounded-md text-xs font-semibold transition">
                     Assign RFID Tag
                 </button>
-                <button onclick="document.getElementById('vac-modal').classList.remove('hidden')"
+                <button onclick="document.getElementById('transfer-modal').classList.remove('hidden')"
+                        class="px-3.5 py-2 bg-[#182232] hover:bg-[#232f42] text-white rounded-md text-xs font-semibold transition">
+                    Transfer Barn / Farm
+                </button>
+                <button onclick="document.getElementById('health-modal').classList.remove('hidden')"
                         class="px-4 py-2 bg-[#2f80ed] hover:bg-blue-600 text-white rounded-md text-xs font-semibold shadow-sm transition">
-                    + Record Vaccination
+                    + Log Health / Treatment
                 </button>
             </div>
         </div>
 
+        {% if animal.quarantine_notes %}
+        <div class="p-3 rounded-md bg-amber-50 border border-amber-200 text-amber-800 text-xs font-medium">
+            <strong>Active Clinical Note:</strong> {{ animal.quarantine_notes }}
+        </div>
+        {% endif %}
+
         <!-- Metadata Strip -->
         <div class="grid grid-cols-2 sm:grid-cols-4 gap-6 pt-4 border-t border-gray-100 text-xs">
             <div>
-                <span class="text-gray-400 block mb-1">Status</span>
+                <span class="text-gray-400 block mb-1">Lifecycle State</span>
                 <span class="inline-block px-2.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold">
                     {{ animal.lifecycle_status }}
                 </span>
@@ -51,62 +76,57 @@
                 <strong class="text-gray-800 font-semibold">{{ animal.farm_name or 'Dak Lak Station' }}</strong>
             </div>
             <div>
-                <span class="text-gray-400 block mb-1">Current Location State</span>
+                <span class="text-gray-400 block mb-1">Gate Presence</span>
                 <strong class="font-mono text-blue-600">{{ animal.presence_status }}</strong>
             </div>
         </div>
 
-        <!-- Sub-Navigation Tabs -->
-        <div class="flex space-x-8 border-b border-gray-200 pt-2 text-xs font-semibold">
+        <!-- Longitudinal Profile Sub-Navigation Tabs -->
+        <div class="flex flex-wrap gap-6 border-b border-gray-200 pt-2 text-xs font-semibold">
             <button onclick="switchTab('dashboard')" id="tab-btn-dashboard" class="pb-3 border-b-2 border-[#2f80ed] text-gray-900">
-                Dashboard
+                Overview
+            </button>
+            <button onclick="switchTab('health')" id="tab-btn-health" class="pb-3 border-b-2 border-transparent text-gray-400 hover:text-gray-700">
+                Vaccinations & Treatments ({{ vaccinations|length }})
+            </button>
+            <button onclick="switchTab('transfers')" id="tab-btn-transfers" class="pb-3 border-b-2 border-transparent text-gray-400 hover:text-gray-700">
+                Barn & Farm Transfers ({{ transfers|length }})
+            </button>
+            <button onclick="switchTab('history')" id="tab-btn-history" class="pb-3 border-b-2 border-transparent text-gray-400 hover:text-gray-700">
+                Gate Passages ({{ movements|length }})
             </button>
             <button onclick="switchTab('tags')" id="tab-btn-tags" class="pb-3 border-b-2 border-transparent text-gray-400 hover:text-gray-700">
                 RFID Tags ({{ tags|length }})
             </button>
-            <button onclick="switchTab('health')" id="tab-btn-health" class="pb-3 border-b-2 border-transparent text-gray-400 hover:text-gray-700">
-                Vaccinations & Health ({{ vaccinations|length }})
-            </button>
-            <button onclick="switchTab('history')" id="tab-btn-history" class="pb-3 border-b-2 border-transparent text-gray-400 hover:text-gray-700">
-                Movement History ({{ movements|length }})
-            </button>
         </div>
     </div>
 
-    <!-- TAB 1: Dashboard Overview -->
+    <!-- TAB 1: Overview -->
     <div id="tab-dashboard" class="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-6 space-y-6">
-            <h3 class="text-sm font-bold text-gray-800">Gate Passages</h3>
+        <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-6 space-y-5">
+            <h3 class="text-sm font-bold text-gray-800">Telemetry & Clinical Summary</h3>
             <div class="flex items-center justify-between">
-                <div class="w-10 h-10 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center font-bold">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>
-                </div>
-                <div class="text-right">
-                    <div class="text-2xl font-bold text-gray-900">{{ animal.todayMovements }}</div>
-                    <div class="text-xs text-gray-400">Today Gate Passages</div>
-                </div>
+                <span class="text-xs text-gray-500">Today Gate Passages</span>
+                <span class="text-xl font-bold text-gray-900 font-mono">{{ animal.todayMovements }}</span>
             </div>
-            <div class="flex items-center justify-between pt-4 border-t border-gray-100">
-                <div class="w-10 h-10 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center font-bold">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                </div>
-                <div class="text-right">
-                    <div class="text-sm font-bold text-gray-800">
-                        {{ movements[0].occurred_at if movements else 'No passages recorded' }}
-                    </div>
-                    <div class="text-xs text-gray-400">Last Gate Passage</div>
-                </div>
+            <div class="flex items-center justify-between pt-3 border-t border-gray-100">
+                <span class="text-xs text-gray-500">Immunization & Treatment Entries</span>
+                <span class="text-xl font-bold text-emerald-700 font-mono">{{ vaccinations|length }}</span>
+            </div>
+            <div class="flex items-center justify-between pt-3 border-t border-gray-100">
+                <span class="text-xs text-gray-500">Inter-Barn / Farm Relocations</span>
+                <span class="text-xl font-bold text-blue-600 font-mono">{{ transfers|length }}</span>
             </div>
         </div>
 
         <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-6">
-            <h3 class="text-sm font-bold text-gray-800 mb-4">Recent Gate Readers Used</h3>
+            <h3 class="text-sm font-bold text-gray-800 mb-4">Recent Gate Detections</h3>
             {% if movements %}
-            <div class="space-y-3 text-xs">
+            <div class="space-y-2.5 text-xs">
                 {% for m in movements[:4] %}
                 <div class="flex justify-between items-center p-2.5 bg-gray-50 rounded border border-gray-100">
                     <div>
-                        <span class="font-bold text-gray-800">{{ m.reader_name }}</span>
+                        <span class="font-bold text-gray-800 font-mono">{{ m.reader_name }}</span>
                         <span class="text-gray-400 ml-2">({{ m.gate_label }})</span>
                     </div>
                     <span class="px-2 py-0.5 rounded font-semibold {% if m.direction == 'IN' %}bg-emerald-50 text-emerald-700{% else %}bg-amber-50 text-amber-700{% endif %}">
@@ -116,12 +136,122 @@
                 {% endfor %}
             </div>
             {% else %}
-            <div class="py-12 text-center text-gray-400 text-xs">No gate telemetry available</div>
+            <div class="py-10 text-center text-gray-400 text-xs">No gate telemetry recorded yet</div>
             {% endif %}
         </div>
     </div>
 
-    <!-- TAB 2: RFID Tags -->
+    <!-- TAB 2: Vaccinations & Clinical Treatments -->
+    <div id="tab-health" class="hidden bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
+        <table class="w-full text-left text-xs text-gray-700">
+            <thead class="bg-gray-50 border-b border-gray-200 font-semibold text-gray-600">
+                <tr>
+                    <th class="px-5 py-3">Record ID</th>
+                    <th class="px-5 py-3">Category</th>
+                    <th class="px-5 py-3">Clinical & Dosage Payload</th>
+                    <th class="px-5 py-3">Veterinarian / Staff</th>
+                    <th class="px-5 py-3 text-right">Date</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100">
+                {% for v in vaccinations %}
+                <tr>
+                    <td class="px-5 py-3 font-mono font-bold text-gray-800">{{ v.health_id }}</td>
+                    <td class="px-5 py-3">
+                        <span class="px-2.5 py-0.5 rounded font-semibold
+                            {% if v.record_type == 'VACCINATION' %} bg-emerald-50 text-emerald-700
+                            {% elif v.record_type == 'QUARANTINE' %} bg-rose-50 text-rose-700
+                            {% elif v.record_type == 'TREATMENT' %} bg-amber-50 text-amber-700
+                            {% else %} bg-blue-50 text-blue-700 {% endif %}">
+                            {{ v.record_type }}
+                        </span>
+                    </td>
+                    <td class="px-5 py-3 font-mono text-[11px] text-gray-600">{{ v.payload }}</td>
+                    <td class="px-5 py-3 text-gray-700">{{ v.administered_by }}</td>
+                    <td class="px-5 py-3 font-mono text-gray-500 text-right">{{ (v.event_at | string).replace('T', ' ')[:19] }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="5" class="py-8 text-center text-gray-400">No health or vaccination records on file.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- TAB 3: Barn & Farm Transfers -->
+    <div id="tab-transfers" class="hidden bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
+        <table class="w-full text-left text-xs text-gray-700">
+            <thead class="bg-gray-50 border-b border-gray-200 font-semibold text-gray-600">
+                <tr>
+                    <th class="px-5 py-3">Transfer ID</th>
+                    <th class="px-5 py-3">Scope</th>
+                    <th class="px-5 py-3">Origin (Farm / Barn)</th>
+                    <th class="px-5 py-3">Destination (Farm / Barn)</th>
+                    <th class="px-5 py-3">Reason</th>
+                    <th class="px-5 py-3">Approved By</th>
+                    <th class="px-5 py-3 text-right">Timestamp</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100">
+                {% for tr in transfers %}
+                <tr>
+                    <td class="px-5 py-3 font-mono font-bold text-gray-800">{{ tr.transfer_id }}</td>
+                    <td class="px-5 py-3">
+                        <span class="px-2 py-0.5 rounded font-semibold {% if tr.transfer_type == 'INTER_FARM' %}bg-purple-50 text-purple-700{% else %}bg-blue-50 text-blue-700{% endif %}">
+                            {{ tr.transfer_type }}
+                        </span>
+                    </td>
+                    <td class="px-5 py-3">
+                        <div class="font-semibold text-gray-800">{{ tr.from_barn_code or tr.from_barn_id }}</div>
+                        <div class="text-[10px] text-gray-400">{{ tr.from_farm_name or '' }}</div>
+                    </td>
+                    <td class="px-5 py-3">
+                        <div class="font-semibold text-gray-800">{{ tr.to_barn_code or tr.to_barn_id }}</div>
+                        <div class="text-[10px] text-gray-400">{{ tr.to_farm_name or '' }}</div>
+                    </td>
+                    <td class="px-5 py-3 text-gray-600">{{ tr.reason }}</td>
+                    <td class="px-5 py-3 font-mono text-gray-700">{{ tr.approved_by }}</td>
+                    <td class="px-5 py-3 font-mono text-gray-500 text-right">{{ (tr.transferred_at | string).replace('T', ' ')[:19] }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="7" class="py-8 text-center text-gray-400">No inter-barn or inter-farm transfers recorded.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- TAB 4: Gate Passages -->
+    <div id="tab-history" class="hidden bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
+        <table class="w-full text-left text-xs text-gray-700">
+            <thead class="bg-gray-50 border-b border-gray-200 font-semibold text-gray-600">
+                <tr>
+                    <th class="px-5 py-3">Movement ID</th>
+                    <th class="px-5 py-3">Gate Reader</th>
+                    <th class="px-5 py-3">Gate Label</th>
+                    <th class="px-5 py-3">Direction</th>
+                    <th class="px-5 py-3 text-right">Timestamp</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100">
+                {% for m in movements %}
+                <tr>
+                    <td class="px-5 py-3 font-mono text-gray-400">{{ m.movement_id[:12] }}...</td>
+                    <td class="px-5 py-3 font-mono font-bold text-gray-800">{{ m.reader_name }}</td>
+                    <td class="px-5 py-3 text-gray-600">{{ m.gate_label }}</td>
+                    <td class="px-5 py-3">
+                        <span class="px-2 py-0.5 rounded font-bold {% if m.direction == 'IN' %}bg-emerald-50 text-emerald-700{% else %}bg-amber-50 text-amber-700{% endif %}">
+                            {{ m.direction }}
+                        </span>
+                    </td>
+                    <td class="px-5 py-3 font-mono text-gray-500 text-right">{{ (m.occurred_at | string).replace('T', ' ')[:19] }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="5" class="py-8 text-center text-gray-400">No gate passages recorded.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- TAB 5: RFID Tags -->
     <div id="tab-tags" class="hidden bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
         <table class="w-full text-left text-xs text-gray-700">
             <thead class="bg-gray-50 border-b border-gray-200 font-semibold text-gray-600">
@@ -145,8 +275,8 @@
                         <span class="px-2 py-0.5 rounded bg-gray-100 text-gray-500">REVOKED</span>
                         {% endif %}
                     </td>
-                    <td class="px-5 py-3 font-mono text-gray-500">{{ t.valid_from }}</td>
-                    <td class="px-5 py-3 font-mono text-gray-400">{{ t.valid_to or '-' }}</td>
+                    <td class="px-5 py-3 font-mono text-gray-500">{{ (t.valid_from | string).replace('T', ' ')[:19] }}</td>
+                    <td class="px-5 py-3 font-mono text-gray-400">{{ (t.valid_to | string).replace('T', ' ')[:19] if t.valid_to else '-' }}</td>
                 </tr>
                 {% else %}
                 <tr><td colspan="5" class="py-8 text-center text-gray-400">No RFID tags bound to this animal.</td></tr>
@@ -155,66 +285,87 @@
         </table>
     </div>
 
-    <!-- TAB 3: Vaccinations & Health -->
-    <div id="tab-health" class="hidden bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
-        <table class="w-full text-left text-xs text-gray-700">
-            <thead class="bg-gray-50 border-b border-gray-200 font-semibold text-gray-600">
-                <tr>
-                    <th class="px-5 py-3">Record ID</th>
-                    <th class="px-5 py-3">Type</th>
-                    <th class="px-5 py-3">Clinical Details</th>
-                    <th class="px-5 py-3">Administered By</th>
-                    <th class="px-5 py-3 text-right">Date</th>
-                </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-100">
-                {% for v in vaccinations %}
-                <tr>
-                    <td class="px-5 py-3 font-mono font-bold text-gray-800">{{ v.health_id }}</td>
-                    <td class="px-5 py-3"><span class="px-2 py-0.5 rounded bg-blue-50 text-blue-700 font-semibold">{{ v.record_type }}</span></td>
-                    <td class="px-5 py-3 font-mono text-gray-600">{{ v.payload }}</td>
-                    <td class="px-5 py-3 text-gray-700">{{ v.administered_by }}</td>
-                    <td class="px-5 py-3 font-mono text-gray-500 text-right">{{ v.event_at }}</td>
-                </tr>
-                {% else %}
-                <tr><td colspan="5" class="py-8 text-center text-gray-400">No vaccination records on file.</td></tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
+</div>
 
-    <!-- TAB 4: Movement History -->
-    <div id="tab-history" class="hidden bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
-        <table class="w-full text-left text-xs text-gray-700">
-            <thead class="bg-gray-50 border-b border-gray-200 font-semibold text-gray-600">
-                <tr>
-                    <th class="px-5 py-3">Movement ID</th>
-                    <th class="px-5 py-3">Gate Reader</th>
-                    <th class="px-5 py-3">Gate Label</th>
-                    <th class="px-5 py-3">Direction</th>
-                    <th class="px-5 py-3 text-right">Timestamp</th>
-                </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-100">
-                {% for m in movements %}
-                <tr>
-                    <td class="px-5 py-3 font-mono text-gray-400">{{ m.movement_id[:12] }}...</td>
-                    <td class="px-5 py-3 font-mono font-bold text-gray-800">{{ m.reader_name }}</td>
-                    <td class="px-5 py-3 text-gray-600">{{ m.gate_label }}</td>
-                    <td class="px-5 py-3">
-                        <span class="px-2 py-0.5 rounded font-bold {% if m.direction == 'IN' %}bg-emerald-50 text-emerald-700{% else %}bg-amber-50 text-amber-700{% endif %}">
-                            {{ m.direction }}
-                        </span>
-                    </td>
-                    <td class="px-5 py-3 font-mono text-gray-500 text-right">{{ m.occurred_at }}</td>
-                </tr>
-                {% else %}
-                <tr><td colspan="5" class="py-8 text-center text-gray-400">No gate passages recorded.</td></tr>
-                {% endfor %}
-            </tbody>
-        </table>
+<!-- Clinical Health / Treatment / Quarantine Modal -->
+<div id="health-modal" class="hidden fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl border border-gray-200 shadow-xl max-w-md w-full p-6 space-y-4">
+        <div class="flex justify-between items-center border-b border-gray-100 pb-3">
+            <h3 class="text-base font-bold text-gray-900">Record Clinical Event & Health Status</h3>
+            <button onclick="document.getElementById('health-modal').classList.add('hidden')" class="text-gray-400 hover:text-gray-600 text-lg">&times;</button>
+        </div>
+        <form action="/herd/{{ animal.animal_id }}/health" method="POST" class="space-y-4 text-xs">
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="block font-semibold text-gray-700 mb-1">Event Category *</label>
+                    <select name="record_type" class="w-full border border-gray-300 rounded px-3 py-2 bg-white">
+                        <option value="VACCINATION">VACCINATION</option>
+                        <option value="TREATMENT">TREATMENT</option>
+                        <option value="HEALTH_CHECK">HEALTH_CHECK</option>
+                        <option value="QUARANTINE">QUARANTINE</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block font-semibold text-gray-700 mb-1">Updated Health Status *</label>
+                    <select name="health_status" class="w-full border border-gray-300 rounded px-3 py-2 bg-white">
+                        <option value="HEALTHY" {% if animal.health_status == 'HEALTHY' %}selected{% endif %}>HEALTHY</option>
+                        <option value="UNDER_TREATMENT" {% if animal.health_status == 'UNDER_TREATMENT' %}selected{% endif %}>UNDER_TREATMENT</option>
+                        <option value="QUARANTINE" {% if animal.health_status == 'QUARANTINE' %}selected{% endif %}>QUARANTINE</option>
+                    </select>
+                </div>
+            </div>
+            <div>
+                <label class="block font-semibold text-gray-700 mb-1">Vaccine Name / Clinical Diagnosis *</label>
+                <input type="text" name="title" required placeholder="e.g. FMD Booster or Bovine Respiratory Treatment"
+                       class="w-full border border-gray-300 rounded px-3 py-2 focus:outline-none focus:border-blue-500">
+            </div>
+            <div>
+                <label class="block font-semibold text-gray-700 mb-1">Medication / Vaccine Batch *</label>
+                <input type="text" name="medication" required placeholder="e.g. FMD-2026-X1 or Ceftiofur 50mg/ml"
+                       class="w-full border border-gray-300 rounded px-3 py-2 font-mono focus:outline-none focus:border-blue-500">
+            </div>
+            <div>
+                <label class="block font-semibold text-gray-700 mb-1">Clinical Observations</label>
+                <input type="text" name="notes" placeholder="Temp 38.5C, dosage 5ml subcutaneous"
+                       class="w-full border border-gray-300 rounded px-3 py-2 focus:outline-none focus:border-blue-500">
+            </div>
+            <div class="flex justify-end space-x-2 pt-2">
+                <button type="button" onclick="document.getElementById('health-modal').classList.add('hidden')" class="px-4 py-2 border border-gray-300 rounded-md font-semibold">Cancel</button>
+                <button type="submit" class="px-4 py-2 bg-[#2f80ed] text-white rounded-md font-semibold">Save Clinical Entry</button>
+            </div>
+        </form>
     </div>
+</div>
 
+<!-- Barn / Farm Transfer Modal -->
+<div id="transfer-modal" class="hidden fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl border border-gray-200 shadow-xl max-w-md w-full p-6 space-y-4">
+        <div class="flex justify-between items-center border-b border-gray-100 pb-3">
+            <h3 class="text-base font-bold text-gray-900">Transfer Animal Between Barns / Farms</h3>
+            <button onclick="document.getElementById('transfer-modal').classList.add('hidden')" class="text-gray-400 hover:text-gray-600 text-lg">&times;</button>
+        </div>
+        <form action="/herd/{{ animal.animal_id }}/transfer" method="POST" class="space-y-4 text-xs">
+            <div>
+                <label class="block font-semibold text-gray-700 mb-1">Destination Barn & Facility *</label>
+                <select name="to_barn_id" required class="w-full border border-gray-300 rounded px-3 py-2 bg-white">
+                    {% for b in barns %}
+                    <option value="{{ b.barnId }}" {% if b.barnId == animal.assigned_barn_id %}selected{% endif %}>
+                        {{ b.code }} ({{ b.farmId }})
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label class="block font-semibold text-gray-700 mb-1">Transfer Reason *</label>
+                <input type="text" name="reason" required placeholder="e.g. Quarantine isolation or inter-farm feedlot rotation"
+                       class="w-full border border-gray-300 rounded px-3 py-2 focus:outline-none focus:border-blue-500">
+            </div>
+            <div class="flex justify-end space-x-2 pt-2">
+                <button type="button" onclick="document.getElementById('transfer-modal').classList.add('hidden')" class="px-4 py-2 border border-gray-300 rounded-md font-semibold">Cancel</button>
+                <button type="submit" class="px-4 py-2 bg-[#182232] text-white rounded-md font-semibold">Confirm Transfer</button>
+            </div>
+        </form>
+    </div>
 </div>
 
 <!-- Assign RFID Tag Modal -->
@@ -243,44 +394,9 @@
     </div>
 </div>
 
-<!-- Record Vaccination Modal -->
-<div id="vac-modal" class="hidden fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
-    <div class="bg-white rounded-xl border border-gray-200 shadow-xl max-w-md w-full p-6 space-y-4">
-        <div class="flex justify-between items-center border-b border-gray-100 pb-3">
-            <h3 class="text-base font-bold text-gray-900">Record Vaccination</h3>
-            <button onclick="document.getElementById('vac-modal').classList.add('hidden')" class="text-gray-400 hover:text-gray-600 text-lg">&times;</button>
-        </div>
-        <form action="/herd/{{ animal.animal_id }}/vaccinate" method="POST" class="space-y-4 text-xs">
-            <div>
-                <label class="block font-semibold text-gray-700 mb-1">Vaccine Name *</label>
-                <select name="vaccine_name" class="w-full border border-gray-300 rounded px-3 py-2 bg-white focus:outline-none focus:border-blue-500">
-                    <option value="Foot-and-Mouth Disease (FMD)">Foot-and-Mouth Disease (FMD)</option>
-                    <option value="Lumpy Skin Disease (LSD)">Lumpy Skin Disease (LSD)</option>
-                    <option value="Bovine Rhinotracheitis (IBR)">Bovine Rhinotracheitis (IBR)</option>
-                    <option value="Anthrax Spore Vaccine">Anthrax Spore Vaccine</option>
-                </select>
-            </div>
-            <div>
-                <label class="block font-semibold text-gray-700 mb-1">Lot / Batch Number *</label>
-                <input type="text" name="batch_number" required value="FMD-2026-B2"
-                       class="w-full border border-gray-300 rounded px-3 py-2 font-mono focus:outline-none focus:border-blue-500">
-            </div>
-            <div>
-                <label class="block font-semibold text-gray-700 mb-1">Clinical Notes</label>
-                <input type="text" name="notes" placeholder="Dosage 2ml subcutaneous, normal temperature"
-                       class="w-full border border-gray-300 rounded px-3 py-2 focus:outline-none focus:border-blue-500">
-            </div>
-            <div class="flex justify-end space-x-2 pt-2">
-                <button type="button" onclick="document.getElementById('vac-modal').classList.add('hidden')" class="px-4 py-2 border border-gray-300 rounded-md font-semibold">Cancel</button>
-                <button type="submit" class="px-4 py-2 bg-[#2f80ed] text-white rounded-md font-semibold">Save Record</button>
-            </div>
-        </form>
-    </div>
-</div>
-
 <script>
 function switchTab(tabName) {
-    ['dashboard', 'tags', 'health', 'history'].forEach(t => {
+    ['dashboard', 'health', 'transfers', 'history', 'tags'].forEach(t => {
         document.getElementById('tab-' + t).classList.add('hidden');
         const btn = document.getElementById('tab-btn-' + t);
         btn.classList.remove('border-[#2f80ed]', 'text-gray-900');

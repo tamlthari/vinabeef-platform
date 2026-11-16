@@ -1,0 +1,118 @@
+{% if oob_update %}
+<div id="kpi-open-count" hx-swap-oob="true" class="text-3xl font-extrabold text-rose-600 font-mono mt-1">{{ stats.openCount }}</div>
+<div id="kpi-missing-count" hx-swap-oob="true" class="text-3xl font-extrabold text-amber-600 font-mono mt-1">{{ stats.missingCount }}</div>
+<div id="kpi-unexpected-count" hx-swap-oob="true" class="text-3xl font-extrabold text-purple-600 font-mono mt-1">{{ stats.unexpectedCount }}</div>
+<div id="kpi-wrongbarn-count" hx-swap-oob="true" class="text-3xl font-extrabold text-blue-600 font-mono mt-1">{{ stats.wrongBarnCount }}</div>
+{% endif %}
+
+{% if banner_msg %}
+<div class="px-5 py-3 bg-blue-50 border-b border-blue-200 text-blue-800 text-xs font-semibold flex justify-between items-center">
+    <span>{{ banner_msg }}</span>
+</div>
+{% endif %}
+
+<div class="overflow-x-auto">
+    <table class="w-full text-left text-xs text-gray-700">
+        <thead class="bg-gray-50/80 border-b border-gray-200 text-gray-600 font-semibold">
+            <tr>
+                <th class="px-5 py-3.5">Alert / Type</th>
+                <th class="px-5 py-3.5">Subject / Animal</th>
+                <th class="px-5 py-3.5">Facility & Barn</th>
+                <th class="px-5 py-3.5">Telemetry Evidence</th>
+                <th class="px-5 py-3.5">Raised At</th>
+                <th class="px-5 py-3.5">State</th>
+                <th class="px-5 py-3.5 text-right">Actions</th>
+            </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">
+            {% for al in alerts %}
+            <tr class="hover:bg-gray-50/70 transition">
+                <td class="px-5 py-3.5">
+                    <div class="flex items-center space-x-2">
+                        {% if al.type == 'MISSING_CATTLE' %}
+                        <span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                            MISSING CATTLE
+                        </span>
+                        {% elif al.type == 'UNEXPECTED_TAG' %}
+                        <span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
+                            UNEXPECTED TAG
+                        </span>
+                        {% else %}
+                        <span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                            {{ al.type }}
+                        </span>
+                        {% endif %}
+                    </div>
+                    <div class="text-[10px] font-mono text-gray-400 mt-1">{{ al.alert_id }}</div>
+                </td>
+
+                <td class="px-5 py-3.5">
+                    {% if al.animal_id %}
+                    <a href="/herd/{{ al.animal_id }}" class="font-bold text-gray-900 hover:text-blue-600 font-mono">
+                        {{ al.animal_id }}
+                    </a>
+                    {% else %}
+                    <span class="text-gray-400 italic">Unregistered Entity</span>
+                    {% endif %}
+                </td>
+
+                <td class="px-5 py-3.5">
+                    <div class="font-semibold text-gray-800">{{ al.barn_code or al.barn_id or '-' }}</div>
+                    <div class="text-[10px] text-gray-400">{{ al.farm_name or '' }}</div>
+                </td>
+
+                <td class="px-5 py-3.5 font-mono text-[11px] text-gray-600 max-w-xs truncate" title="{{ al.evidence }}">
+                    {{ al.evidence }}
+                </td>
+
+                <td class="px-5 py-3.5 font-mono text-[11px] text-gray-500">
+                    {{ (al.raised_at | string).replace('T', ' ')[:19] }}
+                </td>
+
+                <td class="px-5 py-3.5">
+                    {% if al.state == 'OPEN' %}
+                    <span class="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                        OPEN
+                    </span>
+                    {% elif al.state == 'ACKNOWLEDGED' %}
+                    <span class="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                        ACKNOWLEDGED
+                    </span>
+                    {% else %}
+                    <span class="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        RESOLVED
+                    </span>
+                    {% endif %}
+                </td>
+
+                <td class="px-5 py-3.5 text-right space-x-1.5">
+                    {% if al.state == 'OPEN' %}
+                    <button type="button"
+                            hx-post="/htmx/alerts/{{ al.alert_id }}/acknowledge"
+                            hx-target="#alerts-table-container"
+                            class="px-2.5 py-1 bg-white hover:bg-amber-50 border border-gray-300 text-gray-700 rounded text-[11px] font-semibold transition">
+                        Acknowledge
+                    </button>
+                    {% endif %}
+
+                    {% if al.state in ['OPEN', 'ACKNOWLEDGED'] %}
+                    <button type="button"
+                            onclick="openResolveModal('{{ al.alert_id }}')"
+                            class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[11px] font-semibold transition">
+                        Resolve
+                    </button>
+                    {% else %}
+                    <span class="text-[11px] text-gray-400">Cleared by {{ al.resolved_by or 'staff' }}</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="7" class="py-12 text-center text-gray-400">
+                    No anomaly alerts match the selected filter.
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>

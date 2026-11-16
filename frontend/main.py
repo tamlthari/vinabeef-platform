@@ -1,7 +1,7 @@
 from datetime import date
 
 from fastapi import FastAPI, Request, Response, Form, Depends, HTTPException, status
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import httpx
@@ -662,3 +662,361 @@ async def reader_update_action(
             headers=get_auth_headers(user)
         )
     return RedirectResponse(url=f"/readers/{gate_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+# ================= ABNORMALITY DETECTION & ALERTING =================
+
+async def fetch_alerts_data(client: httpx.AsyncClient, headers: dict, state: str = "OPEN", alert_type: str = "ALL", q: str = "") -> dict:
+    try:
+        res = await client.get(
+            f"{BACKEND_BASE_URL}/alerts",
+            params={"state": state, "type": alert_type, "q": q},
+            headers=headers
+        )
+        if res.status_code == 200:
+            data = res.json()
+            return {
+                "alerts": data.get("alerts", []),
+                "stats": data.get("stats", {
+                    "openCount": 0,
+                    "acknowledgedCount": 0,
+                    "missingCount": 0,
+                    "unexpectedCount": 0,
+                    "wrongBarnCount": 0
+                })
+            }
+    except Exception as e:
+        print(f"[ERROR] Failed to fetch alerts: {e}")
+
+    return {
+        "alerts": [],
+        "stats": {"openCount": 0, "acknowledgedCount": 0, "missingCount": 0, "unexpectedCount": 0, "wrongBarnCount": 0}
+    }
+
+@app.get("/alerts", response_class=HTMLResponse)
+async def alerts_page(request: Request, state: str = "OPEN", type: str = "ALL", q: str = "", user: dict = Depends(get_current_user)):
+    if not user:
+        return RedirectResponse(url="/login")
+
+    headers = get_auth_headers(user)
+    async with httpx.AsyncClient(timeout=8.0) as client:
+        alert_data = await fetch_alerts_data(client, headers, state=state, alert_type=type, q=q)
+        try:
+            barns_res = await client.get(f"{BACKEND_BASE_URL}/barns", headers=headers)
+            barns = barns_res.json() if barns_res.status_code == 200 else []
+        except Exception:
+            barns = []
+
+    return templates.TemplateResponse("alerts.html", {
+        "request": request,
+        "user": user,
+        "alerts": alert_data["alerts"],
+        "stats": alert_data["stats"],
+        "barns": barns,
+        "current_state": state,
+        "current_type": type,
+        "q": q
+    })
+
+@app.get("/htmx/alerts-list", response_class=HTMLResponse)
+async def htmx_alerts_list(request: Request, state: str = "OPEN", type: str = "ALL", q: str = "", user: dict = Depends(get_current_user)):
+    headers = get_auth_headers(user) if user else {}
+    async with httpx.AsyncClient(timeout=8.0) as client:
+        alert_data = await fetch_alerts_data(client, headers, state=state, alert_type=type, q=q)
+
+    return templates.TemplateResponse("partials/alert_table_content.html", {
+        "request": request,
+        "user": user,
+        "alerts": alert_data["alerts"],
+        "stats": alert_data["stats"],
+        "current_state": state,
+        "current_type": type,
+        "q": q,
+        "oob_update": True
+    })
+
+@app.post("/htmx/alerts/reconcile", response_class=HTMLResponse)
+async def htmx_alerts_reconcile(
+    request: Request,
+    barn_id: str = Form(...),
+    threshold_minutes: int = Form(30),
+    user: dict = Depends(get_current_user)
+):
+    if not user:
+        return "<div class='p-4 text-red-600 text-xs'>Session expired.</div>"
+
+    headers = get_auth_headers(user)
+    banner_msg = ""
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        res = await client.post(
+            f"{BACKEND_BASE_URL}/alerts/reconcile-missing",
+            json={"barnId": barn_id, "thresholdMinutes": threshold_minutes},
+            headers=headers
+        )
+        if res.status_code == 200:
+            body = res.json()
+            flagged = body.get("flaggedCount", 0)
+            banner_msg = f"Roll-call completed for {barn_id}: {flagged} missing cattle flagged."
+        alert_data = await fetch_alerts_data(client, headers, state="OPEN", alert_type="ALL", q="")
+
+    return templates.TemplateResponse("partials/alert_table_content.html", {
+        "request": request,
+        "user": user,
+        "alerts": alert_data["alerts"],
+        "stats": alert_data["stats"],
+        "current_state": "OPEN",
+        "current_type": "ALL",
+        "q": "",
+        "oob_update": True,
+        "banner_msg": banner_msg
+    })
+
+@app.post("/htmx/alerts/{alert_id}/acknowledge", response_class=HTMLResponse)
+async def htmx_alert_acknowledge(request: Request, alert_id: str, state: str = "OPEN", type: str = "ALL", user: dict = Depends(get_current_user)):
+    headers = get_auth_headers(user) if user else {}
+    async with httpx.AsyncClient(timeout=8.0) as client:
+        await client.post(f"{BACKEND_BASE_URL}/alerts/{alert_id}/acknowledge", headers=headers)
+        alert_data = await fetch_alerts_data(client, headers, state=state, alert_type=type, q="")
+
+    return templates.TemplateResponse("partials/alert_table_content.html", {
+        "request": request,
+        "user": user,
+        "alerts": alert_data["alerts"],
+        "stats": alert_data["stats"],
+        "current_state": state,
+        "current_type": type,
+        "q": "",
+        "oob_update": True
+    })
+
+@app.post("/htmx/alerts/{alert_id}/resolve", response_class=HTMLResponse)
+async def htmx_alert_resolve(
+    request: Request,
+    alert_id: str,
+    note: str = Form("Verified and cleared by operator"),
+    state: str = Form("OPEN"),
+    type: str = Form("ALL"),
+    user: dict = Depends(get_current_user)
+):
+    headers = get_auth_headers(user) if user else {}
+    async with httpx.AsyncClient(timeout=8.0) as client:
+        await client.post(f"{BACKEND_BASE_URL}/alerts/{alert_id}/resolve", json={"note": note}, headers=headers)
+        alert_data = await fetch_alerts_data(client, headers, state=state, alert_type=type, q="")
+
+    return templates.TemplateResponse("partials/alert_table_content.html", {
+        "request": request,
+        "user": user,
+        "alerts": alert_data["alerts"],
+        "stats": alert_data["stats"],
+        "current_state": state,
+        "current_type": type,
+        "q": "",
+        "oob_update": True
+    })
+
+@app.get("/htmx/alerts/badge", response_class=HTMLResponse)
+async def htmx_alerts_badge(user: dict = Depends(get_current_user)):
+    if not user:
+        return ""
+    headers = get_auth_headers(user)
+    async with httpx.AsyncClient(timeout=3.0) as client:
+        data = await fetch_alerts_data(client, headers, state="OPEN", alert_type="ALL", q="")
+    count = data["stats"].get("openCount", 0)
+    if count > 0:
+        return f'<span class="px-2 py-0.5 text-[10px] font-bold rounded-full bg-rose-500 text-white">{count}</span>'
+    return ""
+
+# ================= ANIMAL HEALTH, TREATMENTS, TRANSFERS & DOSSIER =================
+
+@app.get("/herd/{animal_id}", response_class=HTMLResponse)
+async def cattle_detail_page(request: Request, animal_id: str, user: dict = Depends(get_current_user)):
+    if not user:
+        return RedirectResponse(url="/login")
+
+    headers = get_auth_headers(user)
+    async with httpx.AsyncClient(timeout=6.0) as client:
+        res = await client.get(f"{BACKEND_BASE_URL}/cattle/{animal_id}", headers=headers)
+        if res.status_code != 200:
+            raise HTTPException(status_code=404, detail="Animal not found")
+        detail = res.json()
+
+        try:
+            barns_res = await client.get(f"{BACKEND_BASE_URL}/barns", headers=headers)
+            barns = barns_res.json() if barns_res.status_code == 200 else []
+        except Exception:
+            barns = []
+
+    return templates.TemplateResponse("cattle_detail.html", {
+        "request": request,
+        "user": user,
+        "animal": detail["profile"],
+        "tags": detail["tags"],
+        "vaccinations": detail["vaccinations"],
+        "movements": detail["movements"],
+        "transfers": detail.get("transfers", []),
+        "barns": barns
+    })
+
+@app.post("/herd/{animal_id}/health")
+async def cattle_record_health(
+    animal_id: str,
+    record_type: str = Form(...),
+    health_status: str = Form("HEALTHY"),
+    title: str = Form(...),
+    medication: str = Form(""),
+    notes: str = Form(""),
+    user: dict = Depends(get_current_user)
+):
+    if not user:
+        return RedirectResponse(url="/login")
+
+    async with httpx.AsyncClient(timeout=6.0) as client:
+        await client.post(
+            f"{BACKEND_BASE_URL}/cattle/{animal_id}/health",
+            json={
+                "recordType": record_type,
+                "healthStatus": health_status,
+                "title": title,
+                "medication": medication,
+                "notes": notes
+            },
+            headers=get_auth_headers(user)
+        )
+    return RedirectResponse(url=f"/herd/{animal_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+@app.post("/herd/{animal_id}/transfer")
+async def cattle_transfer_action(
+    animal_id: str,
+    to_barn_id: str = Form(...),
+    reason: str = Form(""),
+    user: dict = Depends(get_current_user)
+):
+    if not user:
+        return RedirectResponse(url="/login")
+
+    async with httpx.AsyncClient(timeout=6.0) as client:
+        await client.post(
+            f"{BACKEND_BASE_URL}/cattle/{animal_id}/transfer",
+            json={"toBarnId": to_barn_id, "reason": reason},
+            headers=get_auth_headers(user)
+        )
+    return RedirectResponse(url=f"/herd/{animal_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+@app.get("/herd/{animal_id}/dossier")
+async def cattle_download_dossier(animal_id: str, user: dict = Depends(get_current_user)):
+    if not user:
+        return RedirectResponse(url="/login")
+
+    async with httpx.AsyncClient(timeout=6.0) as client:
+        res = await client.get(f"{BACKEND_BASE_URL}/cattle/{animal_id}/dossier", headers=get_auth_headers(user))
+        return Response(
+            content=res.content,
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="dossier_{animal_id.replace(" ", "_")}.json"'}
+        )
+
+
+# ================= SURVEILLANCE REPORTING & EXTERNAL API TRANSMISSION =================
+
+@app.get("/surveillance", response_class=HTMLResponse)
+async def surveillance_page(request: Request, user: dict = Depends(get_current_user)):
+    if not user:
+        return RedirectResponse(url="/login")
+
+    headers = get_auth_headers(user)
+    async with httpx.AsyncClient(timeout=8.0) as client:
+        try:
+            res = await client.get(f"{BACKEND_BASE_URL}/surveillance/overview", headers=headers)
+            data = res.json() if res.status_code == 200 else {}
+        except Exception:
+            data = {}
+
+    return templates.TemplateResponse("surveillance.html", {
+        "request": request,
+        "user": user,
+        "metrics": data.get("metrics", {
+            "totalHerd": 0, "vaccinatedHerd": 0, "vaccinationCoveragePct": 0,
+            "underTreatment": 0, "quarantined": 0, "totalTransfers": 0
+        }),
+        "transmissions": data.get("transmissions", [])
+    })
+
+@app.get("/surveillance/export")
+async def surveillance_export_proxy(
+    report_type: str = "OUTBREAK_SURVEILLANCE",
+    farm_id: str = "ALL",
+    format: str = "CSV",
+    user: dict = Depends(get_current_user)
+):
+    if not user:
+        return RedirectResponse(url="/login")
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        res = await client.get(
+            f"{BACKEND_BASE_URL}/surveillance/export",
+            params={"reportType": report_type, "farmId": farm_id, "format": format},
+            headers=get_auth_headers(user)
+        )
+        content_disp = res.headers.get("Content-Disposition", f'attachment; filename="report.{format.lower()}"')
+        media_type = res.headers.get("Content-Type", "application/octet-stream")
+        return Response(content=res.content, media_type=media_type, headers={"Content-Disposition": content_disp})
+
+@app.post("/htmx/surveillance/transmit", response_class=HTMLResponse)
+async def htmx_surveillance_transmit(
+    request: Request,
+    target_system: str = Form("National Animal Disease Control System (NADCS)"),
+    endpoint_url: str = Form("https://api.nadcs.dah.gov.vn/v2/surveillance/herd-health"),
+    report_type: str = Form("OUTBREAK_SURVEILLANCE"),
+    farm_scope: str = Form("ALL"),
+    payload_format: str = Form("JSON"),
+    user: dict = Depends(get_current_user)
+):
+    if not user:
+        return "<div class='p-4 text-red-600 text-xs'>Session expired.</div>"
+
+    headers = get_auth_headers(user)
+    banner_msg = ""
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        tx_res = await client.post(
+            f"{BACKEND_BASE_URL}/surveillance/transmit",
+            json={
+                "targetSystem": target_system,
+                "endpointUrl": endpoint_url,
+                "reportType": report_type,
+                "farmScope": farm_scope,
+                "payloadFormat": payload_format
+            },
+            headers=headers
+        )
+        if tx_res.status_code == 200:
+            banner_msg = tx_res.json().get("responseSummary", "Transmission completed.")
+
+        ov_res = await client.get(f"{BACKEND_BASE_URL}/surveillance/overview", headers=headers)
+        transmissions = ov_res.json().get("transmissions", []) if ov_res.status_code == 200 else []
+
+    return templates.TemplateResponse("partials/transmission_rows.html", {
+        "request": request,
+        "transmissions": transmissions,
+        "banner_msg": banner_msg
+    })
+
+@app.post("/htmx/barns/{barn_id}/verify-return", response_class=HTMLResponse)
+async def htmx_verify_barn_return(request: Request, barn_id: str, user: dict = Depends(get_current_user)):
+    headers = get_auth_headers(user) if user else {}
+    verify_banner = ""
+    async with httpx.AsyncClient(timeout=6.0) as client:
+        v_res = await client.post(f"{BACKEND_BASE_URL}/barns/{barn_id}/verify-return", headers=headers)
+        if v_res.status_code == 200:
+            body = v_res.json()
+            verify_banner = (
+                f"Return check for {barn_id}: {body.get('exitedCount', 0)} left (OUT), "
+                f"{body.get('returnedCount', 0)} returned (IN), "
+                f"{body.get('newlyFlaggedAlerts', 0)} missing-cattle alert(s) raised."
+            )
+        res = await client.get(f"{BACKEND_BASE_URL}/facilities/distribution", headers=headers)
+        farms = res.json() if res.status_code == 200 else []
+
+    return templates.TemplateResponse("partials/headcount_cards.html", {
+        "request": request,
+        "farms": farms,
+        "verify_banner": verify_banner
+    })

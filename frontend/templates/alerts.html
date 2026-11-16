@@ -1,0 +1,196 @@
+{% extends "base.html" %}
+{% block header_title %}Abnormality Detection & Alerts{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+
+    <!-- KPI Summary Cards -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="bg-white border border-gray-200 rounded-lg p-5 shadow-sm">
+            <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Open Anomalies</div>
+            <div id="kpi-open-count" class="text-3xl font-extrabold text-rose-600 font-mono mt-1">{{ stats.openCount }}</div>
+            <div class="text-[11px] text-gray-500 mt-1">Awaiting operator triage</div>
+        </div>
+
+        <div class="bg-white border border-gray-200 rounded-lg p-5 shadow-sm">
+            <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Missing Cattle</div>
+            <div id="kpi-missing-count" class="text-3xl font-extrabold text-amber-600 font-mono mt-1">{{ stats.missingCount }}</div>
+            <div class="text-[11px] text-gray-500 mt-1">Unreturned from pasture</div>
+        </div>
+
+        <div class="bg-white border border-gray-200 rounded-lg p-5 shadow-sm">
+            <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Unexpected Tags</div>
+            <div id="kpi-unexpected-count" class="text-3xl font-extrabold text-purple-600 font-mono mt-1">{{ stats.unexpectedCount }}</div>
+            <div class="text-[11px] text-gray-500 mt-1">Unregistered RFID reads</div>
+        </div>
+
+        <div class="bg-white border border-gray-200 rounded-lg p-5 shadow-sm">
+            <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Wrong-Barn Scans</div>
+            <div id="kpi-wrongbarn-count" class="text-3xl font-extrabold text-blue-600 font-mono mt-1">{{ stats.wrongBarnCount }}</div>
+            <div class="text-[11px] text-gray-500 mt-1">Out-of-barn gate detections</div>
+        </div>
+    </div>
+
+    <!-- Filter & Roll-Call Action Bar -->
+    <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-4 flex flex-wrap items-center justify-between gap-4">
+        <div class="flex flex-wrap items-center gap-3 flex-1">
+            <!-- State Filter -->
+            <select id="alert-state-filter"
+                    name="state"
+                    hx-get="/htmx/alerts-list"
+                    hx-include="#alert-type-filter, #alert-search-input"
+                    hx-target="#alerts-table-container"
+                    class="border border-gray-300 rounded-md px-3 py-2 text-xs font-semibold text-gray-700 bg-white focus:outline-none focus:border-blue-500">
+                <option value="OPEN" {% if current_state == 'OPEN' %}selected{% endif %}>State: OPEN</option>
+                <option value="ACKNOWLEDGED" {% if current_state == 'ACKNOWLEDGED' %}selected{% endif %}>State: ACKNOWLEDGED</option>
+                <option value="RESOLVED" {% if current_state == 'RESOLVED' %}selected{% endif %}>State: RESOLVED</option>
+                <option value="ALL" {% if current_state == 'ALL' %}selected{% endif %}>All States</option>
+            </select>
+
+            <!-- Type Filter -->
+            <select id="alert-type-filter"
+                    name="type"
+                    hx-get="/htmx/alerts-list"
+                    hx-include="#alert-state-filter, #alert-search-input"
+                    hx-target="#alerts-table-container"
+                    class="border border-gray-300 rounded-md px-3 py-2 text-xs font-semibold text-gray-700 bg-white focus:outline-none focus:border-blue-500">
+                <option value="ALL" {% if current_type == 'ALL' %}selected{% endif %}>All Anomaly Types</option>
+                <option value="MISSING_CATTLE" {% if current_type == 'MISSING_CATTLE' %}selected{% endif %}>Missing Cattle</option>
+                <option value="UNEXPECTED_TAG" {% if current_type == 'UNEXPECTED_TAG' %}selected{% endif %}>Unexpected RFID Tag</option>
+                <option value="WRONG_BARN" {% if current_type == 'WRONG_BARN' %}selected{% endif %}>Wrong Barn Passage</option>
+            </select>
+
+            <!-- Search Input -->
+            <div class="relative flex-1 min-w-[220px] max-w-sm">
+                <input type="text"
+                       id="alert-search-input"
+                       name="q"
+                       value="{{ q }}"
+                       placeholder="Search animal ID, tag EPC, barn..."
+                       hx-get="/htmx/alerts-list"
+                       hx-trigger="keyup changed delay:300ms"
+                       hx-include="#alert-state-filter, #alert-type-filter"
+                       hx-target="#alerts-table-container"
+                       class="w-full border border-gray-300 rounded-md pl-3 pr-8 py-2 text-xs text-gray-800 focus:outline-none focus:border-blue-500">
+            </div>
+        </div>
+
+        <div class="flex items-center space-x-2.5">
+            <button type="button"
+                    hx-get="/htmx/alerts-list"
+                    hx-include="#alert-state-filter, #alert-type-filter, #alert-search-input"
+                    hx-target="#alerts-table-container"
+                    class="px-3.5 py-2 bg-white hover:bg-gray-50 border border-gray-300 rounded-md text-xs font-semibold text-gray-700 transition">
+                Refresh
+            </button>
+
+            {% if user.role in ['SYSTEM_ADMIN', 'FARM_MANAGER', 'BARN_SUPERVISOR'] %}
+            <button type="button"
+                    onclick="document.getElementById('rollcall-modal').classList.remove('hidden')"
+                    class="px-4 py-2 bg-[#2f80ed] hover:bg-blue-600 text-white rounded-md text-xs font-semibold shadow-sm transition">
+                Run Missing-Cattle Roll-Call
+            </button>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Alerts Table Container -->
+    <div id="alerts-table-container"
+         hx-get="/htmx/alerts-list"
+         hx-trigger="every 5s"
+         hx-include="#alert-state-filter, #alert-type-filter, #alert-search-input"
+         hx-swap="innerHTML"
+         class="bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
+        {% include "partials/alert_table_content.html" %}
+    </div>
+
+</div>
+
+<!-- Roll-Call Reconciliation Modal -->
+<div id="rollcall-modal" class="hidden fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl border border-gray-200 shadow-xl max-w-md w-full p-6 space-y-4">
+        <div class="flex justify-between items-center border-b border-gray-100 pb-3">
+            <h3 class="text-base font-bold text-gray-900">Herd Return Roll-Call Scan</h3>
+            <button onclick="document.getElementById('rollcall-modal').classList.add('hidden')" class="text-gray-400 hover:text-gray-600 text-lg">&times;</button>
+        </div>
+
+        <p class="text-xs text-gray-500 leading-relaxed">
+            Reconciles active cattle assigned to a barn against live gate presence states. Any animal still marked <strong>OUT_PASTURE</strong> past the return threshold will trigger a <strong>MISSING_CATTLE</strong> alert.
+        </p>
+
+        <form hx-post="/htmx/alerts/reconcile"
+              hx-target="#alerts-table-container"
+              hx-swap="innerHTML"
+              onsubmit="document.getElementById('rollcall-modal').classList.add('hidden')"
+              class="space-y-4 text-xs">
+            <div>
+                <label class="block font-semibold text-gray-700 mb-1">Target Barn *</label>
+                <select name="barn_id" required class="w-full border border-gray-300 rounded px-3 py-2 bg-white focus:outline-none focus:border-blue-500">
+                    {% for b in barns %}
+                    <option value="{{ b.barnId }}">{{ b.code }} ({{ b.farmId }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div>
+                <label class="block font-semibold text-gray-700 mb-1">Pasture Overdue Threshold (Minutes)</label>
+                <input type="number" name="threshold_minutes" value="30" min="0"
+                       class="w-full border border-gray-300 rounded px-3 py-2 font-mono focus:outline-none focus:border-blue-500">
+            </div>
+
+            <div class="flex justify-end space-x-2 pt-2">
+                <button type="button" onclick="document.getElementById('rollcall-modal').classList.add('hidden')"
+                        class="px-4 py-2 border border-gray-300 rounded-md font-semibold text-gray-700">
+                    Cancel
+                </button>
+                <button type="submit"
+                        class="px-4 py-2 bg-[#2f80ed] hover:bg-blue-600 text-white rounded-md font-semibold">
+                    Start Roll-Call Scan
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Resolve Alert Modal -->
+<div id="resolve-modal" class="hidden fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl border border-gray-200 shadow-xl max-w-md w-full p-6 space-y-4">
+        <div class="flex justify-between items-center border-b border-gray-100 pb-3">
+            <h3 class="text-base font-bold text-gray-900">Resolve Anomaly Alert</h3>
+            <button onclick="document.getElementById('resolve-modal').classList.add('hidden')" class="text-gray-400 hover:text-gray-600 text-lg">&times;</button>
+        </div>
+
+        <form id="resolve-alert-form"
+              hx-post=""
+              hx-target="#alerts-table-container"
+              hx-swap="innerHTML"
+              onsubmit="document.getElementById('resolve-modal').classList.add('hidden')"
+              class="space-y-4 text-xs">
+            <div>
+                <label class="block font-semibold text-gray-700 mb-1">Resolution Note *</label>
+                <input type="text" name="note" required value="Located animal and verified RFID tag on site"
+                       class="w-full border border-gray-300 rounded px-3 py-2 focus:outline-none focus:border-blue-500">
+            </div>
+            <div class="flex justify-end space-x-2 pt-2">
+                <button type="button" onclick="document.getElementById('resolve-modal').classList.add('hidden')"
+                        class="px-4 py-2 border border-gray-300 rounded-md font-semibold text-gray-700">
+                    Cancel
+                </button>
+                <button type="submit"
+                        class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md font-semibold">
+                    Confirm Resolution
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+function openResolveModal(alertId) {
+    const form = document.getElementById('resolve-alert-form');
+    form.setAttribute('hx-post', '/htmx/alerts/' + alertId + '/resolve');
+    htmx.process(form);
+    document.getElementById('resolve-modal').classList.remove('hidden');
+}
+</script>
+{% endblock %}

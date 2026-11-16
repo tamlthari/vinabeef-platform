@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% block header_title %}Disease Surveillance & External API Integration{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+
+    <!-- Herd Health & Surveillance KPI Strip -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        <div class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+            <div class="text-[11px] font-semibold text-gray-400 uppercase">Active Herd</div>
+            <div class="text-2xl font-extrabold text-gray-900 font-mono mt-1">{{ "{:,}".format(metrics.totalHerd) }}</div>
+        </div>
+        <div class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+            <div class="text-[11px] font-semibold text-gray-400 uppercase">Vaccinated Coverage</div>
+            <div class="text-2xl font-extrabold text-emerald-600 font-mono mt-1">{{ metrics.vaccinationCoveragePct }}%</div>
+            <div class="text-[10px] text-gray-400 font-mono">{{ "{:,}".format(metrics.vaccinatedHerd) }} immunized</div>
+        </div>
+        <div class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+            <div class="text-[11px] font-semibold text-gray-400 uppercase">Under Treatment</div>
+            <div class="text-2xl font-extrabold text-amber-600 font-mono mt-1">{{ metrics.underTreatment }}</div>
+        </div>
+        <div class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+            <div class="text-[11px] font-semibold text-gray-400 uppercase">Quarantined</div>
+            <div class="text-2xl font-extrabold text-rose-600 font-mono mt-1">{{ metrics.quarantined }}</div>
+        </div>
+        <div class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+            <div class="text-[11px] font-semibold text-gray-400 uppercase">Recorded Transfers</div>
+            <div class="text-2xl font-extrabold text-blue-600 font-mono mt-1">{{ metrics.totalTransfers }}</div>
+        </div>
+    </div>
+
+    <!-- Two-Column Operations: Left = Multi-Format Report Generator, Right = External NADCS API Dispatch -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+        <!-- CARD 1: Multi-Format Report Generator -->
+        <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-6 space-y-4">
+            <div>
+                <h3 class="text-base font-bold text-gray-900">Multi-Format Compliance Report Export</h3>
+                <p class="text-xs text-gray-500 mt-0.5">Generate structured datasets in CSV, JSON, or WOAH/NADCS XML formats.</p>
+            </div>
+
+            <form action="/surveillance/export" method="GET" class="space-y-4 text-xs">
+                <div>
+                    <label class="block font-semibold text-gray-700 mb-1">Report Dataset *</label>
+                    <select name="report_type" class="w-full border border-gray-300 rounded-md px-3 py-2 bg-white">
+                        <option value="OUTBREAK_SURVEILLANCE">Outbreak & Herd Health Surveillance Summary</option>
+                        <option value="VACCINATION_COVERAGE">Barn-by-Barn Vaccination Coverage Ledger</option>
+                        <option value="HEALTH_TREATMENTS">Clinical Treatments, Vaccinations & Quarantine Log</option>
+                        <option value="MOVEMENT_TRANSFERS">Inter-Barn & Inter-Farm Animal Transfer History</option>
+                    </select>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block font-semibold text-gray-700 mb-1">Facility Scope</label>
+                        <select name="farm_id" class="w-full border border-gray-300 rounded-md px-3 py-2 bg-white">
+                            <option value="ALL">All Facilities (Enterprise)</option>
+                            <option value="FARM-DAK-LAK">Dak Lak Cattle Station</option>
+                            <option value="FARM-GIA-LAI">Gia Lai Grazing Facility</option>
+                            <option value="FARM-DONG-NAI">Dong Nai Feedlot</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block font-semibold text-gray-700 mb-1">Output Format</label>
+                        <select name="format" class="w-full border border-gray-300 rounded-md px-3 py-2 bg-white font-mono">
+                            <option value="CSV">CSV (Spreadsheet)</option>
+                            <option value="JSON">JSON (NADCS Schema v2.1)</option>
+                            <option value="XML">XML (WOAH / Veterinary Exchange)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="pt-2">
+                    <button type="submit" class="w-full py-2.5 px-4 bg-[#182232] hover:bg-[#232f42] text-white rounded-md font-semibold shadow-sm transition">
+                        Generate & Download Report
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <!-- CARD 2: External Regulatory API Transmission (NADCS) -->
+        <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-6 space-y-4">
+            <div>
+                <h3 class="text-base font-bold text-gray-900">External Surveillance API Transmission</h3>
+                <p class="text-xs text-gray-500 mt-0.5">Transmit outbreak, quarantine, and vaccination telemetry to the National Animal Disease Control System.</p>
+            </div>
+
+            <form hx-post="/htmx/surveillance/transmit"
+                  hx-target="#transmission-log-container"
+                  hx-swap="innerHTML"
+                  class="space-y-3.5 text-xs">
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block font-semibold text-gray-700 mb-1">Target Authority System</label>
+                        <input type="text" name="target_system" value="National Animal Disease Control System (NADCS)"
+                               class="w-full border border-gray-300 rounded-md px-3 py-2">
+                    </div>
+                    <div>
+                        <label class="block font-semibold text-gray-700 mb-1">Payload Standard</label>
+                        <select name="payload_format" class="w-full border border-gray-300 rounded-md px-3 py-2 bg-white font-mono">
+                            <option value="JSON">NADCS-JSON v2.1</option>
+                            <option value="XML">WOAH-XML Surveillance</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block font-semibold text-gray-700 mb-1">External REST Endpoint URL</label>
+                    <input type="text" name="endpoint_url" value="https://api.nadcs.dah.gov.vn/v2/surveillance/herd-health"
+                           class="w-full border border-gray-300 rounded-md px-3 py-2 font-mono text-gray-700">
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block font-semibold text-gray-700 mb-1">Surveillance Dataset</label>
+                        <select name="report_type" class="w-full border border-gray-300 rounded-md px-3 py-2 bg-white">
+                            <option value="OUTBREAK_SURVEILLANCE">Outbreak & Quarantine Surveillance</option>
+                            <option value="VACCINATION_COVERAGE">Herd Vaccination Coverage</option>
+                            <option value="HEALTH_TREATMENTS">Clinical Treatments Log</option>
+                            <option value="MOVEMENT_TRANSFERS">Cross-Farm Movement Ledger</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block font-semibold text-gray-700 mb-1">Facility Scope</label>
+                        <select name="farm_scope" class="w-full border border-gray-300 rounded-md px-3 py-2 bg-white">
+                            <option value="ALL">All Facilities</option>
+                            <option value="FARM-DAK-LAK">Dak Lak Station</option>
+                            <option value="FARM-GIA-LAI">Gia Lai Facility</option>
+                            <option value="FARM-DONG-NAI">Dong Nai Feedlot</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="pt-1">
+                    <button type="submit" class="w-full py-2.5 px-4 bg-[#2f80ed] hover:bg-blue-600 text-white rounded-md font-semibold shadow-sm transition">
+                        Transmit Data to National Surveillance API
+                    </button>
+                </div>
+            </form>
+        </div>
+
+    </div>
+
+    <!-- Outbound API Transmission Audit Log -->
+    <div id="transmission-log-container" class="bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
+        {% include "partials/transmission_rows.html" %}
+    </div>
+
+</div>
+{% endblock %}
