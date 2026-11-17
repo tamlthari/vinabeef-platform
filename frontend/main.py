@@ -24,6 +24,12 @@ templates = Jinja2Templates(directory="templates")
 
 BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://127.0.0.1:8080/api/v1")
 
+FARM_TO_BARN_PREFIX = {
+    "FARM-DAK-LAK": "BARN-DL-",
+    "FARM-GIA-LAI": "BARN-GL-",
+    "FARM-DONG-NAI": "BARN-DN-",
+}
+
 
 # --- Herd Count & Display ---
 
@@ -88,6 +94,26 @@ def get_auth_headers(user: dict = Depends(get_current_user)) -> dict:
     return {"Authorization": f"Bearer {user['token']}"}
 
 
+def get_allowed_farm_ids(user: dict) -> set:
+    allowed = set(user.get("farm_scopes") or [])
+    if user.get("farmId") and user["farmId"] != "ALL":
+        allowed.add(user["farmId"])
+    return allowed
+
+
+def get_allowed_barn_ids(user: dict) -> set:
+    raw = user.get("assignedBarns") or []
+    result = set()
+    for item in raw:
+        if isinstance(item, dict):
+            bid = item.get("barnId") or item.get("barn_id")
+            if bid:
+                result.add(str(bid))
+        elif item:
+            result.add(str(item))
+    return result
+
+
 def filter_farms_by_scope(farms: list, user: dict) -> list:
     if not user or not isinstance(farms, list):
         return []
@@ -96,13 +122,11 @@ def filter_farms_by_scope(farms: list, user: dict) -> list:
         return farms
 
     if role == "FARM_MANAGER":
-        allowed_farms = set(user.get("farm_scopes") or [])
-        if user.get("farmId") and user["farmId"] != "ALL":
-            allowed_farms.add(user["farmId"])
+        allowed_farms = get_allowed_farm_ids(user)
         return [f for f in farms if f.get("farmId") in allowed_farms]
 
     if role == "BARN_SUPERVISOR":
-        allowed_barns = set(user.get("assignedBarns") or [])
+        allowed_barns = get_allowed_barn_ids(user)
         scoped_farms = []
         for f in farms:
             matching_barns = [b for b in f.get("barns", []) if b.get("barnId") in allowed_barns]
@@ -117,6 +141,62 @@ def filter_farms_by_scope(farms: list, user: dict) -> list:
                 f_copy["vaccinatedAnimals"] = sum(b.get("vaccinatedAnimals", 0) for b in matching_barns)
                 scoped_farms.append(f_copy)
         return scoped_farms
+
+    return []
+
+
+def filter_barns_by_scope(barns: list, user: dict) -> list:
+    if not user or not isinstance(barns, list):
+        return []
+    role = user.get("role", "")
+    if role in ("SYSTEM_ADMIN", "EXECUTIVE"):
+        return barns
+
+    if role == "FARM_MANAGER":
+        allowed_farms = get_allowed_farm_ids(user)
+        prefixes = tuple(FARM_TO_BARN_PREFIX[f] for f in allowed_farms if f in FARM_TO_BARN_PREFIX)
+        scoped = []
+        for b in barns:
+            farm_id = str(b.get("farmId") or b.get("farm_id") or "")
+            barn_id = str(b.get("barnId") or b.get("barn_id") or "")
+            if farm_id in allowed_farms or (prefixes and barn_id.startswith(prefixes)):
+                scoped.append(b)
+        return scoped
+
+    if role == "BARN_SUPERVISOR":
+        allowed_barns = get_allowed_barn_ids(user)
+        return [
+            b for b in barns
+            if str(b.get("barnId") or b.get("barn_id") or "") in allowed_barns
+        ]
+
+    return []
+
+
+def filter_readers_by_scope(readers: list, user: dict) -> list:
+    if not user or not isinstance(readers, list):
+        return []
+    role = user.get("role", "")
+    if role in ("SYSTEM_ADMIN", "EXECUTIVE"):
+        return readers
+
+    if role == "FARM_MANAGER":
+        allowed_farms = get_allowed_farm_ids(user)
+        prefixes = tuple(FARM_TO_BARN_PREFIX[f] for f in allowed_farms if f in FARM_TO_BARN_PREFIX)
+        scoped = []
+        for r in readers:
+            farm_id = str(r.get("farm_id") or r.get("farmId") or "")
+            barn_id = str(r.get("barn_id") or r.get("barnId") or "")
+            if farm_id in allowed_farms or (prefixes and barn_id.startswith(prefixes)):
+                scoped.append(r)
+        return scoped
+
+    if role == "BARN_SUPERVISOR":
+        allowed_barns = get_allowed_barn_ids(user)
+        return [
+            r for r in readers
+            if str(r.get("barn_id") or r.get("barnId") or "") in allowed_barns
+        ]
 
     return []
 
@@ -560,7 +640,7 @@ async def herd_page(request: Request, page: int = 1, q: str = "", user: dict = D
         pagination = await fetch_paginated_cattle(client, headers, q=q, page=page, size=100)
         try:
             barns_res = await client.get(f"{BACKEND_BASE_URL}/barns", headers=headers)
-            barns = barns_res.json() if barns_res.status_code == 200 else []
+            barns = filter_barns_by_scope(barns_res.json() if barns_res.status_code == 200 else [], user)
         except Exception:
             barns = []
 
@@ -645,7 +725,7 @@ async def cattle_detail_page(request: Request, animal_id: str, user: dict = Depe
 
         try:
             barns_res = await client.get(f"{BACKEND_BASE_URL}/barns", headers=headers)
-            barns = barns_res.json() if barns_res.status_code == 200 else []
+            barns = filter_barns_by_scope(barns_res.json() if barns_res.status_code == 200 else [], user)
         except Exception:
             barns = []
 
@@ -806,7 +886,7 @@ async def readers_page(request: Request, user: dict = Depends(get_current_user))
                 return RedirectResponse(url="/login")
             if res.status_code == 403:
                 raise HTTPException(status_code=403, detail=extract_backend_error(res, "access Gate Readers"))
-            readers = res.json() if res.status_code == 200 else []
+            readers = filter_readers_by_scope(res.json() if res.status_code == 200 else [], user)
         except HTTPException:
             raise
         except Exception:
@@ -814,7 +894,7 @@ async def readers_page(request: Request, user: dict = Depends(get_current_user))
 
         try:
             barns_res = await client.get(f"{BACKEND_BASE_URL}/barns", headers=headers)
-            barns = barns_res.json() if barns_res.status_code == 200 else []
+            barns = filter_barns_by_scope(barns_res.json() if barns_res.status_code == 200 else [], user)
         except Exception:
             barns = []
 
@@ -832,7 +912,7 @@ async def htmx_readers_list(request: Request, q: str = "", user: dict = Depends(
     async with httpx.AsyncClient(timeout=3.0) as client:
         try:
             res = await client.get(f"{BACKEND_BASE_URL}/readers", params={"q": q}, headers=headers)
-            readers = res.json() if res.status_code == 200 else []
+            readers = filter_readers_by_scope(res.json() if res.status_code == 200 else [], user)
         except Exception:
             readers = []
     return templates.TemplateResponse("partials/reader_rows.html", {"request": request, "readers": readers})
@@ -869,7 +949,8 @@ async def htmx_readers_create(
             await log_security_violation_best_effort(user, request.url.path, msg)
             return HTMLResponse(content=render_403_alert_html(msg), status_code=403)
 
-        readers = (await client.get(f"{BACKEND_BASE_URL}/readers", headers=get_auth_headers(user))).json()
+        list_res = await client.get(f"{BACKEND_BASE_URL}/readers", headers=get_auth_headers(user))
+        readers = filter_readers_by_scope(list_res.json() if list_res.status_code == 200 else [], user)
     return templates.TemplateResponse("partials/reader_rows.html", {"request": request, "readers": readers})
 
 
@@ -886,7 +967,11 @@ async def reader_detail_page(request: Request, gate_id: str, user: dict = Depend
         if res.status_code != 200:
             raise HTTPException(status_code=404, detail="Gate reader not found")
         detail = res.json()
-        barns = (await client.get(f"{BACKEND_BASE_URL}/barns", headers=headers)).json()
+        if not filter_readers_by_scope([detail["reader"]], user):
+            raise HTTPException(status_code=403, detail=f"access Gate Reader '{gate_id}'")
+
+        barns_res = await client.get(f"{BACKEND_BASE_URL}/barns", headers=headers)
+        barns = filter_barns_by_scope(barns_res.json() if barns_res.status_code == 200 else [], user)
 
     return templates.TemplateResponse("reader_detail.html", {
         "request": request,
@@ -970,7 +1055,7 @@ async def alerts_page(request: Request, state: str = "OPEN", type: str = "ALL", 
         alert_data = await fetch_alerts_data(client, headers, state=state, alert_type=type, q=q)
         try:
             barns_res = await client.get(f"{BACKEND_BASE_URL}/barns", headers=headers)
-            barns = barns_res.json() if barns_res.status_code == 200 else []
+            barns = filter_barns_by_scope(barns_res.json() if barns_res.status_code == 200 else [], user)
         except Exception:
             barns = []
 
