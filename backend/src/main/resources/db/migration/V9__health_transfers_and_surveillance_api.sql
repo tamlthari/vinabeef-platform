@@ -51,12 +51,7 @@ INSERT INTO health_records (health_id, animal_id, record_type, administered_by, 
  CURRENT_TIMESTAMP - INTERVAL '1 day')
 ON CONFLICT (health_id) DO NOTHING;
 
-INSERT INTO animal_transfers (transfer_id, animal_id, from_barn_id, from_farm_id, to_barn_id, to_farm_id, transfer_type, reason, approved_by, transferred_at) VALUES
-('TRF-INIT-001', 'CI 356278', 'BARN-GL-001', 'FARM-GIA-LAI', 'BARN-DL-01', 'FARM-DAK-LAK', 'INTER_FARM',
- 'Breeding & finishing rotation to Dak Lak Station', 'manager_daklak', CURRENT_TIMESTAMP - INTERVAL '21 days'),
-('TRF-INIT-002', 'COW-0003', 'BARN-DL-01', 'FARM-DAK-LAK', 'BARN-DL-02', 'FARM-DAK-LAK', 'INTER_BARN',
- 'Feed group weight reallocation', 'supervisor_barn1', CURRENT_TIMESTAMP - INTERVAL '7 days')
-ON CONFLICT (transfer_id) DO NOTHING;
+DO $$ BEGIN IF EXISTS (SELECT 1 FROM barns WHERE barn_id = 'BARN-GL-001') AND EXISTS (SELECT 1 FROM barns WHERE barn_id = 'BARN-DL-01') AND EXISTS (SELECT 1 FROM barns WHERE barn_id = 'BARN-DL-02') THEN INSERT INTO animal_transfers (transfer_id, animal_id, from_barn_id, from_farm_id, to_barn_id, to_farm_id, transfer_type, reason, approved_by, transferred_at) VALUES ('TRF-INIT-001', 'CI 356278', 'BARN-GL-001', 'FARM-GIA-LAI', 'BARN-DL-01', 'FARM-DAK-LAK', 'INTER_FARM', 'Breeding & finishing rotation to Dak Lak Station', 'manager_daklak', CURRENT_TIMESTAMP - INTERVAL '21 days'), ('TRF-INIT-002', 'COW-0003', 'BARN-DL-01', 'FARM-DAK-LAK', 'BARN-DL-02', 'FARM-DAK-LAK', 'INTER_BARN', 'Feed group weight reallocation', 'supervisor_barn1', CURRENT_TIMESTAMP - INTERVAL '7 days') ON CONFLICT (transfer_id) DO NOTHING; END IF; END $$;
 
 INSERT INTO external_transmissions (transmission_id, target_system, endpoint_url, report_type, farm_scope, record_count, payload_format, http_status, response_summary, payload_snapshot, transmitted_by, transmitted_at) VALUES
 ('TX-NADCS-202601', 'National Animal Disease Control System (NADCS)', 'https://api.nadcs.dah.gov.vn/v2/surveillance/herd-health',

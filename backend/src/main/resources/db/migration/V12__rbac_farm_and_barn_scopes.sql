@@ -13,6 +13,13 @@ CREATE TABLE IF NOT EXISTS user_barn_assignments (
 CREATE INDEX IF NOT EXISTS idx_user_barn_assignments_user ON user_barn_assignments(username);
 CREATE INDEX IF NOT EXISTS idx_users_farm_id ON users(farm_id);
 
+-- 2b. Ensure the 3 enterprise farms exist before assigning users.farm_id foreign keys
+INSERT INTO farms (farm_id, name, location) VALUES
+    ('FARM-DAK-LAK', 'Dak Lak Cattle Station', 'Buon Ma Thuot, Dak Lak'),
+    ('FARM-GIA-LAI', 'Gia Lai Highland Facility', 'Pleiku, Gia Lai'),
+    ('FARM-DONG-NAI', 'Dong Nai Feedlot', 'Long Thanh, Dong Nai')
+ON CONFLICT (farm_id) DO NOTHING;
+
 -- 3. Configure existing accounts with explicit scopes
 UPDATE users SET full_name = 'Enterprise System Admin', farm_id = NULL WHERE username = 'admin';
 UPDATE users SET full_name = 'Executive Board Viewer', role = 'EXECUTIVE', farm_id = NULL WHERE username = 'executive';
