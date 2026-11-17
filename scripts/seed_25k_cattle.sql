@@ -18,18 +18,19 @@ SELECT
 FROM generate_series(1, 120) AS g
 ON CONFLICT (barn_id) DO NOTHING;
 
--- 3. Create 1 Gate Reader Station per Barn (120 readers total)
+-- 3. Create 1 Gate Reader Station per Barn (120 readers total, without 'Dr' prefix)
 INSERT INTO gates (gate_id, barn_id, label, reader_name, direction_mode, firmware_version, status)
 SELECT
     'GATE-' || (ARRAY['DL', 'GL', 'DN'])[((g - 1) / 40) + 1] || '-' || lpad((((g - 1) % 40) + 1)::text, 3, '0') AS gate_id,
     'BARN-' || (ARRAY['DL', 'GL', 'DN'])[((g - 1) / 40) + 1] || '-' || lpad((((g - 1) % 40) + 1)::text, 3, '0') AS barn_id,
     'Main Gate ' || lpad((((g - 1) % 40) + 1)::text, 3, '0') AS label,
-    'Dr' || upper(lpad(to_hex(1000 + g), 4, '0')) AS reader_name,
+    upper(lpad(to_hex(1000 + g), 4, '0')) AS reader_name,
     'BIDIRECTIONAL' AS direction_mode,
     '1.58.1998' AS firmware_version,
     'ONLINE' AS status
 FROM generate_series(1, 120) AS g
-ON CONFLICT (gate_id) DO NOTHING;
+ON CONFLICT (gate_id) DO UPDATE
+SET reader_name = EXCLUDED.reader_name;
 
 -- 4. Insert 25,000 Cattle evenly distributed across all 120 barns (~208-209 cattle/barn)
 INSERT INTO animals (animal_id, assigned_barn_id, lifecycle_status, breed, weight_kg)
@@ -42,12 +43,12 @@ SELECT
 FROM generate_series(1, 25000) AS c
 ON CONFLICT (animal_id) DO NOTHING;
 
--- 5. Insert 25,000 Active RFID Ear Tags
+-- 5. Insert 25,000 Active RFID Ear Tags (14-char hex UID format: 044E6602AD1490 .. 044E6602AD7637)
 INSERT INTO rfid_tags (tag_id, epc_value, credential_identifier, status)
 SELECT
-    'TAG-' || lpad(c::text, 6, '0') AS tag_id,
-    'E2801170000002' || lpad(c::text, 10, '0') AS epc_value,
-    lpad(c::text, 6, '0') AS credential_identifier,
+    '044E6602' || upper(lpad(to_hex(11343247 + c), 6, '0')) AS tag_id,
+    'E280117000044E6602' || upper(lpad(to_hex(11343247 + c), 6, '0')) AS epc_value,
+    '044E6602' || upper(lpad(to_hex(11343247 + c), 6, '0')) AS credential_identifier,
     'ACTIVE' AS status
 FROM generate_series(1, 25000) AS c
 ON CONFLICT (tag_id) DO NOTHING;
@@ -57,10 +58,11 @@ INSERT INTO tag_assignments (assignment_id, animal_id, tag_id, valid_from)
 SELECT
     'ASG-' || lpad(c::text, 6, '0') AS assignment_id,
     'VB-' || lpad(c::text, 6, '0') AS animal_id,
-    'TAG-' || lpad(c::text, 6, '0') AS tag_id,
+    '044E6602' || upper(lpad(to_hex(11343247 + c), 6, '0')) AS tag_id,
     CURRENT_TIMESTAMP - ((c % 90) || ' days')::interval AS valid_from
 FROM generate_series(1, 25000) AS c
-ON CONFLICT (assignment_id) DO NOTHING;
+ON CONFLICT (assignment_id) DO UPDATE
+SET tag_id = EXCLUDED.tag_id;
 
 -- 7. Seed Presence States (75% IN_BARN, 25% OUT_PASTURE)
 INSERT INTO presence_states (animal_id, current_barn_id, presence_status, updated_at)
