@@ -8,6 +8,7 @@ from starlette.middleware.sessions import SessionMiddleware
 import httpx
 import json
 import math
+import os
 
 app = FastAPI(title="VinaBeef Enterprise Portal")
 app.add_middleware(
@@ -19,7 +20,8 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
-BACKEND_BASE_URL = "http://localhost:8080/api/v1"
+# BACKEND_BASE_URL = "http://localhost:8080/api/v1"
+BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://127.0.0.1:8080/api/v1")
 
 # --- Herd Count & Display ---
 
