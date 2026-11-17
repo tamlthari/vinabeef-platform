@@ -74,6 +74,13 @@
                     <span>Audit</span>
                 </a>
                 {% endif %}
+                
+                {% if user.role in ['SYSTEM_ADMIN', 'FARM_MANAGER'] %}
+                <a href="/users" class="flex items-center space-x-3 px-3 py-2.5 rounded-lg transition {% if request.url.path.startswith('/users') %}bg-[#2f80ed] text-white shadow-sm font-semibold{% else %}text-slate-300 hover:bg-[#202c40] hover:text-white{% endif %}">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+                    <span>Users &amp; Roles</span>
+                </a>
+                {% endif %}
 
                 {% if user.role in ['BARN_SUPERVISOR', 'FARM_MANAGER', 'SYSTEM_ADMIN'] %}
                 <a href="/transfers" class="flex items-center space-x-3 px-3 py-2.5 rounded-lg transition {% if request.url.path == '/transfers' %}bg-[#2f80ed] text-white shadow-sm font-semibold{% else %}text-slate-300 hover:bg-[#202c40] hover:text-white{% endif %}">

@@ -5,7 +5,7 @@
     <div class="w-full lg:w-[420px] xl:w-[480px] p-10 flex flex-col justify-between border-r border-gray-200 bg-white z-10 shadow-lg overflow-y-auto">
         <div>
             <!-- Logo -->
-            <div class="flex items-center space-x-2.5 mb-10">
+            <div class="flex items-center space-x-2.5 mb-8">
                 <svg class="w-8 h-8 text-[#182232]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M4 3v18M20 3v18M6 6h12v12H6zM7 17l10-10M6 10h12M6 14h12"></path>
                 </svg>
@@ -13,7 +13,7 @@
             </div>
 
             <h2 class="text-xl font-bold text-gray-900 mb-2">Log in to manage farm assets</h2>
-            <p class="text-xs text-gray-500 leading-relaxed mb-6">
+            <p class="text-xs text-gray-500 leading-relaxed mb-5">
                 By logging in, you confirm that you have read, understood, and accepted our 
                 <a href="#" class="text-blue-600 hover:underline">End User License Agreement</a> and 
                 <a href="#" class="text-blue-600 hover:underline">Privacy Policy</a>.
@@ -25,7 +25,7 @@
             </div>
             {% endif %}
 
-            <form action="/login" method="POST" class="space-y-4">
+            <form action="/login" method="POST" class="space-y-3.5">
                 <div>
                     <input type="text" id="username-input" name="username" required placeholder="Enter Email or Username"
                            class="w-full border border-gray-300 rounded px-3.5 py-2.5 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
@@ -48,13 +48,13 @@
                     Sign Up
                 </button>
 
-                <div class="text-center pt-2">
+                <div class="text-center pt-1">
                     <a href="#" class="text-xs text-gray-500 hover:text-gray-800 font-medium">Need Help?</a>
                 </div>
             </form>
 
             <!-- Persona Fast Fill -->
-            <div class="mt-8 pt-4 border-t border-gray-100">
+            <div class="mt-6 pt-4 border-t border-gray-100">
                 <span class="block text-[10px] font-semibold uppercase text-gray-400 mb-2">Demo Role Selector</span>
                 <div class="grid grid-cols-2 gap-2 text-xs">
                     <button type="button" onclick="fill('admin')" class="p-2 text-left bg-gray-50 hover:bg-blue-50 border border-gray-200 rounded">
@@ -79,11 +79,19 @@
                     </button>
                     <button type="button" onclick="fill('supervisor_daklak')" class="p-2 text-left bg-gray-50 hover:bg-blue-50 border border-gray-200 rounded">
                         <span class="font-bold text-gray-800 block">supervisor_daklak</span>
-                        <span class="text-[10px] text-gray-500">BARN_SUPERVISOR (3 Barns)</span>
+                        <span class="text-[10px] text-gray-500">SUPERVISOR (Dak Lak • 3 Barns)</span>
                     </button>
-                    <button type="button" onclick="fill('supervisor_barn1')" class="p-2 text-left bg-gray-50 hover:bg-blue-50 border border-gray-200 rounded col-span-2">
-                        <span class="font-bold text-gray-800 block">supervisor_barn1</span>
-                        <span class="text-[10px] text-gray-500">BARN_SUPERVISOR (2 Barns - Dak Lak)</span>
+                    <button type="button" onclick="fill('supervisor_dongnai')" class="p-2 text-left bg-gray-50 hover:bg-blue-50 border border-gray-200 rounded">
+                        <span class="font-bold text-gray-800 block">supervisor_dongnai</span>
+                        <span class="text-[10px] text-gray-500">SUPERVISOR (Dong Nai • 3 Barns)</span>
+                    </button>
+                    <button type="button" onclick="fill('supervisor_gialai')" class="p-2 text-left bg-gray-50 hover:bg-blue-50 border border-gray-200 rounded">
+                        <span class="font-bold text-gray-800 block">supervisor_gialai</span>
+                        <span class="text-[10px] text-gray-500">SUPERVISOR (Gia Lai • 3 Barns)</span>
+                    </button>
+                    <button type="button" onclick="fill('supervisor_gialai_2barns')" class="p-2 text-left bg-gray-50 hover:bg-blue-50 border border-gray-200 rounded col-span-2">
+                        <span class="font-bold text-gray-800 block">supervisor_gialai_2barns</span>
+                        <span class="text-[10px] text-gray-500">BARN_SUPERVISOR (Gia Lai • 2 Barns)</span>
                     </button>
                 </div>
             </div>

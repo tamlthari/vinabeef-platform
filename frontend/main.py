@@ -1071,3 +1071,92 @@ async def htmx_verify_barn_return(request: Request, barn_id: str, user: dict = D
         "farms": farms,
         "verify_banner": verify_banner
     })
+
+@app.get("/users", response_class=HTMLResponse)
+async def users_page(request: Request, error: str = "", success: str = "", user: dict = Depends(get_current_user)):
+    if not user:
+        return RedirectResponse(url="/login")
+    if user.get("role") not in ("SYSTEM_ADMIN", "FARM_MANAGER"):
+        return RedirectResponse(url="/")
+
+    headers = get_auth_headers(user)
+    async with httpx.AsyncClient(timeout=6.0) as client:
+        users_res = await client.get(f"{BACKEND_BASE_URL}/users", headers=headers)
+        users_list = users_res.json() if users_res.status_code == 200 else []
+
+        dist_res = await client.get(f"{BACKEND_BASE_URL}/facilities/distribution", headers=headers)
+        farms = filter_farms_by_scope(dist_res.json() if dist_res.status_code == 200 else [], user)
+
+    return templates.TemplateResponse("users.html", {
+        "request": request,
+        "user": user,
+        "users_list": users_list,
+        "farms": farms,
+        "error": error,
+        "success": success
+    })
+
+
+@app.post("/users/create")
+async def create_user_submit(request: Request, user: dict = Depends(get_current_user)):
+    if not user or user.get("role") not in ("SYSTEM_ADMIN", "FARM_MANAGER"):
+        return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
+
+    form = await request.form()
+    payload = {
+        "username": form.get("username", ""),
+        "fullName": form.get("fullName", ""),
+        "password": form.get("password", ""),
+        "role": form.get("role", "BARN_SUPERVISOR"),
+        "farmId": form.get("farmId", ""),
+        "barnIds": form.getlist("barnIds")
+    }
+
+    async with httpx.AsyncClient(timeout=6.0) as client:
+        res = await client.post(f"{BACKEND_BASE_URL}/users", json=payload, headers=get_auth_headers(user))
+
+    if res.status_code != 200:
+        err_msg = res.json().get("error", "Failed to create user") if res.content else "Failed to create user"
+        return RedirectResponse(url=f"/users?error={err_msg}", status_code=status.HTTP_303_SEE_OTHER)
+
+    return RedirectResponse(
+        url=f"/users?success=Created+user+{payload['username']}+with+role+{payload['role']}",
+        status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@app.post("/users/{target_username}/update-role")
+async def update_user_role_submit(target_username: str, request: Request, user: dict = Depends(get_current_user)):
+    if not user or user.get("role") not in ("SYSTEM_ADMIN", "FARM_MANAGER"):
+        return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
+
+    form = await request.form()
+    new_role = form.get("role", "BARN_SUPERVISOR")
+    farm_id = form.get("farmId", "")
+
+    # If promoting to BARN_SUPERVISOR from the quick table, default to first barn of that farm
+    barn_ids = []
+    if new_role == "BARN_SUPERVISOR" and farm_id:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            dist_res = await client.get(f"{BACKEND_BASE_URL}/facilities/distribution", headers=get_auth_headers(user))
+            farms = filter_farms_by_scope(dist_res.json() if dist_res.status_code == 200 else [], user)
+            for f in farms:
+                if f.get("farmId") == farm_id and f.get("barns"):
+                    barn_ids = [f["barns"][0]["barnId"]]
+                    break
+
+    async with httpx.AsyncClient(timeout=6.0) as client:
+        res = await client.put(
+            f"{BACKEND_BASE_URL}/users/{target_username}/role-scope",
+            json={"role": new_role, "farmId": farm_id, "barnIds": barn_ids},
+            headers=get_auth_headers(user)
+        )
+
+    if res.status_code != 200:
+        err_msg = res.json().get("error", "Failed to update role") if res.content else "Failed to update role"
+        return RedirectResponse(url=f"/users?error={err_msg}", status_code=status.HTTP_303_SEE_OTHER)
+
+    return RedirectResponse(
+        url=f"/users?success=Updated+{target_username}+to+{new_role}",
+        status_code=status.HTTP_303_SEE_OTHER
+    )
