@@ -25,7 +25,7 @@ public class UserManagementController {
     private final PasswordEncoder passwordEncoder;
     private final RbacScopeService rbacScopeService;
 
-    private static final Set<String> VALID_ROLES = Set.of(
+    private static final Set VALID_ROLES = Set.of(
             "SYSTEM_ADMIN", "FARM_MANAGER", "BARN_SUPERVISOR", "EXECUTIVE"
     );
 
@@ -36,22 +36,22 @@ public class UserManagementController {
         private String password;
         private String role;
         private String farmId;
-        private List<String> barnIds;
+        private List barnIds;
     }
 
     @Data
     public static class UpdateUserRoleRequest {
         private String role;
         private String farmId;
-        private List<String> barnIds;
+        private List barnIds;
     }
 
     @GetMapping
     @PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'FARM_MANAGER')")
-    public ResponseEntity<?> listUsers() {
+    public ResponseEntity listUsers() {
         var scope = rbacScopeService.getCurrentScope();
 
-        List> users;
+        List users;
         if (scope.isGlobal()) {
             users = jdbcTemplate.queryForList("""
                 SELECT u.user_id, u.username, COALESCE(u.full_name, u.username) AS full_name,
@@ -73,7 +73,6 @@ public class UserManagementController {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Insufficient privileges"));
         }
 
-        // Attach assigned barns for each user
         var allAssignments = jdbcTemplate.queryForList("""
             SELECT uba.username, uba.barn_id, b.code AS barn_code
             FROM user_barn_assignments uba
@@ -81,18 +80,21 @@ public class UserManagementController {
             ORDER BY b.code ASC
         """);
 
-        Map<String, List>> barnsByUser = new HashMap<>();
-        for (var row : allAssignments) {
+        Map barnsByUser = new HashMap();
+        for (Object obj : allAssignments) {
+            Map row = (Map) obj;
             String uname = String.valueOf(row.get("username"));
-            barnsByUser.computeIfAbsent(uname, k -> new ArrayList<>()).add(Map.of(
+            List userBarns = (List) barnsByUser.computeIfAbsent(uname, k -> new ArrayList());
+            userBarns.add(Map.of(
                     "barnId", String.valueOf(row.get("barn_id")),
                     "code", String.valueOf(row.get("barn_code") != null ? row.get("barn_code") : row.get("barn_id"))
             ));
         }
 
-        List> enriched = new ArrayList<>();
-        for (var u : users) {
-            Map<String, Object> copy = new LinkedHashMap<>(u);
+        List enriched = new ArrayList();
+        for (Object obj : users) {
+            Map u = (Map) obj;
+            Map copy = new LinkedHashMap(u);
             String uname = String.valueOf(u.get("username"));
             copy.put("assignedBarns", barnsByUser.getOrDefault(uname, List.of()));
             enriched.add(copy);
@@ -105,7 +107,7 @@ public class UserManagementController {
     @PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'FARM_MANAGER')")
     @Audited(action = "CREATE_USER", targetType = "USER")
     @Transactional
-    public ResponseEntity<?> createUser(@RequestBody CreateUserRequest req) {
+    public ResponseEntity createUser(@RequestBody CreateUserRequest req) {
         var scope = rbacScopeService.getCurrentScope();
 
         if (req.getUsername() == null || req.getUsername().isBlank()) {
@@ -121,7 +123,6 @@ public class UserManagementController {
             return ResponseEntity.badRequest().body(Map.of("error", "Invalid role: " + targetRole));
         }
 
-        // Farm Managers can only create users within their own farm and cannot grant enterprise-wide roles
         String effectiveFarmId;
         if (scope.isFarmScoped()) {
             if ("SYSTEM_ADMIN".equals(targetRole) || "EXECUTIVE".equals(targetRole)) {
@@ -140,7 +141,7 @@ public class UserManagementController {
             return ResponseEntity.badRequest().body(Map.of("error", "A target farm must be selected for " + targetRole));
         }
 
-        List<String> cleanBarnIds = sanitizeAndValidateBarns(scope, targetRole, effectiveFarmId, req.getBarnIds());
+        List cleanBarnIds = sanitizeAndValidateBarns(scope, targetRole, effectiveFarmId, req.getBarnIds());
         if ("BARN_SUPERVISOR".equals(targetRole) && cleanBarnIds.isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("error", "At least one barn must be assigned to a Barn Supervisor."));
         }
@@ -161,12 +162,12 @@ public class UserManagementController {
             VALUES (?, ?, ?, ?, ?, ?)
         """, userId, username, encodedPassword, targetRole, effectiveFarmId, fullName);
 
-        for (String barnId : cleanBarnIds) {
+        for (Object barnObj : cleanBarnIds) {
             jdbcTemplate.update("""
                 INSERT INTO user_barn_assignments (username, barn_id)
                 VALUES (?, ?)
                 ON CONFLICT DO NOTHING
-            """, username, barnId);
+            """, username, String.valueOf(barnObj));
         }
 
         return ResponseEntity.ok(Map.of(
@@ -183,8 +184,8 @@ public class UserManagementController {
     @PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'FARM_MANAGER')")
     @Audited(action = "UPDATE_USER_ROLE_SCOPE", targetType = "USER")
     @Transactional
-    public ResponseEntity<?> updateUserRoleAndScope(@PathVariable String targetUsername,
-                                                    @RequestBody UpdateUserRoleRequest req) {
+    public ResponseEntity updateUserRoleAndScope(@PathVariable String targetUsername,
+                                                 @RequestBody UpdateUserRoleRequest req) {
         var scope = rbacScopeService.getCurrentScope();
         String cleanTarget = targetUsername.trim();
 
@@ -228,7 +229,7 @@ public class UserManagementController {
                             ? req.getFarmId().trim() : currentTargetFarm);
         }
 
-        List<String> cleanBarnIds = sanitizeAndValidateBarns(scope, newRole, effectiveFarmId, req.getBarnIds());
+        List cleanBarnIds = sanitizeAndValidateBarns(scope, newRole, effectiveFarmId, req.getBarnIds());
         if ("BARN_SUPERVISOR".equals(newRole) && cleanBarnIds.isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("error", "A Barn Supervisor must have at least one assigned barn."));
         }
@@ -238,12 +239,12 @@ public class UserManagementController {
 
         jdbcTemplate.update("DELETE FROM user_barn_assignments WHERE username = ?", cleanTarget);
         if ("BARN_SUPERVISOR".equals(newRole)) {
-            for (String barnId : cleanBarnIds) {
+            for (Object barnObj : cleanBarnIds) {
                 jdbcTemplate.update("""
                     INSERT INTO user_barn_assignments (username, barn_id)
                     VALUES (?, ?)
                     ON CONFLICT DO NOTHING
-                """, cleanTarget, barnId);
+                """, cleanTarget, String.valueOf(barnObj));
             }
         }
 
@@ -256,23 +257,25 @@ public class UserManagementController {
         ));
     }
 
-    private List<String> sanitizeAndValidateBarns(RbacScopeService.UserScope scope,
-                                                  String targetRole,
-                                                  String effectiveFarmId,
-                                                  List<String> rawBarnIds) {
+    private List sanitizeAndValidateBarns(RbacScopeService.UserScope scope,
+                                          String targetRole,
+                                          String effectiveFarmId,
+                                          List rawBarnIds) {
         if (!"BARN_SUPERVISOR".equals(targetRole) || rawBarnIds == null || rawBarnIds.isEmpty()) {
             return List.of();
         }
-        List<String> valid = new ArrayList<>();
-        for (String rawId : rawBarnIds) {
-            if (rawId == null || rawId.isBlank()) continue;
-            String bid = rawId.trim();
+        List valid = new ArrayList();
+        for (Object rawObj : rawBarnIds) {
+            if (rawObj == null) continue;
+            String bid = String.valueOf(rawObj).trim();
+            if (bid.isEmpty()) continue;
+
             var barnFarms = jdbcTemplate.queryForList(
                     "SELECT farm_id FROM barns WHERE barn_id = ?", String.class, bid);
             if (barnFarms.isEmpty()) {
                 throw new IllegalArgumentException("Barn does not exist: " + bid);
             }
-            String barnFarmId = barnFarms.get(0);
+            String barnFarmId = String.valueOf(barnFarms.get(0));
             if (effectiveFarmId != null && !effectiveFarmId.equals(barnFarmId)) {
                 throw new IllegalArgumentException("Barn " + bid + " does not belong to farm " + effectiveFarmId);
             }
