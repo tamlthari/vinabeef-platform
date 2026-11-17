@@ -53,12 +53,15 @@
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
                     <span>Dashboard</span>
                 </a>
+
+                {% if user.role in ['SYSTEM_ADMIN', 'FARM_MANAGER', 'EXECUTIVE'] %}
                 <a href="/surveillance" class="flex items-center space-x-3 px-3 py-2.5 rounded-lg transition {% if request.url.path.startswith('/surveillance') %}bg-[#2f80ed] text-white shadow-sm font-semibold{% else %}text-slate-300 hover:bg-[#202c40] hover:text-white{% endif %}">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
                     </svg>
                     <span>Disease Surveillance</span>
                 </a>
+                {% endif %}
 
                 <a href="/reports" class="flex items-center space-x-3 px-3 py-2.5 rounded-lg transition {% if request.url.path == '/reports' %}bg-[#2f80ed] text-white shadow-sm font-semibold{% else %}text-slate-300 hover:bg-[#202c40] hover:text-white{% endif %}">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
@@ -72,7 +75,7 @@
                 </a>
                 {% endif %}
 
-                {% if user.role in ['FARM_MANAGER', 'SYSTEM_ADMIN'] %}
+                {% if user.role in ['BARN_SUPERVISOR', 'FARM_MANAGER', 'SYSTEM_ADMIN'] %}
                 <a href="/transfers" class="flex items-center space-x-3 px-3 py-2.5 rounded-lg transition {% if request.url.path == '/transfers' %}bg-[#2f80ed] text-white shadow-sm font-semibold{% else %}text-slate-300 hover:bg-[#202c40] hover:text-white{% endif %}">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
                     <span>Cattle Transfers</span>
@@ -171,10 +174,19 @@
                         </button>
 
                         <!-- Dropdown Menu (Click-triggered, does NOT close on hover move) -->
-                        <div id="user-dropdown-menu" class="hidden absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-xl py-2 border border-gray-200 z-50">
+                        <div id="user-dropdown-menu" class="hidden absolute right-0 mt-2 w-60 bg-white rounded-xl shadow-xl py-2 border border-gray-200 z-50">
                             <div class="px-4 py-2 border-b border-gray-100 text-xs text-gray-500">
                                 Logged in as: <strong class="text-gray-800">{{ user.username }}</strong><br>
-                                Facility Scope: <strong class="text-gray-800">{{ user.farm_scopes | join(', ') if user.farm_scopes else 'All Farms' }}</strong>
+                                Facility Scope:
+                                <strong class="text-gray-800">
+                                    {% if user.role == 'BARN_SUPERVISOR' %}
+                                        {{ user.assignedBarns | join(', ') if user.assignedBarns else (user.farmId or 'Assigned Barns') }}
+                                    {% elif user.role == 'FARM_MANAGER' %}
+                                        {{ user.farmId if (user.farmId and user.farmId != 'ALL') else (user.farm_scopes | join(', ') if user.farm_scopes else 'Assigned Farm') }}
+                                    {% else %}
+                                        {{ user.farm_scopes | join(', ') if user.farm_scopes else 'All Farms' }}
+                                    {% endif %}
+                                </strong>
                             </div>
                             <div class="py-1">
                                 <a href="/logout" class="flex items-center space-x-2 px-4 py-2 text-xs text-rose-600 hover:bg-rose-50 font-semibold transition">

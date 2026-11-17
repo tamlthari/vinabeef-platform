@@ -1,0 +1,10 @@
+[
+    {
+        "merged": "com.vinabeef.field.app-debug-31:/layout_activity_main.xml.flat",
+        "source": "com.vinabeef.field.app-main-33:/layout/activity_main.xml"
+    },
+    {
+        "merged": "/Applications/Android Studio.app/Contents/jbr/Contents/Home/daemon/8.11.1/com.vinabeef.field.app-debug-31:/layout_activity_main.xml.flat",
+        "source": "/Applications/Android Studio.app/Contents/jbr/Contents/Home/daemon/8.11.1/com.vinabeef.field.app-main-33:/layout/activity_main.xml"
+    }
+]

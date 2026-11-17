@@ -2,7 +2,7 @@
 {% block content %}
 <div class="fixed inset-0 bg-white flex z-50">
     <!-- Left Column: Authentication Form -->
-    <div class="w-full lg:w-[420px] xl:w-[480px] p-10 flex flex-col justify-between border-r border-gray-200 bg-white z-10 shadow-lg">
+    <div class="w-full lg:w-[420px] xl:w-[480px] p-10 flex flex-col justify-between border-r border-gray-200 bg-white z-10 shadow-lg overflow-y-auto">
         <div>
             <!-- Logo -->
             <div class="flex items-center space-x-2.5 mb-10">
@@ -57,21 +57,33 @@
             <div class="mt-8 pt-4 border-t border-gray-100">
                 <span class="block text-[10px] font-semibold uppercase text-gray-400 mb-2">Demo Role Selector</span>
                 <div class="grid grid-cols-2 gap-2 text-xs">
-                    <button onclick="fill('admin')" class="p-2 text-left bg-gray-50 hover:bg-blue-50 border border-gray-200 rounded">
+                    <button type="button" onclick="fill('admin')" class="p-2 text-left bg-gray-50 hover:bg-blue-50 border border-gray-200 rounded">
                         <span class="font-bold text-gray-800 block">admin</span>
                         <span class="text-[10px] text-gray-500">SYSTEM_ADMIN</span>
                     </button>
-                    <button onclick="fill('manager_daklak')" class="p-2 text-left bg-gray-50 hover:bg-blue-50 border border-gray-200 rounded">
+                    <button type="button" onclick="fill('executive')" class="p-2 text-left bg-gray-50 hover:bg-blue-50 border border-gray-200 rounded">
+                        <span class="font-bold text-gray-800 block">executive</span>
+                        <span class="text-[10px] text-gray-500">EXECUTIVE</span>
+                    </button>
+                    <button type="button" onclick="fill('manager_daklak')" class="p-2 text-left bg-gray-50 hover:bg-blue-50 border border-gray-200 rounded">
                         <span class="font-bold text-gray-800 block">manager_daklak</span>
                         <span class="text-[10px] text-gray-500">FARM_MANAGER (Dak Lak)</span>
                     </button>
-                    <button onclick="fill('manager_gialai')" class="p-2 text-left bg-gray-50 hover:bg-blue-50 border border-gray-200 rounded">
+                    <button type="button" onclick="fill('manager_gialai')" class="p-2 text-left bg-gray-50 hover:bg-blue-50 border border-gray-200 rounded">
                         <span class="font-bold text-gray-800 block">manager_gialai</span>
                         <span class="text-[10px] text-gray-500">FARM_MANAGER (Gia Lai)</span>
                     </button>
-                    <button onclick="fill('executive')" class="p-2 text-left bg-gray-50 hover:bg-blue-50 border border-gray-200 rounded">
-                        <span class="font-bold text-gray-800 block">executive</span>
-                        <span class="text-[10px] text-gray-500">EXECUTIVE</span>
+                    <button type="button" onclick="fill('manager_dongnai')" class="p-2 text-left bg-gray-50 hover:bg-blue-50 border border-gray-200 rounded">
+                        <span class="font-bold text-gray-800 block">manager_dongnai</span>
+                        <span class="text-[10px] text-gray-500">FARM_MANAGER (Dong Nai)</span>
+                    </button>
+                    <button type="button" onclick="fill('supervisor_daklak')" class="p-2 text-left bg-gray-50 hover:bg-blue-50 border border-gray-200 rounded">
+                        <span class="font-bold text-gray-800 block">supervisor_daklak</span>
+                        <span class="text-[10px] text-gray-500">BARN_SUPERVISOR (3 Barns)</span>
+                    </button>
+                    <button type="button" onclick="fill('supervisor_barn1')" class="p-2 text-left bg-gray-50 hover:bg-blue-50 border border-gray-200 rounded col-span-2">
+                        <span class="font-bold text-gray-800 block">supervisor_barn1</span>
+                        <span class="text-[10px] text-gray-500">BARN_SUPERVISOR (2 Barns - Dak Lak)</span>
                     </button>
                 </div>
             </div>

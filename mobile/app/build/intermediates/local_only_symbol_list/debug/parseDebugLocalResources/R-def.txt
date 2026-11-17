@@ -1,0 +1,20 @@
+R_DEF: Internal format may change without notice
+local
+id btnConnectBle
+id btnDownloadBundle
+id btnLookupTag
+id btnSaveOffline
+id btnSimulateScan
+id btnSyncNow
+id etBarnId
+id etClinicalNotes
+id etMedicationBatch
+id etServerUrl
+id etTagInput
+id etTreatmentTitle
+id spHealthStatus
+id spRecordType
+id tvAnimalCard
+id tvReaderStatus
+id tvSyncStatus
+layout activity_main

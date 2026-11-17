@@ -1,0 +1,324 @@
+-- Merging decision tree log ---
+manifest
+ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:2:1-35:12
+INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:2:1-35:12
+INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:2:1-35:12
+INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:2:1-35:12
+MERGED from [com.google.android.material:material:1.12.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/30d172588f815a7129852f31471d561a/transformed/material-1.12.0/AndroidManifest.xml:17:1-24:12
+MERGED from [androidx.appcompat:appcompat-resources:1.7.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/1a3b6ab00c5cf8c4a33832f362173319/transformed/appcompat-resources-1.7.0/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.constraintlayout:constraintlayout:2.0.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/9fc54eb8e20053120eff880bf022583b/transformed/constraintlayout-2.0.1/AndroidManifest.xml:2:1-11:12
+MERGED from [androidx.appcompat:appcompat:1.7.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/2a8c66e6e23ec8df37d75e5a72658099/transformed/appcompat-1.7.0/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.emoji2:emoji2-views-helper:1.3.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/b5aa31ec1d1373c219d04b7b809157d5/transformed/emoji2-views-helper-1.3.0/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.emoji2:emoji2:1.3.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/bb6d72a34c047ac15669c171ced2538d/transformed/emoji2-1.3.0/AndroidManifest.xml:17:1-35:12
+MERGED from [androidx.viewpager2:viewpager2:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/f38a9186ce99dfc21b110c1c71242bc5/transformed/viewpager2-1.0.0/AndroidManifest.xml:17:1-24:12
+MERGED from [androidx.fragment:fragment:1.5.4] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/1e022452521be7a403215880a60bf4de/transformed/fragment-1.5.4/AndroidManifest.xml:17:1-24:12
+MERGED from [androidx.activity:activity:1.8.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/7b529cff77e9265474d41cc1561dfd4c/transformed/activity-1.8.0/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.drawerlayout:drawerlayout:1.1.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/c68e0b997d407c9f0b88ceb4c352a9c7/transformed/drawerlayout-1.1.1/AndroidManifest.xml:17:1-24:12
+MERGED from [androidx.coordinatorlayout:coordinatorlayout:1.1.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/2b3b5cf8ebc63ce36919b122ca2da146/transformed/coordinatorlayout-1.1.0/AndroidManifest.xml:17:1-24:12
+MERGED from [androidx.transition:transition:1.5.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3e8fb1fa128230bb5e3eb55c0fc53083/transformed/transition-1.5.0/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.dynamicanimation:dynamicanimation:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/b44f2b2d165c106b3cb63e16448ca7f9/transformed/dynamicanimation-1.0.0/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.vectordrawable:vectordrawable-animated:1.1.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/6fb370ae7c6e1ab362fbc5ffee729349/transformed/vectordrawable-animated-1.1.0/AndroidManifest.xml:17:1-24:12
+MERGED from [androidx.vectordrawable:vectordrawable:1.1.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/537be87aaabb508208111c115631e6d9/transformed/vectordrawable-1.1.0/AndroidManifest.xml:17:1-24:12
+MERGED from [androidx.legacy:legacy-support-core-utils:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/1e7b9a6cc1471deeb9714389ac0c9516/transformed/legacy-support-core-utils-1.0.0/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.loader:loader:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/7bbc5eeb09acc6753e86d01da524c17b/transformed/loader-1.0.0/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.viewpager:viewpager:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/74149aabb9ebc70cc80dcec9782b6d43/transformed/viewpager-1.0.0/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.recyclerview:recyclerview:1.1.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/caf14be5c5f7bbeeb2543696d3e69de7/transformed/recyclerview-1.1.0/AndroidManifest.xml:17:1-24:12
+MERGED from [androidx.customview:customview:1.1.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/43941e1ed73aa207936dc169c10ae35e/transformed/customview-1.1.0/AndroidManifest.xml:17:1-24:12
+MERGED from [androidx.core:core:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/491caade41e8059f1701c9c6b2691b8e/transformed/core-1.13.1/AndroidManifest.xml:17:1-30:12
+MERGED from [androidx.savedstate:savedstate:1.2.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/e464cec9233a99f19a64d4d5a118e7de/transformed/savedstate-1.2.1/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.lifecycle:lifecycle-livedata:2.6.2] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/f0d8bb1d8cd8d5e025b811b0f536f2ec/transformed/lifecycle-livedata-2.6.2/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.lifecycle:lifecycle-viewmodel:2.6.2] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/af3727f1fa05c729b6cc8b7f47a8cf82/transformed/lifecycle-viewmodel-2.6.2/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.lifecycle:lifecycle-process:2.6.2] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/c69791e00d88421e19d2ba943400b966/transformed/lifecycle-process-2.6.2/AndroidManifest.xml:17:1-35:12
+MERGED from [androidx.lifecycle:lifecycle-livedata-core:2.6.2] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/b99f4e14e6b3422282cc9448fa52791b/transformed/lifecycle-livedata-core-2.6.2/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.lifecycle:lifecycle-runtime:2.6.2] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/9fcc94acc16772b2f20c43348ed3fa1c/transformed/lifecycle-runtime-2.6.2/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.lifecycle:lifecycle-viewmodel-savedstate:2.6.2] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/1b357f12ddf7c8c8117df9fc53c359ef/transformed/lifecycle-viewmodel-savedstate-2.6.2/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.core:core-ktx:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/bb78f9f1780c19ce35e646f59edf4715/transformed/core-ktx-1.13.1/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.annotation:annotation-experimental:1.4.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/9da99f7848b634ae2e896018d6444890/transformed/annotation-experimental-1.4.0/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.cursoradapter:cursoradapter:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/9b64cee5b31a65a02704a2a4d043ba98/transformed/cursoradapter-1.0.0/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:17:1-55:12
+MERGED from [androidx.cardview:cardview:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/70da0ed5ff7c892bb735a18b090f2642/transformed/cardview-1.0.0/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.interpolator:interpolator:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/e746dbb3d52fe98c27d0d996437254d7/transformed/interpolator-1.0.0/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/2fd7686fc0882488a09f1edd08ac485e/transformed/versionedparcelable-1.1.1/AndroidManifest.xml:17:1-27:12
+MERGED from [androidx.startup:startup-runtime:1.1.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/4af92f0112ec7171ce23ee44b0be3205/transformed/startup-runtime-1.1.1/AndroidManifest.xml:17:1-33:12
+MERGED from [androidx.tracing:tracing:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/775805c10620911a7d7ceb22a181ffa9/transformed/tracing-1.0.0/AndroidManifest.xml:17:1-24:12
+MERGED from [androidx.arch.core:core-runtime:2.2.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/1b62c872ea2157673204d6df3ec5023d/transformed/core-runtime-2.2.0/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.documentfile:documentfile:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3872a10a00d7802516754301c806202a/transformed/documentfile-1.0.0/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.localbroadcastmanager:localbroadcastmanager:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/1be38a7a2456c5713fba300fa3b77865/transformed/localbroadcastmanager-1.0.0/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.print:print:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/d3d5aec85d3be107366ee2adc987d45f/transformed/print-1.0.0/AndroidManifest.xml:17:1-22:12
+	package
+		INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml
+	android:versionName
+		INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml
+	android:versionCode
+		INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml
+	xmlns:android
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:2:11-69
+uses-permission#android.permission.INTERNET
+ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:5:5-67
+	android:name
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:5:22-64
+uses-permission#android.permission.ACCESS_NETWORK_STATE
+ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:6:5-79
+	android:name
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:6:22-76
+uses-permission#android.permission.BLUETOOTH
+ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:9:5-95
+	android:maxSdkVersion
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:9:66-92
+	android:name
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:9:22-65
+uses-permission#android.permission.BLUETOOTH_ADMIN
+ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:10:5-101
+	android:maxSdkVersion
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:10:72-98
+	android:name
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:10:22-71
+uses-permission#android.permission.ACCESS_FINE_LOCATION
+ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:11:5-106
+	android:maxSdkVersion
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:11:77-103
+	android:name
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:11:22-76
+uses-permission#android.permission.BLUETOOTH_SCAN
+ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:12:5-120
+	android:usesPermissionFlags
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:12:71-117
+	android:name
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:12:22-70
+uses-permission#android.permission.BLUETOOTH_CONNECT
+ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:13:5-76
+	android:name
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:13:22-73
+uses-permission#android.permission.NFC
+ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:16:5-62
+	android:name
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:16:22-59
+application
+ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:18:5-33:19
+INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:18:5-33:19
+MERGED from [com.google.android.material:material:1.12.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/30d172588f815a7129852f31471d561a/transformed/material-1.12.0/AndroidManifest.xml:22:5-20
+MERGED from [com.google.android.material:material:1.12.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/30d172588f815a7129852f31471d561a/transformed/material-1.12.0/AndroidManifest.xml:22:5-20
+MERGED from [androidx.constraintlayout:constraintlayout:2.0.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/9fc54eb8e20053120eff880bf022583b/transformed/constraintlayout-2.0.1/AndroidManifest.xml:9:5-20
+MERGED from [androidx.constraintlayout:constraintlayout:2.0.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/9fc54eb8e20053120eff880bf022583b/transformed/constraintlayout-2.0.1/AndroidManifest.xml:9:5-20
+MERGED from [androidx.emoji2:emoji2:1.3.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/bb6d72a34c047ac15669c171ced2538d/transformed/emoji2-1.3.0/AndroidManifest.xml:23:5-33:19
+MERGED from [androidx.emoji2:emoji2:1.3.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/bb6d72a34c047ac15669c171ced2538d/transformed/emoji2-1.3.0/AndroidManifest.xml:23:5-33:19
+MERGED from [androidx.core:core:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/491caade41e8059f1701c9c6b2691b8e/transformed/core-1.13.1/AndroidManifest.xml:28:5-89
+MERGED from [androidx.core:core:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/491caade41e8059f1701c9c6b2691b8e/transformed/core-1.13.1/AndroidManifest.xml:28:5-89
+MERGED from [androidx.lifecycle:lifecycle-process:2.6.2] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/c69791e00d88421e19d2ba943400b966/transformed/lifecycle-process-2.6.2/AndroidManifest.xml:23:5-33:19
+MERGED from [androidx.lifecycle:lifecycle-process:2.6.2] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/c69791e00d88421e19d2ba943400b966/transformed/lifecycle-process-2.6.2/AndroidManifest.xml:23:5-33:19
+MERGED from [androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:23:5-53:19
+MERGED from [androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:23:5-53:19
+MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/2fd7686fc0882488a09f1edd08ac485e/transformed/versionedparcelable-1.1.1/AndroidManifest.xml:24:5-25:19
+MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/2fd7686fc0882488a09f1edd08ac485e/transformed/versionedparcelable-1.1.1/AndroidManifest.xml:24:5-25:19
+MERGED from [androidx.startup:startup-runtime:1.1.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/4af92f0112ec7171ce23ee44b0be3205/transformed/startup-runtime-1.1.1/AndroidManifest.xml:25:5-31:19
+MERGED from [androidx.startup:startup-runtime:1.1.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/4af92f0112ec7171ce23ee44b0be3205/transformed/startup-runtime-1.1.1/AndroidManifest.xml:25:5-31:19
+	android:extractNativeLibs
+		INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml
+	android:appComponentFactory
+		ADDED from [androidx.core:core:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/491caade41e8059f1701c9c6b2691b8e/transformed/core-1.13.1/AndroidManifest.xml:28:18-86
+	android:label
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:20:9-44
+	android:allowBackup
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:19:9-35
+	android:theme
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:22:9-79
+	android:usesCleartextTraffic
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:21:9-44
+activity#com.vinabeef.field.MainActivity
+ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:24:9-32:20
+	android:screenOrientation
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:27:13-49
+	android:exported
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:26:13-36
+	android:name
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:25:13-41
+intent-filter#action:name:android.intent.action.MAIN+category:name:android.intent.category.LAUNCHER
+ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:28:13-31:29
+action#android.intent.action.MAIN
+ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:29:17-69
+	android:name
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:29:25-66
+category#android.intent.category.LAUNCHER
+ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:30:17-77
+	android:name
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:30:27-74
+uses-sdk
+INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml reason: use-sdk injection requested
+INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml
+INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml
+MERGED from [com.google.android.material:material:1.12.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/30d172588f815a7129852f31471d561a/transformed/material-1.12.0/AndroidManifest.xml:20:5-44
+MERGED from [com.google.android.material:material:1.12.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/30d172588f815a7129852f31471d561a/transformed/material-1.12.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.appcompat:appcompat-resources:1.7.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/1a3b6ab00c5cf8c4a33832f362173319/transformed/appcompat-resources-1.7.0/AndroidManifest.xml:5:5-44
+MERGED from [androidx.appcompat:appcompat-resources:1.7.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/1a3b6ab00c5cf8c4a33832f362173319/transformed/appcompat-resources-1.7.0/AndroidManifest.xml:5:5-44
+MERGED from [androidx.constraintlayout:constraintlayout:2.0.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/9fc54eb8e20053120eff880bf022583b/transformed/constraintlayout-2.0.1/AndroidManifest.xml:5:5-7:41
+MERGED from [androidx.constraintlayout:constraintlayout:2.0.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/9fc54eb8e20053120eff880bf022583b/transformed/constraintlayout-2.0.1/AndroidManifest.xml:5:5-7:41
+MERGED from [androidx.appcompat:appcompat:1.7.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/2a8c66e6e23ec8df37d75e5a72658099/transformed/appcompat-1.7.0/AndroidManifest.xml:5:5-44
+MERGED from [androidx.appcompat:appcompat:1.7.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/2a8c66e6e23ec8df37d75e5a72658099/transformed/appcompat-1.7.0/AndroidManifest.xml:5:5-44
+MERGED from [androidx.emoji2:emoji2-views-helper:1.3.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/b5aa31ec1d1373c219d04b7b809157d5/transformed/emoji2-views-helper-1.3.0/AndroidManifest.xml:5:5-44
+MERGED from [androidx.emoji2:emoji2-views-helper:1.3.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/b5aa31ec1d1373c219d04b7b809157d5/transformed/emoji2-views-helper-1.3.0/AndroidManifest.xml:5:5-44
+MERGED from [androidx.emoji2:emoji2:1.3.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/bb6d72a34c047ac15669c171ced2538d/transformed/emoji2-1.3.0/AndroidManifest.xml:21:5-44
+MERGED from [androidx.emoji2:emoji2:1.3.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/bb6d72a34c047ac15669c171ced2538d/transformed/emoji2-1.3.0/AndroidManifest.xml:21:5-44
+MERGED from [androidx.viewpager2:viewpager2:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/f38a9186ce99dfc21b110c1c71242bc5/transformed/viewpager2-1.0.0/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.viewpager2:viewpager2:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/f38a9186ce99dfc21b110c1c71242bc5/transformed/viewpager2-1.0.0/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.fragment:fragment:1.5.4] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/1e022452521be7a403215880a60bf4de/transformed/fragment-1.5.4/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.fragment:fragment:1.5.4] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/1e022452521be7a403215880a60bf4de/transformed/fragment-1.5.4/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.activity:activity:1.8.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/7b529cff77e9265474d41cc1561dfd4c/transformed/activity-1.8.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.activity:activity:1.8.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/7b529cff77e9265474d41cc1561dfd4c/transformed/activity-1.8.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.drawerlayout:drawerlayout:1.1.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/c68e0b997d407c9f0b88ceb4c352a9c7/transformed/drawerlayout-1.1.1/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.drawerlayout:drawerlayout:1.1.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/c68e0b997d407c9f0b88ceb4c352a9c7/transformed/drawerlayout-1.1.1/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.coordinatorlayout:coordinatorlayout:1.1.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/2b3b5cf8ebc63ce36919b122ca2da146/transformed/coordinatorlayout-1.1.0/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.coordinatorlayout:coordinatorlayout:1.1.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/2b3b5cf8ebc63ce36919b122ca2da146/transformed/coordinatorlayout-1.1.0/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.transition:transition:1.5.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3e8fb1fa128230bb5e3eb55c0fc53083/transformed/transition-1.5.0/AndroidManifest.xml:5:5-44
+MERGED from [androidx.transition:transition:1.5.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3e8fb1fa128230bb5e3eb55c0fc53083/transformed/transition-1.5.0/AndroidManifest.xml:5:5-44
+MERGED from [androidx.dynamicanimation:dynamicanimation:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/b44f2b2d165c106b3cb63e16448ca7f9/transformed/dynamicanimation-1.0.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.dynamicanimation:dynamicanimation:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/b44f2b2d165c106b3cb63e16448ca7f9/transformed/dynamicanimation-1.0.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.vectordrawable:vectordrawable-animated:1.1.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/6fb370ae7c6e1ab362fbc5ffee729349/transformed/vectordrawable-animated-1.1.0/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.vectordrawable:vectordrawable-animated:1.1.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/6fb370ae7c6e1ab362fbc5ffee729349/transformed/vectordrawable-animated-1.1.0/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.vectordrawable:vectordrawable:1.1.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/537be87aaabb508208111c115631e6d9/transformed/vectordrawable-1.1.0/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.vectordrawable:vectordrawable:1.1.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/537be87aaabb508208111c115631e6d9/transformed/vectordrawable-1.1.0/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.legacy:legacy-support-core-utils:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/1e7b9a6cc1471deeb9714389ac0c9516/transformed/legacy-support-core-utils-1.0.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.legacy:legacy-support-core-utils:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/1e7b9a6cc1471deeb9714389ac0c9516/transformed/legacy-support-core-utils-1.0.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.loader:loader:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/7bbc5eeb09acc6753e86d01da524c17b/transformed/loader-1.0.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.loader:loader:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/7bbc5eeb09acc6753e86d01da524c17b/transformed/loader-1.0.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.viewpager:viewpager:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/74149aabb9ebc70cc80dcec9782b6d43/transformed/viewpager-1.0.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.viewpager:viewpager:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/74149aabb9ebc70cc80dcec9782b6d43/transformed/viewpager-1.0.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.recyclerview:recyclerview:1.1.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/caf14be5c5f7bbeeb2543696d3e69de7/transformed/recyclerview-1.1.0/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.recyclerview:recyclerview:1.1.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/caf14be5c5f7bbeeb2543696d3e69de7/transformed/recyclerview-1.1.0/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.customview:customview:1.1.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/43941e1ed73aa207936dc169c10ae35e/transformed/customview-1.1.0/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.customview:customview:1.1.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/43941e1ed73aa207936dc169c10ae35e/transformed/customview-1.1.0/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.core:core:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/491caade41e8059f1701c9c6b2691b8e/transformed/core-1.13.1/AndroidManifest.xml:20:5-44
+MERGED from [androidx.core:core:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/491caade41e8059f1701c9c6b2691b8e/transformed/core-1.13.1/AndroidManifest.xml:20:5-44
+MERGED from [androidx.savedstate:savedstate:1.2.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/e464cec9233a99f19a64d4d5a118e7de/transformed/savedstate-1.2.1/AndroidManifest.xml:20:5-44
+MERGED from [androidx.savedstate:savedstate:1.2.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/e464cec9233a99f19a64d4d5a118e7de/transformed/savedstate-1.2.1/AndroidManifest.xml:20:5-44
+MERGED from [androidx.lifecycle:lifecycle-livedata:2.6.2] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/f0d8bb1d8cd8d5e025b811b0f536f2ec/transformed/lifecycle-livedata-2.6.2/AndroidManifest.xml:20:5-44
+MERGED from [androidx.lifecycle:lifecycle-livedata:2.6.2] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/f0d8bb1d8cd8d5e025b811b0f536f2ec/transformed/lifecycle-livedata-2.6.2/AndroidManifest.xml:20:5-44
+MERGED from [androidx.lifecycle:lifecycle-viewmodel:2.6.2] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/af3727f1fa05c729b6cc8b7f47a8cf82/transformed/lifecycle-viewmodel-2.6.2/AndroidManifest.xml:20:5-44
+MERGED from [androidx.lifecycle:lifecycle-viewmodel:2.6.2] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/af3727f1fa05c729b6cc8b7f47a8cf82/transformed/lifecycle-viewmodel-2.6.2/AndroidManifest.xml:20:5-44
+MERGED from [androidx.lifecycle:lifecycle-process:2.6.2] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/c69791e00d88421e19d2ba943400b966/transformed/lifecycle-process-2.6.2/AndroidManifest.xml:21:5-44
+MERGED from [androidx.lifecycle:lifecycle-process:2.6.2] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/c69791e00d88421e19d2ba943400b966/transformed/lifecycle-process-2.6.2/AndroidManifest.xml:21:5-44
+MERGED from [androidx.lifecycle:lifecycle-livedata-core:2.6.2] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/b99f4e14e6b3422282cc9448fa52791b/transformed/lifecycle-livedata-core-2.6.2/AndroidManifest.xml:20:5-44
+MERGED from [androidx.lifecycle:lifecycle-livedata-core:2.6.2] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/b99f4e14e6b3422282cc9448fa52791b/transformed/lifecycle-livedata-core-2.6.2/AndroidManifest.xml:20:5-44
+MERGED from [androidx.lifecycle:lifecycle-runtime:2.6.2] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/9fcc94acc16772b2f20c43348ed3fa1c/transformed/lifecycle-runtime-2.6.2/AndroidManifest.xml:5:5-44
+MERGED from [androidx.lifecycle:lifecycle-runtime:2.6.2] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/9fcc94acc16772b2f20c43348ed3fa1c/transformed/lifecycle-runtime-2.6.2/AndroidManifest.xml:5:5-44
+MERGED from [androidx.lifecycle:lifecycle-viewmodel-savedstate:2.6.2] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/1b357f12ddf7c8c8117df9fc53c359ef/transformed/lifecycle-viewmodel-savedstate-2.6.2/AndroidManifest.xml:20:5-44
+MERGED from [androidx.lifecycle:lifecycle-viewmodel-savedstate:2.6.2] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/1b357f12ddf7c8c8117df9fc53c359ef/transformed/lifecycle-viewmodel-savedstate-2.6.2/AndroidManifest.xml:20:5-44
+MERGED from [androidx.core:core-ktx:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/bb78f9f1780c19ce35e646f59edf4715/transformed/core-ktx-1.13.1/AndroidManifest.xml:5:5-44
+MERGED from [androidx.core:core-ktx:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/bb78f9f1780c19ce35e646f59edf4715/transformed/core-ktx-1.13.1/AndroidManifest.xml:5:5-44
+MERGED from [androidx.annotation:annotation-experimental:1.4.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/9da99f7848b634ae2e896018d6444890/transformed/annotation-experimental-1.4.0/AndroidManifest.xml:5:5-44
+MERGED from [androidx.annotation:annotation-experimental:1.4.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/9da99f7848b634ae2e896018d6444890/transformed/annotation-experimental-1.4.0/AndroidManifest.xml:5:5-44
+MERGED from [androidx.cursoradapter:cursoradapter:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/9b64cee5b31a65a02704a2a4d043ba98/transformed/cursoradapter-1.0.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.cursoradapter:cursoradapter:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/9b64cee5b31a65a02704a2a4d043ba98/transformed/cursoradapter-1.0.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:21:5-44
+MERGED from [androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:21:5-44
+MERGED from [androidx.cardview:cardview:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/70da0ed5ff7c892bb735a18b090f2642/transformed/cardview-1.0.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.cardview:cardview:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/70da0ed5ff7c892bb735a18b090f2642/transformed/cardview-1.0.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.interpolator:interpolator:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/e746dbb3d52fe98c27d0d996437254d7/transformed/interpolator-1.0.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.interpolator:interpolator:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/e746dbb3d52fe98c27d0d996437254d7/transformed/interpolator-1.0.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/2fd7686fc0882488a09f1edd08ac485e/transformed/versionedparcelable-1.1.1/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/2fd7686fc0882488a09f1edd08ac485e/transformed/versionedparcelable-1.1.1/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.startup:startup-runtime:1.1.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/4af92f0112ec7171ce23ee44b0be3205/transformed/startup-runtime-1.1.1/AndroidManifest.xml:21:5-23:41
+MERGED from [androidx.startup:startup-runtime:1.1.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/4af92f0112ec7171ce23ee44b0be3205/transformed/startup-runtime-1.1.1/AndroidManifest.xml:21:5-23:41
+MERGED from [androidx.tracing:tracing:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/775805c10620911a7d7ceb22a181ffa9/transformed/tracing-1.0.0/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.tracing:tracing:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/775805c10620911a7d7ceb22a181ffa9/transformed/tracing-1.0.0/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.arch.core:core-runtime:2.2.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/1b62c872ea2157673204d6df3ec5023d/transformed/core-runtime-2.2.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.arch.core:core-runtime:2.2.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/1b62c872ea2157673204d6df3ec5023d/transformed/core-runtime-2.2.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.documentfile:documentfile:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3872a10a00d7802516754301c806202a/transformed/documentfile-1.0.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.documentfile:documentfile:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3872a10a00d7802516754301c806202a/transformed/documentfile-1.0.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.localbroadcastmanager:localbroadcastmanager:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/1be38a7a2456c5713fba300fa3b77865/transformed/localbroadcastmanager-1.0.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.localbroadcastmanager:localbroadcastmanager:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/1be38a7a2456c5713fba300fa3b77865/transformed/localbroadcastmanager-1.0.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.print:print:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/d3d5aec85d3be107366ee2adc987d45f/transformed/print-1.0.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.print:print:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/d3d5aec85d3be107366ee2adc987d45f/transformed/print-1.0.0/AndroidManifest.xml:20:5-44
+	android:targetSdkVersion
+		INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml
+	android:minSdkVersion
+		INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml
+provider#androidx.startup.InitializationProvider
+ADDED from [androidx.emoji2:emoji2:1.3.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/bb6d72a34c047ac15669c171ced2538d/transformed/emoji2-1.3.0/AndroidManifest.xml:24:9-32:20
+MERGED from [androidx.lifecycle:lifecycle-process:2.6.2] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/c69791e00d88421e19d2ba943400b966/transformed/lifecycle-process-2.6.2/AndroidManifest.xml:24:9-32:20
+MERGED from [androidx.lifecycle:lifecycle-process:2.6.2] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/c69791e00d88421e19d2ba943400b966/transformed/lifecycle-process-2.6.2/AndroidManifest.xml:24:9-32:20
+MERGED from [androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:24:9-32:20
+MERGED from [androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:24:9-32:20
+MERGED from [androidx.startup:startup-runtime:1.1.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/4af92f0112ec7171ce23ee44b0be3205/transformed/startup-runtime-1.1.1/AndroidManifest.xml:26:9-30:34
+MERGED from [androidx.startup:startup-runtime:1.1.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/4af92f0112ec7171ce23ee44b0be3205/transformed/startup-runtime-1.1.1/AndroidManifest.xml:26:9-30:34
+	tools:node
+		ADDED from [androidx.emoji2:emoji2:1.3.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/bb6d72a34c047ac15669c171ced2538d/transformed/emoji2-1.3.0/AndroidManifest.xml:28:13-31
+	android:authorities
+		ADDED from [androidx.emoji2:emoji2:1.3.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/bb6d72a34c047ac15669c171ced2538d/transformed/emoji2-1.3.0/AndroidManifest.xml:26:13-68
+	android:exported
+		ADDED from [androidx.emoji2:emoji2:1.3.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/bb6d72a34c047ac15669c171ced2538d/transformed/emoji2-1.3.0/AndroidManifest.xml:27:13-37
+	android:name
+		ADDED from [androidx.emoji2:emoji2:1.3.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/bb6d72a34c047ac15669c171ced2538d/transformed/emoji2-1.3.0/AndroidManifest.xml:25:13-67
+meta-data#androidx.emoji2.text.EmojiCompatInitializer
+ADDED from [androidx.emoji2:emoji2:1.3.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/bb6d72a34c047ac15669c171ced2538d/transformed/emoji2-1.3.0/AndroidManifest.xml:29:13-31:52
+	android:value
+		ADDED from [androidx.emoji2:emoji2:1.3.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/bb6d72a34c047ac15669c171ced2538d/transformed/emoji2-1.3.0/AndroidManifest.xml:31:17-49
+	android:name
+		ADDED from [androidx.emoji2:emoji2:1.3.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/bb6d72a34c047ac15669c171ced2538d/transformed/emoji2-1.3.0/AndroidManifest.xml:30:17-75
+permission#${applicationId}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
+ADDED from [androidx.core:core:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/491caade41e8059f1701c9c6b2691b8e/transformed/core-1.13.1/AndroidManifest.xml:22:5-24:47
+	android:protectionLevel
+		ADDED from [androidx.core:core:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/491caade41e8059f1701c9c6b2691b8e/transformed/core-1.13.1/AndroidManifest.xml:24:9-44
+	android:name
+		ADDED from [androidx.core:core:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/491caade41e8059f1701c9c6b2691b8e/transformed/core-1.13.1/AndroidManifest.xml:23:9-81
+permission#com.vinabeef.field.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
+ADDED from [androidx.core:core:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/491caade41e8059f1701c9c6b2691b8e/transformed/core-1.13.1/AndroidManifest.xml:22:5-24:47
+	android:protectionLevel
+		ADDED from [androidx.core:core:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/491caade41e8059f1701c9c6b2691b8e/transformed/core-1.13.1/AndroidManifest.xml:24:9-44
+	android:name
+		ADDED from [androidx.core:core:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/491caade41e8059f1701c9c6b2691b8e/transformed/core-1.13.1/AndroidManifest.xml:23:9-81
+uses-permission#${applicationId}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
+ADDED from [androidx.core:core:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/491caade41e8059f1701c9c6b2691b8e/transformed/core-1.13.1/AndroidManifest.xml:26:5-97
+	android:name
+		ADDED from [androidx.core:core:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/491caade41e8059f1701c9c6b2691b8e/transformed/core-1.13.1/AndroidManifest.xml:26:22-94
+uses-permission#com.vinabeef.field.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
+ADDED from [androidx.core:core:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/491caade41e8059f1701c9c6b2691b8e/transformed/core-1.13.1/AndroidManifest.xml:26:5-97
+	android:name
+		ADDED from [androidx.core:core:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/491caade41e8059f1701c9c6b2691b8e/transformed/core-1.13.1/AndroidManifest.xml:26:22-94
+meta-data#androidx.lifecycle.ProcessLifecycleInitializer
+ADDED from [androidx.lifecycle:lifecycle-process:2.6.2] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/c69791e00d88421e19d2ba943400b966/transformed/lifecycle-process-2.6.2/AndroidManifest.xml:29:13-31:52
+	android:value
+		ADDED from [androidx.lifecycle:lifecycle-process:2.6.2] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/c69791e00d88421e19d2ba943400b966/transformed/lifecycle-process-2.6.2/AndroidManifest.xml:31:17-49
+	android:name
+		ADDED from [androidx.lifecycle:lifecycle-process:2.6.2] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/c69791e00d88421e19d2ba943400b966/transformed/lifecycle-process-2.6.2/AndroidManifest.xml:30:17-78
+meta-data#androidx.profileinstaller.ProfileInstallerInitializer
+ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:29:13-31:52
+	android:value
+		ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:31:17-49
+	android:name
+		ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:30:17-85
+receiver#androidx.profileinstaller.ProfileInstallReceiver
+ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:34:9-52:20
+	android:enabled
+		ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:37:13-35
+	android:exported
+		ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:38:13-36
+	android:permission
+		ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:39:13-57
+	android:directBootAware
+		ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:36:13-44
+	android:name
+		ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:35:13-76
+intent-filter#action:name:androidx.profileinstaller.action.INSTALL_PROFILE
+ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:40:13-42:29
+action#androidx.profileinstaller.action.INSTALL_PROFILE
+ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:41:17-91
+	android:name
+		ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:41:25-88
+intent-filter#action:name:androidx.profileinstaller.action.SKIP_FILE
+ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:43:13-45:29
+action#androidx.profileinstaller.action.SKIP_FILE
+ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:44:17-85
+	android:name
+		ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:44:25-82
+intent-filter#action:name:androidx.profileinstaller.action.SAVE_PROFILE
+ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:46:13-48:29
+action#androidx.profileinstaller.action.SAVE_PROFILE
+ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:47:17-88
+	android:name
+		ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:47:25-85
+intent-filter#action:name:androidx.profileinstaller.action.BENCHMARK_OPERATION
+ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:49:13-51:29
+action#androidx.profileinstaller.action.BENCHMARK_OPERATION
+ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:50:17-95
+	android:name
+		ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:50:25-92

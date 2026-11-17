@@ -1,0 +1,34 @@
+com.vinabeef.field.app-appcompat-resources-1.7.0-0 /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/1a3b6ab00c5cf8c4a33832f362173319/transformed/appcompat-resources-1.7.0/res
+com.vinabeef.field.app-lifecycle-viewmodel-savedstate-2.6.2-1 /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/1b357f12ddf7c8c8117df9fc53c359ef/transformed/lifecycle-viewmodel-savedstate-2.6.2/res
+com.vinabeef.field.app-core-runtime-2.2.0-2 /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/1b62c872ea2157673204d6df3ec5023d/transformed/core-runtime-2.2.0/res
+com.vinabeef.field.app-fragment-1.5.4-3 /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/1e022452521be7a403215880a60bf4de/transformed/fragment-1.5.4/res
+com.vinabeef.field.app-appcompat-1.7.0-4 /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/2a8c66e6e23ec8df37d75e5a72658099/transformed/appcompat-1.7.0/res
+com.vinabeef.field.app-coordinatorlayout-1.1.0-5 /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/2b3b5cf8ebc63ce36919b122ca2da146/transformed/coordinatorlayout-1.1.0/res
+com.vinabeef.field.app-material-1.12.0-6 /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/30d172588f815a7129852f31471d561a/transformed/material-1.12.0/res
+com.vinabeef.field.app-profileinstaller-1.3.1-7 /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/res
+com.vinabeef.field.app-transition-1.5.0-8 /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3e8fb1fa128230bb5e3eb55c0fc53083/transformed/transition-1.5.0/res
+com.vinabeef.field.app-core-1.13.1-9 /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/491caade41e8059f1701c9c6b2691b8e/transformed/core-1.13.1/res
+com.vinabeef.field.app-startup-runtime-1.1.1-10 /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/4af92f0112ec7171ce23ee44b0be3205/transformed/startup-runtime-1.1.1/res
+com.vinabeef.field.app-cardview-1.0.0-11 /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/70da0ed5ff7c892bb735a18b090f2642/transformed/cardview-1.0.0/res
+com.vinabeef.field.app-activity-1.8.0-12 /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/7b529cff77e9265474d41cc1561dfd4c/transformed/activity-1.8.0/res
+com.vinabeef.field.app-annotation-experimental-1.4.0-13 /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/9da99f7848b634ae2e896018d6444890/transformed/annotation-experimental-1.4.0/res
+com.vinabeef.field.app-constraintlayout-2.0.1-14 /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/9fc54eb8e20053120eff880bf022583b/transformed/constraintlayout-2.0.1/res
+com.vinabeef.field.app-lifecycle-runtime-2.6.2-15 /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/9fcc94acc16772b2f20c43348ed3fa1c/transformed/lifecycle-runtime-2.6.2/res
+com.vinabeef.field.app-lifecycle-viewmodel-2.6.2-16 /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/af3727f1fa05c729b6cc8b7f47a8cf82/transformed/lifecycle-viewmodel-2.6.2/res
+com.vinabeef.field.app-emoji2-views-helper-1.3.0-17 /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/b5aa31ec1d1373c219d04b7b809157d5/transformed/emoji2-views-helper-1.3.0/res
+com.vinabeef.field.app-lifecycle-livedata-core-2.6.2-18 /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/b99f4e14e6b3422282cc9448fa52791b/transformed/lifecycle-livedata-core-2.6.2/res
+com.vinabeef.field.app-emoji2-1.3.0-19 /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/bb6d72a34c047ac15669c171ced2538d/transformed/emoji2-1.3.0/res
+com.vinabeef.field.app-core-ktx-1.13.1-20 /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/bb78f9f1780c19ce35e646f59edf4715/transformed/core-ktx-1.13.1/res
+com.vinabeef.field.app-drawerlayout-1.1.1-21 /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/c68e0b997d407c9f0b88ceb4c352a9c7/transformed/drawerlayout-1.1.1/res
+com.vinabeef.field.app-lifecycle-process-2.6.2-22 /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/c69791e00d88421e19d2ba943400b966/transformed/lifecycle-process-2.6.2/res
+com.vinabeef.field.app-recyclerview-1.1.0-23 /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/caf14be5c5f7bbeeb2543696d3e69de7/transformed/recyclerview-1.1.0/res
+com.vinabeef.field.app-savedstate-1.2.1-24 /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/e464cec9233a99f19a64d4d5a118e7de/transformed/savedstate-1.2.1/res
+com.vinabeef.field.app-lifecycle-livedata-2.6.2-25 /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/f0d8bb1d8cd8d5e025b811b0f536f2ec/transformed/lifecycle-livedata-2.6.2/res
+com.vinabeef.field.app-viewpager2-1.0.0-26 /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/f38a9186ce99dfc21b110c1c71242bc5/transformed/viewpager2-1.0.0/res
+com.vinabeef.field.app-pngs-27 /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/build/generated/res/pngs/debug
+com.vinabeef.field.app-resValues-28 /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/build/generated/res/resValues/debug
+com.vinabeef.field.app-packageDebugResources-29 /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/build/intermediates/incremental/debug/packageDebugResources/merged.dir
+com.vinabeef.field.app-packageDebugResources-30 /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/build/intermediates/incremental/debug/packageDebugResources/stripped.dir
+com.vinabeef.field.app-debug-31 /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/build/intermediates/merged_res/debug/mergeDebugResources
+com.vinabeef.field.app-debug-32 /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/debug/res
+com.vinabeef.field.app-main-33 /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/res

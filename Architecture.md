@@ -173,3 +173,41 @@ With a Modular Monolith backend and a Python frontend, your AWS architecture rem
                                               +---------------------------+
 ```
 
+#### Offline and Mobile processing
+```
++-----------------------------------------------------------------------------------+
+|                        CENTRAL CLOUD / HEADQUARTERS CORE                          |
+|                                                                                   |
+|  +-----------------------+     +-----------------------------------------------+  |
+|  | FastAPI + HTMX Portal |     |          Spring Boot 4.1 Backend              |  |
+|  | (Admin, Ops & NADCS)  |<--->|  - REST & Mobile Sync API (/api/v1/mobile/*)  |  |
+|  +-----------------------+     |  - Batch Ingestion API (/api/v1/ingestion/*)  |  |
+|                                |  - SafetrustProcessingService (Idempotent)    |  |
+|                                |  - RBAC Security & AOP Audit Logger           |  |
+|                                +-----------------------+-----------------------+  |
+|                                                        |                          |
+|                                        +---------------+---------------+          |
+|                                        |                               |          |
+|                                +-------v-------+               +-------v-------+  |
+|                                |  PostgreSQL   |               |     Redis     |  |
+|                                | (25k Herd DB) |               | (Cloud Dedup) |  |
+|                                +---------------+               +---------------+  |
++----------------------------------------^-------------------------------^----------+
+                                         |                               |
+               WAN Sync (HTTPS Batch /   |                               | Cellular / Barn Wi-Fi
+               MQTT QoS 1 Replay)        |                               | (Offline Outbox Sync)
++----------------------------------------+----+   +----------------------+----------+
+|     BARN SITE: EDGE GATEWAY NODE            |   |   FIELD OPERATIONS: MOBILE APP  |
+|  (Industrial Mini-PC / Local Docker Host)   |   |  (Supervisor Tablet / Phone)    |
+|                                             |   |                                 |
+|  +-------------------+   +---------------+  |   |  +---------------------------+  |
+|  | Local Mosquitto   |-->| Edge Sync &   |  |   |  | Offline-First PWA / App   |  |
+|  | MQTT Broker (LAN) |   | Dedup Worker  |  |   |  | - Pre-cached Barn Herd    |  |
+|  +---------^---------+   +-------+-------+  |   |  | - Encrypted SQLite Outbox |  |
+|            |                     |          |   |  +-------------^-------------+  |
+|  +---------+---------+   +-------v-------+  |   |                | BLE / NFC      |
+|  | Barn Gate Readers |   | SQLite WAL    |  |   |  +-------------+-------------+  |
+|  | (DrEBE6, Dr49F9)  |   | Outbox Queue  |  |   |  | Handheld UHF/HF RFID Wand |  |
+|  +-------------------+   +---------------+  |   |  +---------------------------+  |
++---------------------------------------------+   +---------------------------------+
+```

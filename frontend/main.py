@@ -1,14 +1,21 @@
-from datetime import date
+from datetime import date, datetime
 
 from fastapi import FastAPI, Request, Response, Form, Depends, HTTPException, status
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.sessions import SessionMiddleware
 import httpx
 import json
 import math
 
 app = FastAPI(title="VinaBeef Enterprise Portal")
+app.add_middleware(
+    SessionMiddleware,
+    secret_key="vinabeef-platform-session-secret-2026",
+    same_site="lax",
+    https_only=False
+)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
@@ -65,31 +72,66 @@ async def fetch_paginated_cattle(client: httpx.AsyncClient, headers: dict, q: st
 
 # --- Authentication & Session Helper ---
 
-def get_current_user(request: Request):
-    token = request.cookies.get("vinabeef_token")
-    role = request.cookies.get("vinabeef_role")
-    username = request.cookies.get("vinabeef_user")
-    raw_scopes = request.cookies.get("vinabeef_scopes", "[]")
+# def get_current_user(request: Request):
+#     token = request.cookies.get("vinabeef_token")
+#     role = request.cookies.get("vinabeef_role")
+#     username = request.cookies.get("vinabeef_user")
+#     raw_scopes = request.cookies.get("vinabeef_scopes", "[]")
     
-    try:
-        farm_scopes = json.loads(raw_scopes)
-    except Exception:
-        farm_scopes = []
+#     try:
+#         farm_scopes = json.loads(raw_scopes)
+#     except Exception:
+#         farm_scopes = []
 
-    if not token or not role or not username:
-        return None
+#     if not token or not role or not username:
+#         return None
 
-    return {
-        "token": token,
-        "username": username,
-        "role": role,
-        "farm_scopes": farm_scopes
-    }
+#     return {
+#         "token": token,
+#         "username": username,
+#         "role": role,
+#         "farm_scopes": farm_scopes
+#     }
+
+def get_current_user(request: Request):
+    return request.session.get("user")
 
 def get_auth_headers(user: dict = Depends(get_current_user)) -> dict:
     if not user:
         return {}
     return {"Authorization": f"Bearer {user['token']}"}
+
+def filter_farms_by_scope(farms: list, user: dict) -> list:
+    if not user or not isinstance(farms, list):
+        return []
+    role = user.get("role", "")
+    if role in ("SYSTEM_ADMIN", "EXECUTIVE"):
+        return farms
+
+    if role == "FARM_MANAGER":
+        allowed_farms = set(user.get("farm_scopes") or [])
+        if user.get("farmId") and user["farmId"] != "ALL":
+            allowed_farms.add(user["farmId"])
+        return [f for f in farms if f.get("farmId") in allowed_farms]
+
+    if role == "BARN_SUPERVISOR":
+        allowed_barns = set(user.get("assignedBarns") or [])
+        scoped_farms = []
+        for f in farms:
+            matching_barns = [b for b in f.get("barns", []) if b.get("barnId") in allowed_barns]
+            if matching_barns:
+                f_copy = dict(f)
+                f_copy["barns"] = matching_barns
+                f_copy["totalCapacity"] = sum(b.get("capacity", 0) for b in matching_barns)
+                f_copy["totalHeadcount"] = sum(b.get("currentHeadcount", 0) for b in matching_barns)
+                f_copy["totalInCount"] = sum(b.get("inCount", 0) for b in matching_barns)
+                f_copy["totalOutCount"] = sum(b.get("outCount", 0) for b in matching_barns)
+                f_copy["totalAnimals"] = sum(b.get("assignedAnimals", 0) for b in matching_barns)
+                f_copy["vaccinatedAnimals"] = sum(b.get("vaccinatedAnimals", 0) for b in matching_barns)
+                scoped_farms.append(f_copy)
+        return scoped_farms
+
+    return []
 
 # --- Page Routes ---
 
@@ -100,46 +142,69 @@ async def login_page(request: Request):
         return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
     return templates.TemplateResponse("login.html", {"request": request, "error": None})
 
+# @app.post("/login")
+# async def login_submit(request: Request, username: str = Form(...), password: str = Form(...)):
+#     async with httpx.AsyncClient(timeout=5.0) as client:
+#         res = await client.post(f"{BACKEND_BASE_URL}/auth/login", json={"username": username, "password": password})
+#         if res.status_code != 200:
+#             return templates.TemplateResponse("login.html", {"request": request, "error": "Invalid username or password"})
+
+#         data = res.json()
+#         farm_id = data.get("farmId", "ALL")
+#         farm_scopes = data.get("farm_scopes") or ([farm_id] if farm_id and farm_id != "ALL" else [])
+
+#         request.session["user"] = {
+#             "username": data.get("username", username),
+#             "role": data.get("role", "EXECUTIVE"),
+#             "farmId": farm_id,
+#             "farm_scopes": farm_scopes,
+#             "assignedBarns": data.get("assignedBarns", []),
+#             "token": data.get("token")
+#         }
+#     return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
+
+# @app.get("/logout")
+# async def logout_action():
+#     redirect = RedirectResponse(url="/login", status_code=status.HTTP_302_FOUND)
+#     redirect.delete_cookie("vinabeef_token")
+#     redirect.delete_cookie("vinabeef_role")
+#     redirect.delete_cookie("vinabeef_user")
+#     redirect.delete_cookie("vinabeef_scopes")
+#     return redirect
+
 @app.post("/login")
-async def login_action(
-    request: Request,
-    response: Response,
-    username: str = Form(...),
-    password: str = Form(...)
-):
+async def login_submit(request: Request, username: str = Form(...), password: str = Form(...)):
     async with httpx.AsyncClient(timeout=5.0) as client:
-        try:
-            res = await client.post(
-                f"{BACKEND_BASE_URL}/auth/login",
-                json={"username": username, "password": password}
-            )
-            if res.status_code == 200:
-                data = res.json()
-                redirect = RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
-                redirect.set_cookie("vinabeef_token", data["token"], httponly=True, max_age=86400)
-                redirect.set_cookie("vinabeef_role", data["role"], max_age=86400)
-                redirect.set_cookie("vinabeef_user", data["username"], max_age=86400)
-                redirect.set_cookie("vinabeef_scopes", json.dumps(data.get("farmScopes", [])), max_age=86400)
-                return redirect
-            else:
-                return templates.TemplateResponse(
-                    "login.html",
-                    {"request": request, "error": "Invalid username or password"}
-                )
-        except Exception as e:
+        res = await client.post(
+            f"{BACKEND_BASE_URL}/auth/login",
+            json={"username": username, "password": password}
+        )
+        if res.status_code != 200:
             return templates.TemplateResponse(
                 "login.html",
-                {"request": request, "error": f"Backend connection error: {str(e)}"}
+                {"request": request, "error": "Invalid username or password"}
             )
 
+        data = res.json()
+        farm_id = data.get("farmId", "ALL")
+        farm_scopes = data.get("farm_scopes") or ([farm_id] if farm_id and farm_id != "ALL" else [])
+
+        request.session["user"] = {
+            "username": data.get("username", username),
+            "fullName": data.get("fullName", username),
+            "role": data.get("role", "EXECUTIVE"),
+            "farmId": farm_id,
+            "farm_scopes": farm_scopes,
+            "assignedBarns": data.get("assignedBarns", []),
+            "token": data.get("token")
+        }
+    return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
+
+
 @app.get("/logout")
-async def logout_action():
-    redirect = RedirectResponse(url="/login", status_code=status.HTTP_302_FOUND)
-    redirect.delete_cookie("vinabeef_token")
-    redirect.delete_cookie("vinabeef_role")
-    redirect.delete_cookie("vinabeef_user")
-    redirect.delete_cookie("vinabeef_scopes")
-    return redirect
+async def logout(request: Request):
+    request.session.clear()
+    return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
 
 # 1. Live Gate Monitor (Home)
 @app.get("/", response_class=HTMLResponse)
@@ -148,41 +213,27 @@ async def home_page(request: Request, user: dict = Depends(get_current_user)):
         return RedirectResponse(url="/login")
 
     headers = get_auth_headers(user)
-    async with httpx.AsyncClient(timeout=3.0) as client:
-        dashboard_error = None
+    async with httpx.AsyncClient(timeout=6.0) as client:
         try:
-            farms_res = await client.get(f"{BACKEND_BASE_URL}/facilities/distribution", headers=headers)
-            farms_res.raise_for_status()
-            farms = farms_res.json()
-        except (httpx.HTTPError, ValueError) as exc:
+            dist_res = await client.get(f"{BACKEND_BASE_URL}/facilities/distribution", headers=headers)
+            farms = dist_res.json() if dist_res.status_code == 200 else []
+        except Exception:
             farms = []
-            dashboard_error = str(exc)
 
         try:
-            movements = (await client.get(f"{BACKEND_BASE_URL}/movements/recent", headers=headers)).json()
+            mov_res = await client.get(f"{BACKEND_BASE_URL}/movements/recent", headers=headers)
+            movements = mov_res.json() if mov_res.status_code == 200 else []
         except Exception:
             movements = []
 
-        try:
-            status_res = await client.get(f"{BACKEND_BASE_URL}/ingestion/failover-status", headers=headers)
-            status_data = status_res.json() if status_res.status_code == 200 else {}
-        except Exception:
-            status_data = {
-                "activeIngressRoute": "DIRECT_MQTT",
-                "directMqttConnected": False,
-                "disconnectReason": "Connecting to backend...",
-                "recentAvgLatencyMs": 0.0,
-                "latencyBreached": False
-            }
+    farms = filter_farms_by_scope(farms, user)
 
     return templates.TemplateResponse("index.html", {
         "request": request,
         "user": user,
         "farms": farms,
-        "dashboard_error": dashboard_error,
         "movements": movements,
-        "status": status_data,
-        "current_date": date.today()
+        "current_date": datetime.now()
     })
 
 
