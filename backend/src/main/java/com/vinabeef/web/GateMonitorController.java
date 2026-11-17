@@ -1,0 +1,293 @@
+package com.vinabeef.web;
+
+import com.vinabeef.audit.Audited;
+import com.vinabeef.facilities.Barn;
+import com.vinabeef.facilities.BarnRepository;
+import com.vinabeef.ingestion.SafetrustEventDto;
+import com.vinabeef.movement.Movement;
+import com.vinabeef.movement.MovementRepository;
+import com.vinabeef.movement.SafetrustProcessingService;
+import com.vinabeef.security.RbacScopeService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.*;
+
+@RestController
+@RequestMapping("/api/v1")
+@RequiredArgsConstructor
+@CrossOrigin(origins = "*")
+@SuppressWarnings("unchecked")
+public class GateMonitorController {
+
+    private final BarnRepository barnRepo;
+    private final MovementRepository movementRepo;
+    private final JdbcTemplate jdbcTemplate;
+    private final SafetrustProcessingService processingService;
+    private final RbacScopeService rbacScopeService;
+
+    @GetMapping("/barns")
+    public ResponseEntity<List<Barn>> getAllBarns() {
+        var scope = rbacScopeService.getCurrentScope();
+        List<Barn> all = barnRepo.findAll();
+        if (scope.isGlobal()) {
+            return ResponseEntity.ok(all);
+        }
+        if (scope.isFarmScoped()) {
+            return ResponseEntity.ok(all.stream()
+                    .filter(b -> Objects.equals(scope.farmId(), b.getFarmId()))
+                    .toList());
+        }
+        if (scope.isBarnScoped()) {
+            return ResponseEntity.ok(all.stream()
+                    .filter(b -> scope.barnIds().contains(b.getBarnId()))
+                    .toList());
+        }
+        return ResponseEntity.ok(List.of());
+    }
+
+    @GetMapping("/movements/recent")
+    public ResponseEntity<List<Movement>> getRecentMovements() {
+        var scope = rbacScopeService.getCurrentScope();
+        List<Movement> recent = movementRepo.findTop15ByOrderByOccurredAtDesc();
+        if (scope.isGlobal()) {
+            return ResponseEntity.ok(recent);
+        }
+
+        Set<String> allowedGateIds = new HashSet<>();
+        if (scope.isFarmScoped() && scope.farmId() != null) {
+            allowedGateIds.addAll(jdbcTemplate.queryForList("""
+                SELECT g.gate_id FROM gates g
+                JOIN barns b ON g.barn_id = b.barn_id
+                WHERE b.farm_id = ?
+            """, String.class, scope.farmId()));
+        } else if (scope.isBarnScoped() && !scope.barnIds().isEmpty()) {
+            String placeholders = String.join(",", Collections.nCopies(scope.barnIds().size(), "?"));
+            allowedGateIds.addAll(jdbcTemplate.queryForList(
+                    "SELECT gate_id FROM gates WHERE barn_id IN (" + placeholders + ")",
+                    String.class, scope.barnIds().toArray()));
+        }
+
+        return ResponseEntity.ok(recent.stream()
+                .filter(m -> allowedGateIds.contains(m.getGateId()))
+                .toList());
+    }
+
+    @PostMapping("/gates/simulate-read")
+    public ResponseEntity<?> simulateGateRead(@RequestBody SafetrustEventDto dto) {
+        long tStart = System.nanoTime();
+        if (dto.getTimestamp() == null) {
+            dto.setTimestamp(System.currentTimeMillis());
+        }
+        processingService.processSafetrustRead(dto, "GATE_REST", tStart);
+        double latencyMs = Math.round((System.nanoTime() - tStart) / 10000.0) / 100.0;
+        return ResponseEntity.ok(Map.of(
+                "status", "PROCESSED",
+                "readerName", String.valueOf(dto.getReaderName()),
+                "cardUuid", String.valueOf(dto.getCardUuid()),
+                "latencyMs", latencyMs
+        ));
+    }
+
+    @PostMapping("/barns/{barnId}/verify-return")
+    @PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'FARM_MANAGER', 'BARN_SUPERVISOR')")
+    @Audited(action = "VERIFY_BARN_RETURN_COUNT", targetType = "BARN")
+    @Transactional
+    public ResponseEntity<?> verifyBarnReturnCount(@PathVariable String barnId) {
+        var scope = rbacScopeService.getCurrentScope();
+        if (!rbacScopeService.canAccessBarnId(scope, barnId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(Map.of("error", "Access denied: Barn " + barnId + " is outside your assigned scope."));
+        }
+
+        var barnRows = jdbcTemplate.queryForList("""
+            SELECT barn_id, code, current_headcount,
+                   COALESCE(daily_in_count, 0) AS daily_in_count,
+                   COALESCE(daily_out_count, 0) AS daily_out_count
+            FROM barns
+            WHERE barn_id = ?
+        """, barnId);
+
+        if (barnRows.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        Map row = barnRows.get(0);
+        int inCount = ((Number) row.get("daily_in_count")).intValue();
+        int outCount = ((Number) row.get("daily_out_count")).intValue();
+        int deficit = Math.max(0, outCount - inCount);
+
+        List<String> unreturnedAnimals = jdbcTemplate.queryForList("""
+            SELECT a.animal_id
+            FROM animals a
+            JOIN presence_states ps ON a.animal_id = ps.animal_id
+            WHERE a.assigned_barn_id = ?
+              AND a.lifecycle_status = 'ACTIVE'
+              AND ps.presence_status = 'OUT_PASTURE'
+              AND NOT EXISTS (
+                  SELECT 1 FROM alerts al
+                  WHERE al.animal_id = a.animal_id
+                    AND al.type = 'MISSING_CATTLE'
+                    AND al.state IN ('OPEN', 'ACKNOWLEDGED')
+              )
+            ORDER BY a.animal_id ASC
+            LIMIT 50
+        """, String.class, barnId);
+
+        for (String animalId : unreturnedAnimals) {
+            String alertId = "ALT-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+            jdbcTemplate.update("""
+                INSERT INTO alerts (alert_id, type, severity, animal_id, barn_id, state, evidence, raised_at)
+                VALUES (?, 'MISSING_CATTLE', 'HIGH', ?, ?, 'OPEN',
+                        jsonb_build_object('reason', 'Fewer cattle returned than left barn', 'exitedCount', ?, 'returnedCount', ?, 'deficit', ?),
+                        CURRENT_TIMESTAMP)
+            """, alertId, animalId, barnId, outCount, inCount, deficit);
+        }
+
+        return ResponseEntity.ok(Map.of(
+                "barnId", barnId,
+                "exitedCount", outCount,
+                "returnedCount", inCount,
+                "deficit", deficit,
+                "newlyFlaggedAlerts", unreturnedAnimals.size()
+        ));
+    }
+
+    @GetMapping("/facilities/distribution")
+    public ResponseEntity<?> getFacilityDistribution() {
+        var scope = rbacScopeService.getCurrentScope();
+
+        String sql = """
+            SELECT 
+                f.farm_id,
+                f.name AS farm_name,
+                f.location,
+                b.barn_id,
+                b.code AS barn_code,
+                b.capacity AS barn_capacity,
+                b.current_headcount AS barn_headcount,
+                COALESCE(b.daily_in_count, 0) AS barn_in_count,
+                COALESCE(b.daily_out_count, 0) AS barn_out_count,
+                COALESCE(stats.assigned_animals, 0) AS barn_assigned_animals,
+                COALESCE(stats.vaccinated_animals, 0) AS barn_vaccinated_animals
+            FROM farms f
+            JOIN barns b ON f.farm_id = b.farm_id
+            LEFT JOIN (
+                SELECT 
+                    a.assigned_barn_id,
+                    COUNT(a.animal_id) AS assigned_animals,
+                    COUNT(v.animal_id) AS vaccinated_animals
+                FROM animals a
+                LEFT JOIN (
+                    SELECT DISTINCT animal_id 
+                    FROM health_records 
+                    WHERE record_type = 'VACCINATION'
+                ) v ON a.animal_id = v.animal_id
+                WHERE a.lifecycle_status = 'ACTIVE'
+                GROUP BY a.assigned_barn_id
+            ) stats ON b.barn_id = stats.assigned_barn_id
+            ORDER BY f.farm_id, b.current_headcount DESC, b.code ASC
+        """;
+
+        var rows = jdbcTemplate.queryForList(sql);
+        var farmMap = new LinkedHashMap<String, Object>();
+
+        for (var row : rows) {
+            String farmId = (String) row.get("farm_id");
+            String barnId = (String) row.get("barn_id");
+
+            // Enforce Farm Manager & Multi-Barn Supervisor visibility boundaries
+            if (!scope.canAccessBarn(barnId, farmId)) {
+                continue;
+            }
+
+            Map<String, Object> farmData = (Map<String, Object>) farmMap.computeIfAbsent(farmId, k -> {
+                Map<String, Object> map = new LinkedHashMap<>();
+                map.put("farmId", farmId);
+                map.put("farmName", row.get("farm_name"));
+                map.put("location", row.get("location"));
+                map.put("totalCapacity", 0);
+                map.put("totalHeadcount", 0);
+                map.put("totalInCount", 0);
+                map.put("totalOutCount", 0);
+                map.put("totalAnimals", 0);
+                map.put("vaccinatedAnimals", 0);
+                map.put("barns", new ArrayList<Object>());
+                return map;
+            });
+
+            int capacity = ((Number) row.get("barn_capacity")).intValue();
+            int headcount = ((Number) row.get("barn_headcount")).intValue();
+            int inCount = ((Number) row.get("barn_in_count")).intValue();
+            int outCount = ((Number) row.get("barn_out_count")).intValue();
+            int assignedAnimals = ((Number) row.get("barn_assigned_animals")).intValue();
+            int vaccinatedAnimals = ((Number) row.get("barn_vaccinated_animals")).intValue();
+
+            farmData.put("totalCapacity", (int) farmData.get("totalCapacity") + capacity);
+            farmData.put("totalHeadcount", (int) farmData.get("totalHeadcount") + headcount);
+            farmData.put("totalInCount", (int) farmData.get("totalInCount") + inCount);
+            farmData.put("totalOutCount", (int) farmData.get("totalOutCount") + outCount);
+            farmData.put("totalAnimals", (int) farmData.get("totalAnimals") + assignedAnimals);
+            farmData.put("vaccinatedAnimals", (int) farmData.get("vaccinatedAnimals") + vaccinatedAnimals);
+
+            Map<String, Object> barnInfo = new LinkedHashMap<>();
+            barnInfo.put("barnId", barnId);
+            barnInfo.put("code", row.get("barn_code"));
+            barnInfo.put("capacity", capacity);
+            barnInfo.put("currentHeadcount", headcount);
+            barnInfo.put("inCount", inCount);
+            barnInfo.put("outCount", outCount);
+            barnInfo.put("unreturnedDeficit", Math.max(0, outCount - inCount));
+            barnInfo.put("assignedAnimals", assignedAnimals);
+            barnInfo.put("vaccinatedAnimals", vaccinatedAnimals);
+
+            double barnUtil = capacity > 0 ? (headcount * 100.0) / capacity : 0.0;
+            double barnVacRate = assignedAnimals > 0 ? (vaccinatedAnimals * 100.0) / assignedAnimals : 0.0;
+            barnInfo.put("utilizationRate", Math.round(barnUtil * 10.0) / 10.0);
+            barnInfo.put("vaccinationRate", Math.round(barnVacRate * 10.0) / 10.0);
+
+            List<Object> barnList = (List<Object>) farmData.get("barns");
+            barnList.add(barnInfo);
+        }
+
+        for (Object val : farmMap.values()) {
+            Map<String, Object> farmData = (Map<String, Object>) val;
+            int totCap = (int) farmData.get("totalCapacity");
+            int totHead = (int) farmData.get("totalHeadcount");
+            int totAnim = (int) farmData.get("totalAnimals");
+            int totVac = (int) farmData.get("vaccinatedAnimals");
+
+            double utilRate = totCap > 0 ? (totHead * 100.0) / totCap : 0.0;
+            double vacRate = totAnim > 0 ? (totVac * 100.0) / totAnim : 0.0;
+            farmData.put("utilizationRate", Math.round(utilRate * 10.0) / 10.0);
+            farmData.put("vaccinationRate", Math.round(vacRate * 10.0) / 10.0);
+
+            List<Object> barnList = (List<Object>) farmData.get("barns");
+            barnList.sort((o1, o2) -> {
+                Map<String, Object> a = (Map<String, Object>) o1;
+                Map<String, Object> b = (Map<String, Object>) o2;
+
+                int headCmp = Integer.compare(
+                        ((Number) b.get("currentHeadcount")).intValue(),
+                        ((Number) a.get("currentHeadcount")).intValue()
+                );
+                if (headCmp != 0) return headCmp;
+
+                int vacCmp = Double.compare(
+                        ((Number) b.get("vaccinationRate")).doubleValue(),
+                        ((Number) a.get("vaccinationRate")).doubleValue()
+                );
+                if (vacCmp != 0) return vacCmp;
+
+                return String.valueOf(a.get("code")).compareTo(String.valueOf(b.get("code")));
+            });
+        }
+
+        return ResponseEntity.ok(new ArrayList<>(farmMap.values()));
+    }
+}

@@ -1,0 +1,526 @@
+package com.vinabeef.web;
+
+// import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
+
+import com.vinabeef.audit.Audited;
+import com.vinabeef.security.RbacScopeService;
+import lombok.Data;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.bind.annotation.*;
+
+import java.time.Instant;
+import java.util.*;
+
+@RestController
+@RequestMapping("/api/v1/cattle")
+@RequiredArgsConstructor
+@CrossOrigin(origins = "*")
+@SuppressWarnings("unchecked")
+public class CattleManagementController {
+
+    private final JdbcTemplate jdbcTemplate;
+    private final RbacScopeService rbacScopeService;
+
+    @Data
+    public static class CreateCattleRequest {
+        private String animalId;
+        private String barnId;
+        private String breed;
+        private Double weightKg;
+        private String tagEpc;
+        private String credentialIdentifier;
+    }
+
+    @Data
+    public static class AssignTagRequest {
+        private String tagEpc;
+        private String credentialIdentifier;
+    }
+
+    @Data
+    public static class VaccinationRequest {
+        private String vaccineName;
+        private String batchNumber;
+        private String notes;
+    }
+
+    @Data
+    public static class ClinicalHealthRequest {
+        private String recordType;   // VACCINATION, TREATMENT, HEALTH_CHECK, QUARANTINE
+        private String healthStatus; // HEALTHY, UNDER_TREATMENT, QUARANTINE
+        private String title;
+        private String medication;
+        private String notes;
+    }
+
+    @Data
+    public static class AnimalTransferRequest {
+        private String toBarnId;
+        private String reason;
+    }
+
+    @GetMapping
+    public ResponseEntity<?> listCattle(
+            @RequestParam(required = false, defaultValue = "") String q,
+            @RequestParam(required = false, defaultValue = "1") int page,
+            @RequestParam(required = false, defaultValue = "100") int size) {
+        try {
+            var scope = rbacScopeService.getCurrentScope();
+            int safePage = Math.max(1, page);
+            int safeSize = Math.min(Math.max(1, size), 100);
+            int offset = (safePage - 1) * safeSize;
+
+            StringBuilder scopeWhere = new StringBuilder(" WHERE 1=1 ");
+            List scopeParams = new ArrayList();
+
+            if (scope.isFarmScoped()) {
+                scopeWhere.append(" AND b.farm_id = ? ");
+                scopeParams.add(scope.farmId());
+            } else if (scope.isBarnScoped()) {
+                if (scope.barnIds().isEmpty()) {
+                    return ResponseEntity.ok()
+                            .header("X-Total-Count", "0")
+                            .header("Access-Control-Expose-Headers", "X-Total-Count")
+                            .body(List.of());
+                }
+                String placeholders = String.join(",", Collections.nCopies(scope.barnIds().size(), "?"));
+                scopeWhere.append(" AND a.assigned_barn_id IN (").append(placeholders).append(") ");
+                scopeParams.addAll(scope.barnIds());
+            }
+
+            String trimmed = q.trim().toLowerCase();
+            if (!trimmed.isEmpty()) {
+                String pattern = "%" + trimmed + "%";
+                scopeWhere.append("""
+                    AND (
+                        LOWER(a.animal_id) LIKE ?
+                        OR LOWER(COALESCE(a.breed, '')) LIKE ?
+                        OR LOWER(COALESCE(a.health_status, '')) LIKE ?
+                        OR LOWER(COALESCE(b.code, '')) LIKE ?
+                        OR LOWER(COALESCE(f.name, '')) LIKE ?
+                        OR EXISTS (
+                            SELECT 1 FROM tag_assignments ta 
+                            JOIN rfid_tags rt ON ta.tag_id = rt.tag_id 
+                            WHERE ta.animal_id = a.animal_id AND LOWER(rt.epc_value) LIKE ?
+                        )
+                    )
+                """);
+                for (int i = 0; i < 6; i++) {
+                    scopeParams.add(pattern);
+                }
+            }
+
+            Long totalCount = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM animals a
+                LEFT JOIN barns b ON a.assigned_barn_id = b.barn_id
+                LEFT JOIN farms f ON b.farm_id = f.farm_id
+            """ + scopeWhere, Long.class, scopeParams.toArray());
+
+            List pageParams = new ArrayList(scopeParams);
+            pageParams.add(safeSize);
+            pageParams.add(offset);
+
+            String fullSql = """
+                WITH page AS (
+                    SELECT a.animal_id, a.assigned_barn_id, a.lifecycle_status,
+                           COALESCE(a.health_status, 'HEALTHY') AS health_status, a.breed, a.weight_kg
+                    FROM animals a
+                    LEFT JOIN barns b ON a.assigned_barn_id = b.barn_id
+                    LEFT JOIN farms f ON b.farm_id = f.farm_id
+            """ + scopeWhere + """
+                    ORDER BY a.animal_id ASC
+                    LIMIT ? OFFSET ?
+                )
+                SELECT 
+                    a.animal_id,
+                    a.assigned_barn_id,
+                    a.lifecycle_status,
+                    a.health_status,
+                    COALESCE(a.breed, 'Brahman Cross') AS breed,
+                    COALESCE(a.weight_kg, 420.0) AS weight_kg,
+                    b.code AS barn_code,
+                    f.farm_id,
+                    f.name AS farm_name,
+                    COALESCE(ps.presence_status, 'OUT_PASTURE') AS presence_status,
+                    (SELECT rt.epc_value 
+                     FROM tag_assignments ta 
+                     JOIN rfid_tags rt ON ta.tag_id = rt.tag_id 
+                     WHERE ta.animal_id = a.animal_id AND ta.valid_to IS NULL 
+                     ORDER BY ta.valid_from DESC LIMIT 1) AS active_tag_epc,
+                    (SELECT COUNT(*) FROM tag_assignments ta WHERE ta.animal_id = a.animal_id AND ta.valid_to IS NULL) AS active_tag_count,
+                    (SELECT COUNT(*) FROM health_records hr WHERE hr.animal_id = a.animal_id AND hr.record_type = 'VACCINATION') AS vaccination_count
+                FROM page a
+                LEFT JOIN barns b ON a.assigned_barn_id = b.barn_id
+                LEFT JOIN farms f ON b.farm_id = f.farm_id
+                LEFT JOIN presence_states ps ON a.animal_id = ps.animal_id
+                ORDER BY a.animal_id ASC
+            """;
+
+            var cattle = jdbcTemplate.queryForList(fullSql, pageParams.toArray());
+
+            return ResponseEntity.ok()
+                    .header("X-Total-Count", String.valueOf(totalCount != null ? totalCount : cattle.size()))
+                    .header("Access-Control-Expose-Headers", "X-Total-Count")
+                    .body(cattle);
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @PostMapping
+    @PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'FARM_MANAGER', 'BARN_SUPERVISOR')")
+    @Audited(action = "REGISTER_CATTLE", targetType = "ANIMAL")
+    @Transactional
+    public ResponseEntity<?> registerCattle(@RequestBody CreateCattleRequest req) {
+        if (req.getAnimalId() == null || req.getAnimalId().isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Animal ID is required"));
+        }
+
+        var scope = rbacScopeService.getCurrentScope();
+        if (!rbacScopeService.canAccessBarnId(scope, req.getBarnId())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(Map.of("error", "Access denied: Target barn is outside your assigned scope."));
+        }
+
+        String animalId = req.getAnimalId().trim();
+        Integer exists = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM animals WHERE animal_id = ?", Integer.class, animalId);
+        if (exists != null && exists > 0) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Animal ID '" + animalId + "' already exists"));
+        }
+
+        jdbcTemplate.update("""
+            INSERT INTO animals (animal_id, assigned_barn_id, lifecycle_status, health_status, breed, weight_kg)
+            VALUES (?, ?, 'ACTIVE', 'HEALTHY', ?, ?)
+        """, animalId, req.getBarnId(),
+                req.getBreed() != null && !req.getBreed().isBlank() ? req.getBreed() : "Brahman Cross",
+                req.getWeightKg() != null ? req.getWeightKg() : 420.0);
+
+        if (req.getTagEpc() != null && !req.getTagEpc().isBlank()) {
+            bindTagToAnimal(animalId, req.getTagEpc().trim(), req.getCredentialIdentifier());
+        }
+
+        return ResponseEntity.ok(Map.of("status", "CREATED", "animalId", animalId));
+    }
+
+    @GetMapping("/{animalId}")
+    public ResponseEntity<?> getCattleDetails(@PathVariable String animalId) {
+        var profiles = jdbcTemplate.queryForList("""
+            SELECT 
+                a.animal_id,
+                a.assigned_barn_id,
+                a.lifecycle_status,
+                COALESCE(a.health_status, 'HEALTHY') AS health_status,
+                COALESCE(a.quarantine_notes, '') AS quarantine_notes,
+                COALESCE(a.breed, 'Brahman Cross') AS breed,
+                COALESCE(a.weight_kg, 420.0) AS weight_kg,
+                b.code AS barn_code,
+                f.farm_id,
+                f.name AS farm_name,
+                COALESCE(ps.presence_status, 'OUT_PASTURE') AS presence_status,
+                ps.updated_at AS last_presence_update
+            FROM animals a
+            LEFT JOIN barns b ON a.assigned_barn_id = b.barn_id
+            LEFT JOIN farms f ON b.farm_id = f.farm_id
+            LEFT JOIN presence_states ps ON a.animal_id = ps.animal_id
+            WHERE a.animal_id = ?
+        """, animalId);
+
+        if (profiles.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        var scope = rbacScopeService.getCurrentScope();
+        String animalBarnId = (String) profiles.get(0).get("assigned_barn_id");
+        String animalFarmId = (String) profiles.get(0).get("farm_id");
+        if (!scope.canAccessBarn(animalBarnId, animalFarmId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(Map.of("error", "Access denied: Animal belongs to another farm or barn."));
+        }
+
+        Map profile = new LinkedHashMap(profiles.get(0));
+
+        var tags = jdbcTemplate.queryForList("""
+            SELECT ta.assignment_id, rt.tag_id, rt.epc_value, rt.credential_identifier, rt.status, ta.valid_from, ta.valid_to
+            FROM tag_assignments ta
+            JOIN rfid_tags rt ON ta.tag_id = rt.tag_id
+            WHERE ta.animal_id = ?
+            ORDER BY ta.valid_from DESC
+        """, animalId);
+
+        var healthRecords = jdbcTemplate.queryForList("""
+            SELECT health_id, record_type, administered_by, payload::text AS payload, event_at
+            FROM health_records
+            WHERE animal_id = ?
+            ORDER BY event_at DESC
+        """, animalId);
+
+        var movements = jdbcTemplate.queryForList("""
+            SELECT m.movement_id, m.direction, m.occurred_at, g.gate_id, g.label AS gate_label, g.reader_name
+            FROM movements m
+            LEFT JOIN gates g ON m.gate_id = g.gate_id
+            WHERE m.animal_id = ?
+            ORDER BY m.occurred_at DESC
+            LIMIT 50
+        """, animalId);
+
+        var transfers = jdbcTemplate.queryForList("""
+            SELECT 
+                t.transfer_id,
+                t.transfer_type,
+                t.reason,
+                t.approved_by,
+                t.transferred_at,
+                t.from_barn_id,
+                fb.code AS from_barn_code,
+                ff.name AS from_farm_name,
+                t.to_barn_id,
+                tb.code AS to_barn_code,
+                tf.name AS to_farm_name
+            FROM animal_transfers t
+            LEFT JOIN barns fb ON t.from_barn_id = fb.barn_id
+            LEFT JOIN farms ff ON t.from_farm_id = ff.farm_id
+            LEFT JOIN barns tb ON t.to_barn_id = tb.barn_id
+            LEFT JOIN farms tf ON t.to_farm_id = tf.farm_id
+            WHERE t.animal_id = ?
+            ORDER BY t.transferred_at DESC
+        """, animalId);
+
+        Integer todayMovements = jdbcTemplate.queryForObject("""
+            SELECT COUNT(*) FROM movements 
+            WHERE animal_id = ? AND occurred_at >= CURRENT_DATE
+        """, Integer.class, animalId);
+
+        profile.put("todayMovements", todayMovements != null ? todayMovements : 0);
+        String activeEpc = "Unassigned";
+        for (Map t : tags) {
+            if (t.get("valid_to") == null) {
+                activeEpc = String.valueOf(t.get("epc_value"));
+                break;
+            }
+        }
+        profile.put("activeTagEpc", activeEpc);
+
+        return ResponseEntity.ok(Map.of(
+                "profile", profile,
+                "tags", tags,
+                "vaccinations", healthRecords,
+                "movements", movements,
+                "transfers", transfers
+        ));
+    }
+
+    @PostMapping("/{animalId}/tags")
+    @PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'FARM_MANAGER', 'BARN_SUPERVISOR')")
+    @Audited(action = "ASSIGN_RFID_TAG", targetType = "RFID_TAG")
+    @Transactional
+    public ResponseEntity<?> assignTag(@PathVariable String animalId, @RequestBody AssignTagRequest req) {
+        if (!canAccessAnimal(animalId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Access denied for this animal."));
+        }
+        if (req.getTagEpc() == null || req.getTagEpc().isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "RFID Tag EPC is required"));
+        }
+        bindTagToAnimal(animalId, req.getTagEpc().trim(), req.getCredentialIdentifier());
+        return ResponseEntity.ok(Map.of("status", "TAG_ASSIGNED", "animalId", animalId, "tagEpc", req.getTagEpc().trim()));
+    }
+
+    @PostMapping("/{animalId}/vaccinations")
+    @PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'FARM_MANAGER', 'BARN_SUPERVISOR')")
+    @Audited(action = "RECORD_VACCINATION", targetType = "HEALTH_RECORD")
+    @Transactional
+    public ResponseEntity<?> recordVaccination(@PathVariable String animalId,
+                                               @RequestBody VaccinationRequest req,
+                                               Authentication auth) {
+        if (!canAccessAnimal(animalId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Access denied for this animal."));
+        }
+        String healthId = "HLT-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+        String actor = auth != null ? auth.getName() : "Veterinary Staff";
+        String vaccine = req.getVaccineName() != null ? req.getVaccineName() : "Routine Immunization";
+        String batch = req.getBatchNumber() != null ? req.getBatchNumber() : "BATCH-2026";
+        String notes = req.getNotes() != null ? req.getNotes() : "";
+
+        jdbcTemplate.update("""
+            INSERT INTO health_records (health_id, animal_id, record_type, administered_by, payload, event_at)
+            VALUES (?, ?, 'VACCINATION', ?, jsonb_build_object('vaccine', ?, 'batch', ?, 'notes', ?), ?)
+        """, healthId, animalId, actor, vaccine, batch, notes, Instant.now());
+
+        return ResponseEntity.ok(Map.of("status", "RECORDED", "healthId", healthId));
+    }
+
+    @PostMapping("/{animalId}/health")
+    @PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'FARM_MANAGER', 'BARN_SUPERVISOR')")
+    @Audited(action = "RECORD_CLINICAL_HEALTH", targetType = "HEALTH_RECORD")
+    @Transactional
+    public ResponseEntity<?> recordClinicalHealth(@PathVariable String animalId,
+                                                  @RequestBody ClinicalHealthRequest req,
+                                                  Authentication auth) {
+        if (!canAccessAnimal(animalId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Access denied for this animal."));
+        }
+
+        String healthId = "HLT-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+        String actor = auth != null ? auth.getName() : "Veterinary Staff";
+        String recordType = (req.getRecordType() != null && !req.getRecordType().isBlank())
+                ? req.getRecordType().trim().toUpperCase() : "HEALTH_CHECK";
+        String newStatus = (req.getHealthStatus() != null && !req.getHealthStatus().isBlank())
+                ? req.getHealthStatus().trim().toUpperCase() : "HEALTHY";
+        String title = req.getTitle() != null ? req.getTitle().trim() : "Clinical Evaluation";
+        String medication = req.getMedication() != null ? req.getMedication().trim() : "N/A";
+        String notes = req.getNotes() != null ? req.getNotes().trim() : "";
+
+        jdbcTemplate.update("""
+            INSERT INTO health_records (health_id, animal_id, record_type, administered_by, payload, event_at)
+            VALUES (?, ?, ?, ?, jsonb_build_object('title', ?, 'medication_or_batch', ?, 'resulting_status', ?, 'notes', ?), ?)
+        """, healthId, animalId, recordType, actor, title, medication, newStatus, notes, Instant.now());
+
+        jdbcTemplate.update("""
+            UPDATE animals
+            SET health_status = ?,
+                quarantine_notes = CASE WHEN ? = 'HEALTHY' THEN NULL ELSE ? END
+            WHERE animal_id = ?
+        """, newStatus, newStatus, title + (notes.isEmpty() ? "" : " - " + notes), animalId);
+
+        if ("QUARANTINE".equals(newStatus)) {
+            List barns = jdbcTemplate.queryForList("SELECT assigned_barn_id FROM animals WHERE animal_id = ?", String.class, animalId);
+            String barnId = barns.isEmpty() ? "BARN-DL-01" : String.valueOf(barns.get(0));
+            jdbcTemplate.update("""
+                INSERT INTO alerts (alert_id, type, severity, animal_id, barn_id, state, evidence, raised_at)
+                VALUES (?, 'HEALTH_QUARANTINE', 'CRITICAL', ?, ?, 'OPEN',
+                        jsonb_build_object('condition', ?, 'medication', ?, 'reportedBy', ?, 'notes', ?),
+                        CURRENT_TIMESTAMP)
+            """, "ALT-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase(),
+                    animalId, barnId, title, medication, actor, notes);
+        }
+
+        return ResponseEntity.ok(Map.of("status", "UPDATED", "healthId", healthId, "healthStatus", newStatus));
+    }
+
+    @PostMapping("/{animalId}/transfer")
+    @PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'FARM_MANAGER', 'BARN_SUPERVISOR')")
+    @Audited(action = "TRANSFER_ANIMAL", targetType = "ANIMAL_TRANSFER")
+    @Transactional
+    public ResponseEntity<?> transferAnimal(@PathVariable String animalId,
+                                            @RequestBody AnimalTransferRequest req,
+                                            Authentication auth) {
+        if (!canAccessAnimal(animalId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Access denied for this animal."));
+        }
+        if (req.getToBarnId() == null || req.getToBarnId().isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Destination barn is required"));
+        }
+
+        var currentRows = jdbcTemplate.queryForList("""
+            SELECT a.assigned_barn_id, b.farm_id AS from_farm_id, COALESCE(ps.presence_status, 'OUT_PASTURE') AS presence_status
+            FROM animals a
+            LEFT JOIN barns b ON a.assigned_barn_id = b.barn_id
+            LEFT JOIN presence_states ps ON a.animal_id = ps.animal_id
+            WHERE a.animal_id = ?
+        """, animalId);
+
+        if (currentRows.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        String fromBarnId = (String) currentRows.get(0).get("assigned_barn_id");
+        String fromFarmId = (String) currentRows.get(0).get("from_farm_id");
+        String presenceStatus = (String) currentRows.get(0).get("presence_status");
+        String toBarnId = req.getToBarnId().trim();
+
+        var destRows = jdbcTemplate.queryForList("SELECT farm_id FROM barns WHERE barn_id = ?", toBarnId);
+        if (destRows.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Destination barn not found"));
+        }
+        String toFarmId = (String) destRows.get(0).get("farm_id");
+
+        var scope = rbacScopeService.getCurrentScope();
+        if (scope.isBarnScoped() && !rbacScopeService.canAccessBarnId(scope, toBarnId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(Map.of("error", "Barn Supervisors can only transfer cattle between their own assigned barns."));
+        }
+
+        String transferType = (fromFarmId != null && !fromFarmId.equals(toFarmId)) ? "INTER_FARM" : "INTER_BARN";
+        String actor = auth != null ? auth.getName() : "farm_manager";
+        String transferId = "TRF-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+
+        jdbcTemplate.update("""
+            INSERT INTO animal_transfers (transfer_id, animal_id, from_barn_id, from_farm_id, to_barn_id, to_farm_id, transfer_type, reason, approved_by, transferred_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        """, transferId, animalId, fromBarnId, fromFarmId, toBarnId, toFarmId, transferType,
+                req.getReason() != null && !req.getReason().isBlank() ? req.getReason().trim() : "Operational herd relocation",
+                actor);
+
+        jdbcTemplate.update("UPDATE animals SET assigned_barn_id = ? WHERE animal_id = ?", toBarnId, animalId);
+
+        if ("IN_BARN".equals(presenceStatus) && fromBarnId != null && !fromBarnId.equals(toBarnId)) {
+            jdbcTemplate.update("UPDATE barns SET current_headcount = GREATEST(0, current_headcount - 1) WHERE barn_id = ?", fromBarnId);
+            jdbcTemplate.update("UPDATE barns SET current_headcount = current_headcount + 1 WHERE barn_id = ?", toBarnId);
+            jdbcTemplate.update("UPDATE presence_states SET current_barn_id = ?, updated_at = CURRENT_TIMESTAMP WHERE animal_id = ?", toBarnId, animalId);
+        }
+
+        return ResponseEntity.ok(Map.of("status", "TRANSFERRED", "transferId", transferId, "transferType", transferType));
+    }
+
+    @GetMapping("/{animalId}/dossier")
+    public ResponseEntity<?> downloadAnimalDossier(@PathVariable String animalId) {
+        ResponseEntity<?> detailRes = getCattleDetails(animalId);
+        if (!detailRes.getStatusCode().is2xxSuccessful()) {
+            return detailRes;
+        }
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"dossier_" + animalId.replace(" ", "_") + ".json\"")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(detailRes.getBody());
+    }
+
+    private boolean canAccessAnimal(String animalId) {
+        var scope = rbacScopeService.getCurrentScope();
+        if (scope.isGlobal()) return true;
+        var rows = jdbcTemplate.queryForList("""
+            SELECT a.assigned_barn_id, b.farm_id
+            FROM animals a
+            LEFT JOIN barns b ON a.assigned_barn_id = b.barn_id
+            WHERE a.animal_id = ?
+        """, animalId);
+        if (rows.isEmpty()) return false;
+        String barnId = (String) rows.get(0).get("assigned_barn_id");
+        String farmId = (String) rows.get(0).get("farm_id");
+        return scope.canAccessBarn(barnId, farmId);
+    }
+
+    private void bindTagToAnimal(String animalId, String epcValue, String credId) {
+        jdbcTemplate.update("UPDATE tag_assignments SET valid_to = CURRENT_TIMESTAMP WHERE animal_id = ? AND valid_to IS NULL", animalId);
+
+        List existingTagIds = jdbcTemplate.queryForList("SELECT tag_id FROM rfid_tags WHERE epc_value = ?", String.class, epcValue);
+        String tagId;
+        if (existingTagIds.isEmpty()) {
+            tagId = "TAG-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+            jdbcTemplate.update("""
+                INSERT INTO rfid_tags (tag_id, epc_value, credential_identifier, status)
+                VALUES (?, ?, ?, 'ACTIVE')
+            """, tagId, epcValue, credId != null && !credId.isBlank() ? credId : "EPC-26");
+        } else {
+            tagId = String.valueOf(existingTagIds.get(0));
+            jdbcTemplate.update("UPDATE rfid_tags SET status = 'ACTIVE' WHERE tag_id = ?", tagId);
+            jdbcTemplate.update("UPDATE tag_assignments SET valid_to = CURRENT_TIMESTAMP WHERE tag_id = ? AND valid_to IS NULL", tagId);
+        }
+
+        String assignmentId = "ASG-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+        jdbcTemplate.update("""
+            INSERT INTO tag_assignments (assignment_id, animal_id, tag_id, valid_from)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        """, assignmentId, animalId, tagId);
+    }
+}
