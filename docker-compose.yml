@@ -1,51 +1,59 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:16-alpine
     container_name: vinabeef-postgres
+    restart: unless-stopped
     environment:
       POSTGRES_DB: vinabeef_db
       POSTGRES_USER: vinabeef_user
-      POSTGRES_PASSWORD: vinabeef_password
-    ports:
-      - "5433:5432"
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-VinaBeefProd2026!}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U vinabeef_user -d vinabeef_db"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
 
   redis:
     image: redis:7-alpine
     container_name: vinabeef-redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
+    restart: unless-stopped
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
-      retries: 5
+      retries: 10
 
-  emqx:
-    image: emqx/emqx:5.7.0
-    container_name: vinabeef-emqx
-    ports:
-      - "1883:1883"       # MQTT TCP port
-      - "8083:8083"       # MQTT over WebSockets
-      - "18083:18083"     # EMQX Dashboard (admin/public)
+  backend:
+    build: ./backend
+    container_name: vinabeef-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
-      EMQX_NAME: vinabeef_emqx
-      EMQX_HOST: 127.0.0.1
-      EMQX_DASHBOARD__DEFAULT_PASSWORD: admin_password
-    volumes:
-      - emqx_data:/opt/emqx/data
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/vinabeef_db
+      SPRING_DATASOURCE_USERNAME: vinabeef_user
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-VinaBeefProd2026!}
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+    ports:
+      - "8080:8080"
+
+  frontend:
+    build: ./frontend
+    container_name: vinabeef-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      BACKEND_BASE_URL: http://backend:8080/api/v1
+    ports:
+      - "80:3000"
 
 volumes:
-  postgres_data:
-  redis_data:
-  emqx_data:
+  pgdata:
