@@ -1,10 +1,12 @@
 from datetime import date, datetime
+from urllib.parse import quote
 
 from fastapi import FastAPI, Request, Response, Form, Depends, HTTPException, status
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.exceptions import HTTPException as StarletteHTTPException
 import httpx
 import json
 import math
@@ -20,8 +22,8 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
-# BACKEND_BASE_URL = "http://localhost:8080/api/v1"
 BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://127.0.0.1:8080/api/v1")
+
 
 # --- Herd Count & Display ---
 
@@ -33,6 +35,7 @@ def build_page_range(current_page: int, total_pages: int) -> list:
     if current_page >= total_pages - 3:
         return [1, "...", total_pages - 4, total_pages - 3, total_pages - 2, total_pages - 1, total_pages]
     return [1, "...", current_page - 1, current_page, current_page + 1, "...", total_pages]
+
 
 async def fetch_paginated_cattle(client: httpx.AsyncClient, headers: dict, q: str = "", page: int = 1, size: int = 100) -> dict:
     page = max(1, page)
@@ -72,36 +75,18 @@ async def fetch_paginated_cattle(client: httpx.AsyncClient, headers: dict, q: st
         "q": q
     }
 
+
 # --- Authentication & Session Helper ---
-
-# def get_current_user(request: Request):
-#     token = request.cookies.get("vinabeef_token")
-#     role = request.cookies.get("vinabeef_role")
-#     username = request.cookies.get("vinabeef_user")
-#     raw_scopes = request.cookies.get("vinabeef_scopes", "[]")
-    
-#     try:
-#         farm_scopes = json.loads(raw_scopes)
-#     except Exception:
-#         farm_scopes = []
-
-#     if not token or not role or not username:
-#         return None
-
-#     return {
-#         "token": token,
-#         "username": username,
-#         "role": role,
-#         "farm_scopes": farm_scopes
-#     }
 
 def get_current_user(request: Request):
     return request.session.get("user")
+
 
 def get_auth_headers(user: dict = Depends(get_current_user)) -> dict:
     if not user:
         return {}
     return {"Authorization": f"Bearer {user['token']}"}
+
 
 def filter_farms_by_scope(farms: list, user: dict) -> list:
     if not user or not isinstance(farms, list):
@@ -135,6 +120,115 @@ def filter_farms_by_scope(farms: list, user: dict) -> list:
 
     return []
 
+
+# --- Role Based Access & 403 Security Banner Helpers ---
+
+def extract_backend_error(res: httpx.Response, fallback: str = "") -> str:
+    try:
+        data = res.json()
+        if isinstance(data, dict):
+            return str(data.get("error") or data.get("detail") or data.get("message") or fallback)
+    except Exception:
+        pass
+    return (res.text or fallback).strip()
+
+
+def format_403_security_message(user: dict, detail: str, path: str) -> str:
+    username = user.get("username", "unknown") if user else "unknown"
+    clean_detail = (detail or "").strip()
+
+    if clean_detail.startswith("Access Denied (403):"):
+        if "Security violation logged in Audit ledger." not in clean_detail:
+            return f"{clean_detail.rstrip('.')}. Security violation logged in Audit ledger."
+        return clean_detail
+
+    if "is not authorized to " in clean_detail:
+        idx = clean_detail.index("is not authorized to ")
+        action_clause = clean_detail[idx + len("is not authorized to "):].rstrip(".")
+        return f"Access Denied (403): User '{username}' is not authorized to {action_clause}. Security violation logged in Audit ledger."
+
+    lower = clean_detail.lower()
+    if "reporting" in lower or path.startswith("/reports"):
+        action_desc = "access Reporting & Regulatory Compliance"
+    elif "audit" in lower or path.startswith("/audit"):
+        action_desc = "access the Enterprise Audit Ledger"
+    elif "surveillance" in lower or path.startswith("/surveillance"):
+        action_desc = "access Disease Surveillance"
+    elif path.startswith("/users"):
+        action_desc = "manage Operators & Role Assignments"
+    elif clean_detail:
+        stripped = (
+            clean_detail
+            .removeprefix("Access denied:")
+            .removeprefix("Access Denied:")
+            .strip()
+            .rstrip(".")
+        )
+        action_desc = stripped if stripped.startswith(("mutate ", "transfer ", "update ", "create ", "modify ", "record ", "access ")) else f"perform action ({stripped})"
+    else:
+        action_desc = f"access '{path}'"
+
+    return f"Access Denied (403): User '{username}' is not authorized to {action_desc}. Security violation logged in Audit ledger."
+
+
+def render_403_alert_html(message: str) -> str:
+    return f"""
+    <div class="mb-4 px-5 py-3.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold flex items-center space-x-2.5 shadow-xs">
+        <svg class="w-4 h-4 text-rose-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+        </svg>
+        <span>{message}</span>
+    </div>
+    """
+
+
+async def log_security_violation_best_effort(user: dict, path: str, formatted_msg: str):
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            await client.post(
+                f"{BACKEND_BASE_URL}/audit/security-violation",
+                json={
+                    "username": user.get("username"),
+                    "role": user.get("role"),
+                    "path": path,
+                    "reason": formatted_msg,
+                },
+                headers=get_auth_headers(user),
+            )
+    except Exception:
+        pass
+
+
+@app.exception_handler(StarletteHTTPException)
+async def custom_http_exception_handler(request: Request, exc: StarletteHTTPException):
+    if exc.status_code == 403:
+        user = request.session.get("user") if "session" in request.scope else None
+        if not user:
+            return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+
+        formatted_msg = format_403_security_message(user, str(exc.detail or ""), request.url.path)
+        await log_security_violation_best_effort(user, request.url.path, formatted_msg)
+
+        if "application/json" in request.headers.get("accept", ""):
+            return JSONResponse(status_code=403, content={"detail": formatted_msg})
+
+        if request.headers.get("hx-request") == "true":
+            return HTMLResponse(content=render_403_alert_html(formatted_msg), status_code=403)
+
+        return templates.TemplateResponse(
+            "access_denied.html",
+            {
+                "request": request,
+                "user": user,
+                "access_denied_message": formatted_msg,
+                "attempted_path": request.url.path,
+            },
+            status_code=403,
+        )
+
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
 # --- Page Routes ---
 
 @app.get("/login", response_class=HTMLResponse)
@@ -144,35 +238,6 @@ async def login_page(request: Request):
         return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
     return templates.TemplateResponse("login.html", {"request": request, "error": None})
 
-# @app.post("/login")
-# async def login_submit(request: Request, username: str = Form(...), password: str = Form(...)):
-#     async with httpx.AsyncClient(timeout=5.0) as client:
-#         res = await client.post(f"{BACKEND_BASE_URL}/auth/login", json={"username": username, "password": password})
-#         if res.status_code != 200:
-#             return templates.TemplateResponse("login.html", {"request": request, "error": "Invalid username or password"})
-
-#         data = res.json()
-#         farm_id = data.get("farmId", "ALL")
-#         farm_scopes = data.get("farm_scopes") or ([farm_id] if farm_id and farm_id != "ALL" else [])
-
-#         request.session["user"] = {
-#             "username": data.get("username", username),
-#             "role": data.get("role", "EXECUTIVE"),
-#             "farmId": farm_id,
-#             "farm_scopes": farm_scopes,
-#             "assignedBarns": data.get("assignedBarns", []),
-#             "token": data.get("token")
-#         }
-#     return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
-
-# @app.get("/logout")
-# async def logout_action():
-#     redirect = RedirectResponse(url="/login", status_code=status.HTTP_302_FOUND)
-#     redirect.delete_cookie("vinabeef_token")
-#     redirect.delete_cookie("vinabeef_role")
-#     redirect.delete_cookie("vinabeef_user")
-#     redirect.delete_cookie("vinabeef_scopes")
-#     return redirect
 
 @app.post("/login")
 async def login_submit(request: Request, username: str = Form(...), password: str = Form(...)):
@@ -207,6 +272,7 @@ async def login_submit(request: Request, username: str = Form(...), password: st
 async def logout(request: Request):
     request.session.clear()
     return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+
 
 # 1. Live Gate Monitor (Home)
 @app.get("/", response_class=HTMLResponse)
@@ -249,7 +315,8 @@ async def audit_page(request: Request, user: dict = Depends(get_current_user)):
 
     return templates.TemplateResponse("audit.html", {"request": request, "user": user})
 
-# 3. Reports & Analytics (Restricted to EXECUTIVE and FARM_MANAGER)
+
+# 3. Reports & Analytics (Restricted to EXECUTIVE, FARM_MANAGER, SYSTEM_ADMIN)
 @app.get("/reports", response_class=HTMLResponse)
 async def reports_page(request: Request, user: dict = Depends(get_current_user)):
     if not user:
@@ -259,7 +326,8 @@ async def reports_page(request: Request, user: dict = Depends(get_current_user))
 
     return templates.TemplateResponse("reports.html", {"request": request, "user": user})
 
-# 4. Cattle Transfer Workbench (Demonstrating Farm-Scoped RBAC)
+
+# 4. Cattle Transfer Workbench
 @app.get("/transfers", response_class=HTMLResponse)
 async def transfers_page(request: Request, user: dict = Depends(get_current_user)):
     if not user:
@@ -268,6 +336,7 @@ async def transfers_page(request: Request, user: dict = Depends(get_current_user
         raise HTTPException(status_code=403, detail="Access denied: Only Farm Managers can approve transfers.")
 
     return templates.TemplateResponse("transfers.html", {"request": request, "user": user})
+
 
 # --- HTMX Dynamic Partial Endpoints ---
 
@@ -281,7 +350,7 @@ async def htmx_barns(request: Request, user: dict = Depends(get_current_user)):
         async with httpx.AsyncClient(timeout=3.0) as client:
             res = await client.get(f"{BACKEND_BASE_URL}/facilities/distribution", headers=headers)
             res.raise_for_status()
-            farms = res.json()
+            farms = filter_farms_by_scope(res.json(), user)
     except (httpx.HTTPError, ValueError) as exc:
         return templates.TemplateResponse(
             "partials/headcount_cards.html",
@@ -320,10 +389,12 @@ async def htmx_movements(request: Request, user: dict = Depends(get_current_user
         {"request": request, "movements": movements}
     )
 
+
 @app.get("/htmx/audit-table", response_class=HTMLResponse)
 async def htmx_audit_table(request: Request, user: dict = Depends(get_current_user)):
     if not user or user["role"] != "SYSTEM_ADMIN":
-        return "<div class='text-rose-400 p-4'>Unauthorized</div>"
+        msg = format_403_security_message(user or {}, "access the Enterprise Audit Ledger", request.url.path)
+        return HTMLResponse(render_403_alert_html(msg), status_code=403)
 
     async with httpx.AsyncClient(timeout=3.0) as client:
         try:
@@ -333,6 +404,7 @@ async def htmx_audit_table(request: Request, user: dict = Depends(get_current_us
             logs = []
 
     return templates.TemplateResponse("partials/audit_table.html", {"request": request, "logs": logs})
+
 
 @app.get("/htmx/ingestion-status", response_class=HTMLResponse)
 async def htmx_ingestion_status(request: Request, user: dict = Depends(get_current_user)):
@@ -358,16 +430,23 @@ async def htmx_ingestion_status(request: Request, user: dict = Depends(get_curre
         {"request": request, "status": ingestion_status, "error": None}
     )
 
+
 @app.get("/htmx/report-data", response_class=HTMLResponse)
 async def htmx_report_data(request: Request, farm_id: str = "ALL", user: dict = Depends(get_current_user)):
     if not user:
         return "<div class='text-rose-400 p-4'>Unauthorized</div>"
+    if user.get("role") not in ["EXECUTIVE", "FARM_MANAGER", "SYSTEM_ADMIN"]:
+        msg = format_403_security_message(user, "access Reporting & Regulatory Compliance", request.url.path)
+        return HTMLResponse(render_403_alert_html(msg), status_code=403)
 
     headers = get_auth_headers(user)
     async with httpx.AsyncClient(timeout=4.0) as client:
         if farm_id == "ALL":
             try:
                 res = await client.get(f"{BACKEND_BASE_URL}/management/executive/summary", headers=headers)
+                if res.status_code == 403:
+                    msg = format_403_security_message(user, extract_backend_error(res, "access global executive reports"), request.url.path)
+                    return HTMLResponse(render_403_alert_html(msg), status_code=403)
                 data = res.json() if res.status_code == 200 else []
                 is_summary = True
             except Exception:
@@ -375,19 +454,20 @@ async def htmx_report_data(request: Request, farm_id: str = "ALL", user: dict = 
         else:
             try:
                 res = await client.get(f"{BACKEND_BASE_URL}/management/farms/{farm_id}/report", headers=headers)
+                if res.status_code == 403:
+                    msg = format_403_security_message(user, extract_backend_error(res, f"access Farm '{farm_id}' report"), request.url.path)
+                    return HTMLResponse(render_403_alert_html(msg), status_code=403)
                 data = res.json().get("barnData", []) if res.status_code == 200 else []
                 is_summary = False
             except Exception:
                 data, is_summary = [], False
 
-        # Query recent movements to populate the Screenshot 60 report table
         try:
             mov_res = await client.get(f"{BACKEND_BASE_URL}/movements/recent", headers=headers)
             recent_movs = mov_res.json() if mov_res.status_code == 200 else []
         except Exception:
             recent_movs = []
 
-    # Map recent passages to match Screenshot 60 columns
     report_logs = []
     if recent_movs:
         for m in recent_movs:
@@ -401,7 +481,6 @@ async def htmx_report_data(request: Request, farm_id: str = "ALL", user: dict = 
                 "result": "Success"
             })
     else:
-        # Default representative rows matching the Safetrust layout
         report_logs = [
             {"date_time": "10/17/2026 03:01:28", "person": "CI 356278", "sensor_name": "DrEBE6", "device_access": "RFID Ear Tag", "sensor_description": "North Pasture Gate", "event": "Movement OUT", "result": "Success"},
             {"date_time": "10/17/2026 02:55:12", "person": "COW-0002", "sensor_name": "DrEBE6", "device_access": "RFID Ear Tag", "sensor_description": "North Pasture Gate", "event": "Movement IN", "result": "Success"},
@@ -416,6 +495,7 @@ async def htmx_report_data(request: Request, farm_id: str = "ALL", user: dict = 
         "logs": report_logs,
         "is_summary": is_summary
     })
+
 
 @app.post("/htmx/transfer-action", response_class=HTMLResponse)
 async def htmx_transfer_action(
@@ -446,28 +526,27 @@ async def htmx_transfer_action(
             if res.status_code == 200:
                 data = res.json()
                 return f"""
-                <div class="p-4 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-xl">
+                <div class="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg text-xs font-semibold">
                     <strong>Mutation Approved:</strong> Cattle {data.get('animalId')} transfer registered in {data.get('farmId')} by {data.get('approvedBy')}.
                 </div>
                 """
             elif res.status_code == 403:
-                return f"""
-                <div class="p-4 bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-xl">
-                    <strong>Access Denied (403):</strong> User '{user['username']}' is not authorized to mutate Farm '{farm_id}'. Security violation logged in Audit ledger.
-                </div>
-                """
+                msg = format_403_security_message(user, f"mutate Farm '{farm_id}'", request.url.path)
+                await log_security_violation_best_effort(user, request.url.path, msg)
+                return render_403_alert_html(msg)
             else:
                 return f"""
-                <div class="p-4 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-xl">
-                    <strong>Backend Error ({res.status_code}):</strong> {res.text}
+                <div class="p-4 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-xs">
+                    <strong>Backend Error ({res.status_code}):</strong> {extract_backend_error(res, res.text)}
                 </div>
                 """
         except Exception as e:
             return f"""
-            <div class="p-4 bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-xl">
+            <div class="p-4 bg-rose-50 border border-rose-200 text-rose-800 rounded-lg text-xs">
                 <strong>Failure:</strong> {str(e)}
             </div>
             """
+
 
 # ================= CATTLE & RFID TAG MANAGEMENT =================
 
@@ -492,6 +571,7 @@ async def herd_page(request: Request, page: int = 1, q: str = "", user: dict = D
         **pagination
     })
 
+
 @app.get("/htmx/herd-list", response_class=HTMLResponse)
 async def htmx_herd_list(request: Request, page: int = 1, q: str = "", user: dict = Depends(get_current_user)):
     headers = get_auth_headers(user) if user else {}
@@ -503,6 +583,7 @@ async def htmx_herd_list(request: Request, page: int = 1, q: str = "", user: dic
         "oob_update": True,
         **pagination
     })
+
 
 @app.post("/htmx/herd/create", response_class=HTMLResponse)
 async def htmx_herd_create(
@@ -530,8 +611,13 @@ async def htmx_herd_create(
             },
             headers=headers
         )
+        if res.status_code == 403:
+            err = extract_backend_error(res, f"register cattle in Barn '{barn_id}'")
+            msg = format_403_security_message(user, err, request.url.path)
+            await log_security_violation_best_effort(user, request.url.path, msg)
+            return render_403_alert_html(msg)
         if res.status_code != 200:
-            err = res.json().get("error", "Failed to register cattle")
+            err = extract_backend_error(res, "Failed to register cattle")
             return f"<div class='p-4 rounded bg-red-50 border border-red-200 text-red-700 text-xs'>{err}</div>"
 
         pagination = await fetch_paginated_cattle(client, headers, q="", page=1, size=100)
@@ -542,17 +628,26 @@ async def htmx_herd_create(
         **pagination
     })
 
+
 @app.get("/herd/{animal_id}", response_class=HTMLResponse)
 async def cattle_detail_page(request: Request, animal_id: str, user: dict = Depends(get_current_user)):
     if not user:
         return RedirectResponse(url="/login")
 
     headers = get_auth_headers(user)
-    async with httpx.AsyncClient(timeout=4.0) as client:
+    async with httpx.AsyncClient(timeout=6.0) as client:
         res = await client.get(f"{BACKEND_BASE_URL}/cattle/{animal_id}", headers=headers)
+        if res.status_code == 403:
+            raise HTTPException(status_code=403, detail=extract_backend_error(res, f"view Cattle '{animal_id}'"))
         if res.status_code != 200:
             raise HTTPException(status_code=404, detail="Animal not found")
         detail = res.json()
+
+        try:
+            barns_res = await client.get(f"{BACKEND_BASE_URL}/barns", headers=headers)
+            barns = barns_res.json() if barns_res.status_code == 200 else []
+        except Exception:
+            barns = []
 
     return templates.TemplateResponse("cattle_detail.html", {
         "request": request,
@@ -560,11 +655,15 @@ async def cattle_detail_page(request: Request, animal_id: str, user: dict = Depe
         "animal": detail["profile"],
         "tags": detail["tags"],
         "vaccinations": detail["vaccinations"],
-        "movements": detail["movements"]
+        "movements": detail["movements"],
+        "transfers": detail.get("transfers", []),
+        "barns": barns
     })
+
 
 @app.post("/herd/{animal_id}/assign-tag")
 async def cattle_assign_tag(
+    request: Request,
     animal_id: str,
     tag_epc: str = Form(...),
     credential_identifier: str = Form("EPC-26"),
@@ -574,15 +673,23 @@ async def cattle_assign_tag(
         return RedirectResponse(url="/login")
 
     async with httpx.AsyncClient(timeout=4.0) as client:
-        await client.post(
+        res = await client.post(
             f"{BACKEND_BASE_URL}/cattle/{animal_id}/tags",
             json={"tagEpc": tag_epc, "credentialIdentifier": credential_identifier},
             headers=get_auth_headers(user)
         )
+    if res.status_code == 403:
+        err = extract_backend_error(res, f"mutate RFID tag for Cattle '{animal_id}'")
+        msg = format_403_security_message(user, err, request.url.path)
+        await log_security_violation_best_effort(user, request.url.path, msg)
+        return RedirectResponse(url=f"/herd/{animal_id}?error={quote(msg)}", status_code=status.HTTP_303_SEE_OTHER)
+
     return RedirectResponse(url=f"/herd/{animal_id}", status_code=status.HTTP_303_SEE_OTHER)
+
 
 @app.post("/herd/{animal_id}/vaccinate")
 async def cattle_record_vaccination(
+    request: Request,
     animal_id: str,
     vaccine_name: str = Form(...),
     batch_number: str = Form(...),
@@ -593,12 +700,95 @@ async def cattle_record_vaccination(
         return RedirectResponse(url="/login")
 
     async with httpx.AsyncClient(timeout=4.0) as client:
-        await client.post(
+        res = await client.post(
             f"{BACKEND_BASE_URL}/cattle/{animal_id}/vaccinations",
             json={"vaccineName": vaccine_name, "batchNumber": batch_number, "notes": notes},
             headers=get_auth_headers(user)
         )
+    if res.status_code == 403:
+        err = extract_backend_error(res, f"record vaccination for Cattle '{animal_id}'")
+        msg = format_403_security_message(user, err, request.url.path)
+        await log_security_violation_best_effort(user, request.url.path, msg)
+        return RedirectResponse(url=f"/herd/{animal_id}?error={quote(msg)}", status_code=status.HTTP_303_SEE_OTHER)
+
     return RedirectResponse(url=f"/herd/{animal_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/herd/{animal_id}/health")
+async def cattle_record_health(
+    request: Request,
+    animal_id: str,
+    record_type: str = Form(...),
+    health_status: str = Form("HEALTHY"),
+    title: str = Form(...),
+    medication: str = Form(""),
+    notes: str = Form(""),
+    user: dict = Depends(get_current_user)
+):
+    if not user:
+        return RedirectResponse(url="/login")
+
+    async with httpx.AsyncClient(timeout=6.0) as client:
+        res = await client.post(
+            f"{BACKEND_BASE_URL}/cattle/{animal_id}/health",
+            json={
+                "recordType": record_type,
+                "healthStatus": health_status,
+                "title": title,
+                "medication": medication,
+                "notes": notes
+            },
+            headers=get_auth_headers(user)
+        )
+    if res.status_code == 403:
+        err = extract_backend_error(res, f"mutate health status for Cattle '{animal_id}'")
+        msg = format_403_security_message(user, err, request.url.path)
+        await log_security_violation_best_effort(user, request.url.path, msg)
+        return RedirectResponse(url=f"/herd/{animal_id}?error={quote(msg)}", status_code=status.HTTP_303_SEE_OTHER)
+
+    return RedirectResponse(url=f"/herd/{animal_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/herd/{animal_id}/transfer")
+async def cattle_transfer_action(
+    request: Request,
+    animal_id: str,
+    to_barn_id: str = Form(...),
+    reason: str = Form(""),
+    user: dict = Depends(get_current_user)
+):
+    if not user:
+        return RedirectResponse(url="/login")
+
+    async with httpx.AsyncClient(timeout=6.0) as client:
+        res = await client.post(
+            f"{BACKEND_BASE_URL}/cattle/{animal_id}/transfer",
+            json={"toBarnId": to_barn_id, "reason": reason},
+            headers=get_auth_headers(user)
+        )
+    if res.status_code == 403:
+        err = extract_backend_error(res, f"transfer Cattle '{animal_id}' to Barn '{to_barn_id}'")
+        msg = format_403_security_message(user, err, request.url.path)
+        await log_security_violation_best_effort(user, request.url.path, msg)
+        return RedirectResponse(url=f"/herd/{animal_id}?error={quote(msg)}", status_code=status.HTTP_303_SEE_OTHER)
+
+    return RedirectResponse(url=f"/herd/{animal_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.get("/herd/{animal_id}/dossier")
+async def cattle_download_dossier(animal_id: str, user: dict = Depends(get_current_user)):
+    if not user:
+        return RedirectResponse(url="/login")
+
+    async with httpx.AsyncClient(timeout=6.0) as client:
+        res = await client.get(f"{BACKEND_BASE_URL}/cattle/{animal_id}/dossier", headers=get_auth_headers(user))
+        if res.status_code == 403:
+            raise HTTPException(status_code=403, detail=extract_backend_error(res, f"export dossier for Cattle '{animal_id}'"))
+        return Response(
+            content=res.content,
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="dossier_{animal_id.replace(" ", "_")}.json"'}
+        )
 
 
 # ================= GATE READER MANAGEMENT =================
@@ -612,9 +802,13 @@ async def readers_page(request: Request, user: dict = Depends(get_current_user))
     async with httpx.AsyncClient(timeout=4.0) as client:
         try:
             res = await client.get(f"{BACKEND_BASE_URL}/readers", headers=headers)
-            if res.status_code in (401, 403):
+            if res.status_code == 401:
                 return RedirectResponse(url="/login")
+            if res.status_code == 403:
+                raise HTTPException(status_code=403, detail=extract_backend_error(res, "access Gate Readers"))
             readers = res.json() if res.status_code == 200 else []
+        except HTTPException:
+            raise
         except Exception:
             readers = []
 
@@ -631,6 +825,7 @@ async def readers_page(request: Request, user: dict = Depends(get_current_user))
         "barns": barns
     })
 
+
 @app.get("/htmx/readers-list", response_class=HTMLResponse)
 async def htmx_readers_list(request: Request, q: str = "", user: dict = Depends(get_current_user)):
     headers = get_auth_headers(user) if user else {}
@@ -641,6 +836,7 @@ async def htmx_readers_list(request: Request, q: str = "", user: dict = Depends(
         except Exception:
             readers = []
     return templates.TemplateResponse("partials/reader_rows.html", {"request": request, "readers": readers})
+
 
 @app.post("/htmx/readers/create", response_class=HTMLResponse)
 async def htmx_readers_create(
@@ -656,7 +852,7 @@ async def htmx_readers_create(
         return ""
 
     async with httpx.AsyncClient(timeout=4.0) as client:
-        await client.post(
+        res = await client.post(
             f"{BACKEND_BASE_URL}/readers",
             json={
                 "readerName": reader_name,
@@ -667,8 +863,15 @@ async def htmx_readers_create(
             },
             headers=get_auth_headers(user)
         )
+        if res.status_code == 403:
+            err = extract_backend_error(res, f"provision reader in Barn '{barn_id}'")
+            msg = format_403_security_message(user, err, request.url.path)
+            await log_security_violation_best_effort(user, request.url.path, msg)
+            return HTMLResponse(content=render_403_alert_html(msg), status_code=403)
+
         readers = (await client.get(f"{BACKEND_BASE_URL}/readers", headers=get_auth_headers(user))).json()
     return templates.TemplateResponse("partials/reader_rows.html", {"request": request, "readers": readers})
+
 
 @app.get("/readers/{gate_id}", response_class=HTMLResponse)
 async def reader_detail_page(request: Request, gate_id: str, user: dict = Depends(get_current_user)):
@@ -678,6 +881,8 @@ async def reader_detail_page(request: Request, gate_id: str, user: dict = Depend
     headers = get_auth_headers(user)
     async with httpx.AsyncClient(timeout=4.0) as client:
         res = await client.get(f"{BACKEND_BASE_URL}/readers/{gate_id}", headers=headers)
+        if res.status_code == 403:
+            raise HTTPException(status_code=403, detail=extract_backend_error(res, f"access Gate Reader '{gate_id}'"))
         if res.status_code != 200:
             raise HTTPException(status_code=404, detail="Gate reader not found")
         detail = res.json()
@@ -691,8 +896,10 @@ async def reader_detail_page(request: Request, gate_id: str, user: dict = Depend
         "barns": barns
     })
 
+
 @app.post("/readers/{gate_id}/update")
 async def reader_update_action(
+    request: Request,
     gate_id: str,
     barn_id: str = Form(...),
     label: str = Form(...),
@@ -704,7 +911,7 @@ async def reader_update_action(
         return RedirectResponse(url="/login")
 
     async with httpx.AsyncClient(timeout=4.0) as client:
-        await client.put(
+        res = await client.put(
             f"{BACKEND_BASE_URL}/readers/{gate_id}",
             json={
                 "barnId": barn_id,
@@ -714,7 +921,14 @@ async def reader_update_action(
             },
             headers=get_auth_headers(user)
         )
+    if res.status_code == 403:
+        err = extract_backend_error(res, f"mutate Gate Reader '{gate_id}' in Barn '{barn_id}'")
+        msg = format_403_security_message(user, err, request.url.path)
+        await log_security_violation_best_effort(user, request.url.path, msg)
+        return RedirectResponse(url=f"/readers/{gate_id}?error={quote(msg)}", status_code=status.HTTP_303_SEE_OTHER)
+
     return RedirectResponse(url=f"/readers/{gate_id}", status_code=status.HTTP_303_SEE_OTHER)
+
 
 # ================= ABNORMALITY DETECTION & ALERTING =================
 
@@ -745,6 +959,7 @@ async def fetch_alerts_data(client: httpx.AsyncClient, headers: dict, state: str
         "stats": {"openCount": 0, "acknowledgedCount": 0, "missingCount": 0, "unexpectedCount": 0, "wrongBarnCount": 0}
     }
 
+
 @app.get("/alerts", response_class=HTMLResponse)
 async def alerts_page(request: Request, state: str = "OPEN", type: str = "ALL", q: str = "", user: dict = Depends(get_current_user)):
     if not user:
@@ -770,6 +985,7 @@ async def alerts_page(request: Request, state: str = "OPEN", type: str = "ALL", 
         "q": q
     })
 
+
 @app.get("/htmx/alerts-list", response_class=HTMLResponse)
 async def htmx_alerts_list(request: Request, state: str = "OPEN", type: str = "ALL", q: str = "", user: dict = Depends(get_current_user)):
     headers = get_auth_headers(user) if user else {}
@@ -786,6 +1002,7 @@ async def htmx_alerts_list(request: Request, state: str = "OPEN", type: str = "A
         "q": q,
         "oob_update": True
     })
+
 
 @app.post("/htmx/alerts/reconcile", response_class=HTMLResponse)
 async def htmx_alerts_reconcile(
@@ -805,6 +1022,11 @@ async def htmx_alerts_reconcile(
             json={"barnId": barn_id, "thresholdMinutes": threshold_minutes},
             headers=headers
         )
+        if res.status_code == 403:
+            err = extract_backend_error(res, f"reconcile Barn '{barn_id}'")
+            msg = format_403_security_message(user, err, request.url.path)
+            await log_security_violation_best_effort(user, request.url.path, msg)
+            return HTMLResponse(content=render_403_alert_html(msg), status_code=403)
         if res.status_code == 200:
             body = res.json()
             flagged = body.get("flaggedCount", 0)
@@ -823,11 +1045,17 @@ async def htmx_alerts_reconcile(
         "banner_msg": banner_msg
     })
 
+
 @app.post("/htmx/alerts/{alert_id}/acknowledge", response_class=HTMLResponse)
 async def htmx_alert_acknowledge(request: Request, alert_id: str, state: str = "OPEN", type: str = "ALL", user: dict = Depends(get_current_user)):
     headers = get_auth_headers(user) if user else {}
     async with httpx.AsyncClient(timeout=8.0) as client:
-        await client.post(f"{BACKEND_BASE_URL}/alerts/{alert_id}/acknowledge", headers=headers)
+        res = await client.post(f"{BACKEND_BASE_URL}/alerts/{alert_id}/acknowledge", headers=headers)
+        if res.status_code == 403:
+            err = extract_backend_error(res, f"acknowledge Alert '{alert_id}'")
+            msg = format_403_security_message(user or {}, err, request.url.path)
+            await log_security_violation_best_effort(user or {}, request.url.path, msg)
+            return HTMLResponse(content=render_403_alert_html(msg), status_code=403)
         alert_data = await fetch_alerts_data(client, headers, state=state, alert_type=type, q="")
 
     return templates.TemplateResponse("partials/alert_table_content.html", {
@@ -840,6 +1068,7 @@ async def htmx_alert_acknowledge(request: Request, alert_id: str, state: str = "
         "q": "",
         "oob_update": True
     })
+
 
 @app.post("/htmx/alerts/{alert_id}/resolve", response_class=HTMLResponse)
 async def htmx_alert_resolve(
@@ -852,7 +1081,12 @@ async def htmx_alert_resolve(
 ):
     headers = get_auth_headers(user) if user else {}
     async with httpx.AsyncClient(timeout=8.0) as client:
-        await client.post(f"{BACKEND_BASE_URL}/alerts/{alert_id}/resolve", json={"note": note}, headers=headers)
+        res = await client.post(f"{BACKEND_BASE_URL}/alerts/{alert_id}/resolve", json={"note": note}, headers=headers)
+        if res.status_code == 403:
+            err = extract_backend_error(res, f"resolve Alert '{alert_id}'")
+            msg = format_403_security_message(user or {}, err, request.url.path)
+            await log_security_violation_best_effort(user or {}, request.url.path, msg)
+            return HTMLResponse(content=render_403_alert_html(msg), status_code=403)
         alert_data = await fetch_alerts_data(client, headers, state=state, alert_type=type, q="")
 
     return templates.TemplateResponse("partials/alert_table_content.html", {
@@ -865,6 +1099,7 @@ async def htmx_alert_resolve(
         "q": "",
         "oob_update": True
     })
+
 
 @app.get("/htmx/alerts/badge", response_class=HTMLResponse)
 async def htmx_alerts_badge(user: dict = Depends(get_current_user)):
@@ -878,95 +1113,6 @@ async def htmx_alerts_badge(user: dict = Depends(get_current_user)):
         return f'<span class="px-2 py-0.5 text-[10px] font-bold rounded-full bg-rose-500 text-white">{count}</span>'
     return ""
 
-# ================= ANIMAL HEALTH, TREATMENTS, TRANSFERS & DOSSIER =================
-
-@app.get("/herd/{animal_id}", response_class=HTMLResponse)
-async def cattle_detail_page(request: Request, animal_id: str, user: dict = Depends(get_current_user)):
-    if not user:
-        return RedirectResponse(url="/login")
-
-    headers = get_auth_headers(user)
-    async with httpx.AsyncClient(timeout=6.0) as client:
-        res = await client.get(f"{BACKEND_BASE_URL}/cattle/{animal_id}", headers=headers)
-        if res.status_code != 200:
-            raise HTTPException(status_code=404, detail="Animal not found")
-        detail = res.json()
-
-        try:
-            barns_res = await client.get(f"{BACKEND_BASE_URL}/barns", headers=headers)
-            barns = barns_res.json() if barns_res.status_code == 200 else []
-        except Exception:
-            barns = []
-
-    return templates.TemplateResponse("cattle_detail.html", {
-        "request": request,
-        "user": user,
-        "animal": detail["profile"],
-        "tags": detail["tags"],
-        "vaccinations": detail["vaccinations"],
-        "movements": detail["movements"],
-        "transfers": detail.get("transfers", []),
-        "barns": barns
-    })
-
-@app.post("/herd/{animal_id}/health")
-async def cattle_record_health(
-    animal_id: str,
-    record_type: str = Form(...),
-    health_status: str = Form("HEALTHY"),
-    title: str = Form(...),
-    medication: str = Form(""),
-    notes: str = Form(""),
-    user: dict = Depends(get_current_user)
-):
-    if not user:
-        return RedirectResponse(url="/login")
-
-    async with httpx.AsyncClient(timeout=6.0) as client:
-        await client.post(
-            f"{BACKEND_BASE_URL}/cattle/{animal_id}/health",
-            json={
-                "recordType": record_type,
-                "healthStatus": health_status,
-                "title": title,
-                "medication": medication,
-                "notes": notes
-            },
-            headers=get_auth_headers(user)
-        )
-    return RedirectResponse(url=f"/herd/{animal_id}", status_code=status.HTTP_303_SEE_OTHER)
-
-@app.post("/herd/{animal_id}/transfer")
-async def cattle_transfer_action(
-    animal_id: str,
-    to_barn_id: str = Form(...),
-    reason: str = Form(""),
-    user: dict = Depends(get_current_user)
-):
-    if not user:
-        return RedirectResponse(url="/login")
-
-    async with httpx.AsyncClient(timeout=6.0) as client:
-        await client.post(
-            f"{BACKEND_BASE_URL}/cattle/{animal_id}/transfer",
-            json={"toBarnId": to_barn_id, "reason": reason},
-            headers=get_auth_headers(user)
-        )
-    return RedirectResponse(url=f"/herd/{animal_id}", status_code=status.HTTP_303_SEE_OTHER)
-
-@app.get("/herd/{animal_id}/dossier")
-async def cattle_download_dossier(animal_id: str, user: dict = Depends(get_current_user)):
-    if not user:
-        return RedirectResponse(url="/login")
-
-    async with httpx.AsyncClient(timeout=6.0) as client:
-        res = await client.get(f"{BACKEND_BASE_URL}/cattle/{animal_id}/dossier", headers=get_auth_headers(user))
-        return Response(
-            content=res.content,
-            media_type="application/json",
-            headers={"Content-Disposition": f'attachment; filename="dossier_{animal_id.replace(" ", "_")}.json"'}
-        )
-
 
 # ================= SURVEILLANCE REPORTING & EXTERNAL API TRANSMISSION =================
 
@@ -974,12 +1120,18 @@ async def cattle_download_dossier(animal_id: str, user: dict = Depends(get_curre
 async def surveillance_page(request: Request, user: dict = Depends(get_current_user)):
     if not user:
         return RedirectResponse(url="/login")
+    if user.get("role") not in ["SYSTEM_ADMIN", "FARM_MANAGER", "EXECUTIVE"]:
+        raise HTTPException(status_code=403, detail="Access denied: Insufficient privileges for disease surveillance.")
 
     headers = get_auth_headers(user)
     async with httpx.AsyncClient(timeout=8.0) as client:
         try:
             res = await client.get(f"{BACKEND_BASE_URL}/surveillance/overview", headers=headers)
+            if res.status_code == 403:
+                raise HTTPException(status_code=403, detail=extract_backend_error(res, "access Disease Surveillance"))
             data = res.json() if res.status_code == 200 else {}
+        except HTTPException:
+            raise
         except Exception:
             data = {}
 
@@ -993,6 +1145,7 @@ async def surveillance_page(request: Request, user: dict = Depends(get_current_u
         "transmissions": data.get("transmissions", [])
     })
 
+
 @app.get("/surveillance/export")
 async def surveillance_export_proxy(
     report_type: str = "OUTBREAK_SURVEILLANCE",
@@ -1002,6 +1155,8 @@ async def surveillance_export_proxy(
 ):
     if not user:
         return RedirectResponse(url="/login")
+    if user.get("role") not in ["SYSTEM_ADMIN", "FARM_MANAGER", "EXECUTIVE"]:
+        raise HTTPException(status_code=403, detail="Access denied: Insufficient privileges for surveillance export.")
 
     async with httpx.AsyncClient(timeout=15.0) as client:
         res = await client.get(
@@ -1009,9 +1164,12 @@ async def surveillance_export_proxy(
             params={"reportType": report_type, "farmId": farm_id, "format": format},
             headers=get_auth_headers(user)
         )
+        if res.status_code == 403:
+            raise HTTPException(status_code=403, detail=extract_backend_error(res, f"export surveillance data for '{farm_id}'"))
         content_disp = res.headers.get("Content-Disposition", f'attachment; filename="report.{format.lower()}"')
         media_type = res.headers.get("Content-Type", "application/octet-stream")
         return Response(content=res.content, media_type=media_type, headers={"Content-Disposition": content_disp})
+
 
 @app.post("/htmx/surveillance/transmit", response_class=HTMLResponse)
 async def htmx_surveillance_transmit(
@@ -1040,6 +1198,11 @@ async def htmx_surveillance_transmit(
             },
             headers=headers
         )
+        if tx_res.status_code == 403:
+            err = extract_backend_error(tx_res, f"transmit surveillance data for Farm '{farm_scope}'")
+            msg = format_403_security_message(user, err, request.url.path)
+            await log_security_violation_best_effort(user, request.url.path, msg)
+            return HTMLResponse(content=render_403_alert_html(msg), status_code=403)
         if tx_res.status_code == 200:
             banner_msg = tx_res.json().get("responseSummary", "Transmission completed.")
 
@@ -1052,12 +1215,18 @@ async def htmx_surveillance_transmit(
         "banner_msg": banner_msg
     })
 
+
 @app.post("/htmx/barns/{barn_id}/verify-return", response_class=HTMLResponse)
 async def htmx_verify_barn_return(request: Request, barn_id: str, user: dict = Depends(get_current_user)):
     headers = get_auth_headers(user) if user else {}
     verify_banner = ""
     async with httpx.AsyncClient(timeout=6.0) as client:
         v_res = await client.post(f"{BACKEND_BASE_URL}/barns/{barn_id}/verify-return", headers=headers)
+        if v_res.status_code == 403:
+            err = extract_backend_error(v_res, f"mutate Barn '{barn_id}'")
+            msg = format_403_security_message(user or {}, err, request.url.path)
+            await log_security_violation_best_effort(user or {}, request.url.path, msg)
+            return HTMLResponse(content=render_403_alert_html(msg), status_code=403)
         if v_res.status_code == 200:
             body = v_res.json()
             verify_banner = (
@@ -1066,7 +1235,7 @@ async def htmx_verify_barn_return(request: Request, barn_id: str, user: dict = D
                 f"{body.get('newlyFlaggedAlerts', 0)} missing-cattle alert(s) raised."
             )
         res = await client.get(f"{BACKEND_BASE_URL}/facilities/distribution", headers=headers)
-        farms = res.json() if res.status_code == 200 else []
+        farms = filter_farms_by_scope(res.json() if res.status_code == 200 else [], user)
 
     return templates.TemplateResponse("partials/headcount_cards.html", {
         "request": request,
@@ -1074,16 +1243,21 @@ async def htmx_verify_barn_return(request: Request, barn_id: str, user: dict = D
         "verify_banner": verify_banner
     })
 
+
+# ================= USER & ROLE ADMINISTRATION =================
+
 @app.get("/users", response_class=HTMLResponse)
 async def users_page(request: Request, error: str = "", success: str = "", user: dict = Depends(get_current_user)):
     if not user:
         return RedirectResponse(url="/login")
     if user.get("role") not in ("SYSTEM_ADMIN", "FARM_MANAGER"):
-        return RedirectResponse(url="/")
+        raise HTTPException(status_code=403, detail="Access denied: Insufficient privileges for user & role administration.")
 
     headers = get_auth_headers(user)
     async with httpx.AsyncClient(timeout=6.0) as client:
         users_res = await client.get(f"{BACKEND_BASE_URL}/users", headers=headers)
+        if users_res.status_code == 403:
+            raise HTTPException(status_code=403, detail=extract_backend_error(users_res, "access User & Role Administration"))
         users_list = users_res.json() if users_res.status_code == 200 else []
 
         dist_res = await client.get(f"{BACKEND_BASE_URL}/facilities/distribution", headers=headers)
@@ -1101,8 +1275,10 @@ async def users_page(request: Request, error: str = "", success: str = "", user:
 
 @app.post("/users/create")
 async def create_user_submit(request: Request, user: dict = Depends(get_current_user)):
-    if not user or user.get("role") not in ("SYSTEM_ADMIN", "FARM_MANAGER"):
-        return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if user.get("role") not in ("SYSTEM_ADMIN", "FARM_MANAGER"):
+        raise HTTPException(status_code=403, detail="Access denied: Insufficient privileges to create users.")
 
     form = await request.form()
     payload = {
@@ -1117,26 +1293,34 @@ async def create_user_submit(request: Request, user: dict = Depends(get_current_
     async with httpx.AsyncClient(timeout=6.0) as client:
         res = await client.post(f"{BACKEND_BASE_URL}/users", json=payload, headers=get_auth_headers(user))
 
-    if res.status_code != 200:
-        err_msg = res.json().get("error", "Failed to create user") if res.content else "Failed to create user"
-        return RedirectResponse(url=f"/users?error={err_msg}", status_code=status.HTTP_303_SEE_OTHER)
+    if res.status_code == 403:
+        err_detail = extract_backend_error(res, f"create user '{payload['username']}' in Farm '{payload['farmId']}'")
+        msg = format_403_security_message(user, err_detail, request.url.path)
+        await log_security_violation_best_effort(user, request.url.path, msg)
+        return RedirectResponse(url=f"/users?error={quote(msg)}", status_code=status.HTTP_303_SEE_OTHER)
 
+    if res.status_code != 200:
+        err_msg = extract_backend_error(res, "Failed to create user")
+        return RedirectResponse(url=f"/users?error={quote(err_msg)}", status_code=status.HTTP_303_SEE_OTHER)
+
+    success_msg = f"Created user {payload['username']} with role {payload['role']}"
     return RedirectResponse(
-        url=f"/users?success=Created+user+{payload['username']}+with+role+{payload['role']}",
+        url=f"/users?success={quote(success_msg)}",
         status_code=status.HTTP_303_SEE_OTHER
     )
 
 
 @app.post("/users/{target_username}/update-role")
 async def update_user_role_submit(target_username: str, request: Request, user: dict = Depends(get_current_user)):
-    if not user or user.get("role") not in ("SYSTEM_ADMIN", "FARM_MANAGER"):
-        return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
+    if not user:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    if user.get("role") not in ("SYSTEM_ADMIN", "FARM_MANAGER"):
+        raise HTTPException(status_code=403, detail="Access denied: Insufficient privileges to grant roles.")
 
     form = await request.form()
     new_role = form.get("role", "BARN_SUPERVISOR")
     farm_id = form.get("farmId", "")
 
-    # If promoting to BARN_SUPERVISOR from the quick table, default to first barn of that farm
     barn_ids = []
     if new_role == "BARN_SUPERVISOR" and farm_id:
         async with httpx.AsyncClient(timeout=6.0) as client:
@@ -1154,11 +1338,18 @@ async def update_user_role_submit(target_username: str, request: Request, user: 
             headers=get_auth_headers(user)
         )
 
-    if res.status_code != 200:
-        err_msg = res.json().get("error", "Failed to update role") if res.content else "Failed to update role"
-        return RedirectResponse(url=f"/users?error={err_msg}", status_code=status.HTTP_303_SEE_OTHER)
+    if res.status_code == 403:
+        err_detail = extract_backend_error(res, f"update role for '{target_username}' in Farm '{farm_id}'")
+        msg = format_403_security_message(user, err_detail, request.url.path)
+        await log_security_violation_best_effort(user, request.url.path, msg)
+        return RedirectResponse(url=f"/users?error={quote(msg)}", status_code=status.HTTP_303_SEE_OTHER)
 
+    if res.status_code != 200:
+        err_msg = extract_backend_error(res, "Failed to update role")
+        return RedirectResponse(url=f"/users?error={quote(err_msg)}", status_code=status.HTTP_303_SEE_OTHER)
+
+    success_msg = f"Updated {target_username} to {new_role}"
     return RedirectResponse(
-        url=f"/users?success=Updated+{target_username}+to+{new_role}",
+        url=f"/users?success={quote(success_msg)}",
         status_code=status.HTTP_303_SEE_OTHER
     )

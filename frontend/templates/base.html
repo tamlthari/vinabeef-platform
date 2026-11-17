@@ -74,7 +74,7 @@
                     <span>Audit</span>
                 </a>
                 {% endif %}
-                
+
                 {% if user.role in ['SYSTEM_ADMIN', 'FARM_MANAGER'] %}
                 <a href="/users" class="flex items-center space-x-3 px-3 py-2.5 rounded-lg transition {% if request.url.path.startswith('/users') %}bg-[#2f80ed] text-white shadow-sm font-semibold{% else %}text-slate-300 hover:bg-[#202c40] hover:text-white{% endif %}">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
@@ -210,6 +210,15 @@
 
         <!-- Content Area -->
         <main class="flex-1 p-8 min-w-0">
+            {% set banner_error = error or request.query_params.get('error', '') %}
+            {% if banner_error and 'Access Denied (403)' in banner_error %}
+            <div class="mb-5 px-5 py-3.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold flex items-center space-x-2.5 shadow-xs">
+                <svg class="w-4 h-4 text-rose-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                </svg>
+                <span>{{ banner_error }}</span>
+            </div>
+            {% endif %}
             {% block content %}{% endblock %}
         </main>
     </div>
