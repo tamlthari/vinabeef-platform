@@ -29,6 +29,11 @@ public class GateReaderController {
         private String barnId;
         private String label;
         private String readerName;
+        /**
+         * Optional. Name of the OUTER reader of the same gate. When given, {@code readerName} is the INNER
+         * reader and the gate decides direction from the order in which the two readers see a tag.
+         */
+        private String outerReaderName;
         private String directionMode;
         private String firmwareVersion;
     }
@@ -111,6 +116,22 @@ public class GateReaderController {
                     .body(Map.of("error", "User '" + scope.username() + "' is not authorized to provision Gate Readers in Barn '" + req.getBarnId() + "'."));
         }
 
+        String innerName = req.getReaderName().trim();
+        String outerName = req.getOuterReaderName() != null && !req.getOuterReaderName().isBlank()
+                ? req.getOuterReaderName().trim() : null;
+        if (outerName != null && outerName.equals(innerName)) {
+            return ResponseEntity.badRequest().body(Map.of("error", "The inner and outer reader must be different readers."));
+        }
+        for (String name : outerName == null ? List.of(innerName) : List.of(innerName, outerName)) {
+            Integer used = jdbcTemplate.queryForObject(
+                    "SELECT (SELECT COUNT(*) FROM gates WHERE reader_name = ?) + (SELECT COUNT(*) FROM gate_readers WHERE reader_name = ?)",
+                    Integer.class, name, name);
+            if (used != null && used > 0) {
+                return ResponseEntity.status(HttpStatus.CONFLICT)
+                        .body(Map.of("error", "Reader '" + name + "' is already registered to a gate."));
+            }
+        }
+
         String gateId = (req.getGateId() != null && !req.getGateId().isBlank())
                 ? req.getGateId().trim()
                 : "GATE-" + UUID.randomUUID().toString().substring(0, 6).toUpperCase();
@@ -121,6 +142,11 @@ public class GateReaderController {
         """, gateId, req.getBarnId(), req.getLabel(), req.getReaderName().trim(),
                 req.getDirectionMode() != null ? req.getDirectionMode() : "BIDIRECTIONAL",
                 req.getFirmwareVersion() != null && !req.getFirmwareVersion().isBlank() ? req.getFirmwareVersion() : "1.58.1998");
+
+        if (outerName != null) {
+            jdbcTemplate.update("INSERT INTO gate_readers (reader_name, gate_id, side) VALUES (?, ?, 'INNER')", innerName, gateId);
+            jdbcTemplate.update("INSERT INTO gate_readers (reader_name, gate_id, side) VALUES (?, ?, 'OUTER')", outerName, gateId);
+        }
 
         return ResponseEntity.ok(Map.of("status", "REGISTERED", "gateId", gateId));
     }

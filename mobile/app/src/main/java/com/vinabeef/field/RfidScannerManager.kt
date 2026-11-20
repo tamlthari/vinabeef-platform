@@ -14,7 +14,7 @@ import java.util.UUID
 class RfidScannerManager(
     private val context: Context,
     private val onStatusChanged: (String) -> Unit,
-    private val onTagScanned: (String) -> Unit
+    private val onTagScanned: (code: String, method: String) -> Unit
 ) {
     private val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
     private val bluetoothAdapter: BluetoothAdapter? = bluetoothManager?.adapter
@@ -116,7 +116,7 @@ class RfidScannerManager(
             val ascii = String(rawBytes, Charsets.UTF_8).trim().replace(Regex("[^A-Za-z0-9-]"), "")
             val epc = if (ascii.length >= 6) ascii else rawBytes.joinToString("") { "%02X".format(it) }
             if (epc.isNotEmpty()) {
-                handler.post { onTagScanned(epc.uppercase()) }
+                handler.post { onTagScanned(epc.uppercase(), "BLE_RFID") }
             }
         }
     }
@@ -124,7 +124,7 @@ class RfidScannerManager(
     fun handleNfcTag(tag: Tag) {
         val hexUid = tag.id.joinToString("") { "%02X".format(it) }
         if (hexUid.isNotEmpty()) {
-            onTagScanned(hexUid)
+            onTagScanned(hexUid, "NFC")
         }
     }
 

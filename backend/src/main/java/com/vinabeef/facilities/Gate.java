@@ -24,4 +24,12 @@ public class Gate {
 
     @Column(name = "direction_mode")
     private String directionMode;
+
+    /** Longest gap between the inner and the outer read that still counts as one crossing. */
+    @Column(name = "pair_window_ms", nullable = false)
+    private int pairWindowMs = 15000;
+
+    /** Repeat reads at the same reader closer than this are treated as one tap. */
+    @Column(name = "repeat_debounce_ms", nullable = false)
+    private int repeatDebounceMs = 3000;
 }

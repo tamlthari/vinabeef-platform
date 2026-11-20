@@ -15,6 +15,9 @@
     <!-- Built-in Phone NFC Ear-Tag Reader Support -->
     <uses-permission android:name="android.permission.NFC" />
 
+    <!-- The phone's own data (herd, sign-in token, unsent records) must not be copied to cloud backups.
+         Plain-HTTP is not allowed in release builds; the debug build allows it (src/debug/AndroidManifest.xml). -->
+
     <application
         android:allowBackup="true"
         android:label="VinaBeef Field RFID"

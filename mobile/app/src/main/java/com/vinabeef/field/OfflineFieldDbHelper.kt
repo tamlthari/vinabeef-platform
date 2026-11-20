@@ -6,6 +6,7 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import org.json.JSONArray
 import org.json.JSONObject
+import java.time.Instant
 
 data class CachedAnimal(
     val animalId: String,
@@ -17,8 +18,16 @@ data class CachedAnimal(
     val tagEpc: String
 )
 
+/** A record the server did not accept; it stays on the phone until the supervisor retries or discards it. */
+data class RejectedRecord(
+    val clientEventId: String,
+    val label: String,
+    val title: String,
+    val reason: String
+)
+
 class OfflineFieldDbHelper(context: Context) :
-    SQLiteOpenHelper(context, "vinabeef_field_offline.db", null, 1) {
+    SQLiteOpenHelper(context, "vinabeef_field_offline.db", null, 2) {
 
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
@@ -43,16 +52,56 @@ class OfflineFieldDbHelper(context: Context) :
             CREATE TABLE health_outbox (
                 client_event_id TEXT PRIMARY KEY,
                 payload_json TEXT NOT NULL,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'PENDING',
+                last_error TEXT,
+                label TEXT,
+                title TEXT,
+                animal_id TEXT,
+                record_type TEXT,
+                recorded_at TEXT
+            )
+        """)
+        createProtocolTables(db)
+    }
+
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) {
+            // Keep the records that are still waiting to be sent: they are the only copy.
+            for (column in listOf(
+                "status TEXT NOT NULL DEFAULT 'PENDING'", "last_error TEXT", "label TEXT", "title TEXT",
+                "animal_id TEXT", "record_type TEXT", "recorded_at TEXT"
+            )) {
+                db.execSQL("ALTER TABLE health_outbox ADD COLUMN $column")
+            }
+            createProtocolTables(db)
+        }
+    }
+
+    private fun createProtocolTables(db: SQLiteDatabase) {
+        db.execSQL("""
+            CREATE TABLE IF NOT EXISTS protocols (
+                protocol_id TEXT PRIMARY KEY,
+                record_type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                resulting_status TEXT NOT NULL,
+                default_dose_ml REAL,
+                route TEXT,
+                interval_days INTEGER,
+                sort_order INTEGER NOT NULL
+            )
+        """)
+        db.execSQL("""
+            CREATE TABLE IF NOT EXISTS vaccination_history (
+                animal_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                last_at TEXT NOT NULL,
+                PRIMARY KEY (animal_id, title)
             )
         """)
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        db.execSQL("DROP TABLE IF EXISTS cached_cattle")
-        db.execSQL("DROP TABLE IF EXISTS health_outbox")
-        onCreate(db)
-    }
+    // ---------------------------------------------------------------- herd cache
 
     fun replaceCachedCattle(cattleArray: JSONArray) {
         val db = writableDatabase
@@ -68,7 +117,7 @@ class OfflineFieldDbHelper(context: Context) :
                     put("breed", obj.optString("breed", "Brahman Cross"))
                     put("weight_kg", obj.optDouble("weight_kg", 420.0))
                     put("health_status", obj.optString("health_status", "HEALTHY"))
-                    put("tag_epc", obj.optString("tag_epc").uppercase())
+                    put("tag_epc", TagCodes.normalise(obj.optString("tag_epc")))
                 }
                 db.insertWithOnConflict("cached_cattle", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
             }
@@ -78,96 +127,201 @@ class OfflineFieldDbHelper(context: Context) :
         }
     }
 
-    fun findAnimalByTagOrId(query: String): CachedAnimal? {
-        val clean = query.trim().uppercase()
-        if (clean.isEmpty()) return null
+    fun replaceProtocols(protocolArray: JSONArray) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            db.delete("protocols", null, null)
+            for (i in 0 until protocolArray.length()) {
+                val obj = protocolArray.getJSONObject(i)
+                val cv = ContentValues().apply {
+                    put("protocol_id", obj.optString("protocol_id"))
+                    put("record_type", obj.optString("type", "VACCINATION"))
+                    put("title", obj.optString("title"))
+                    put("resulting_status", obj.optString("status", "HEALTHY"))
+                    if (obj.isNull("default_dose_ml")) putNull("default_dose_ml") else put("default_dose_ml", obj.optDouble("default_dose_ml"))
+                    if (obj.isNull("route")) putNull("route") else put("route", obj.optString("route"))
+                    if (obj.isNull("interval_days")) putNull("interval_days") else put("interval_days", obj.optInt("interval_days"))
+                    put("sort_order", i)
+                }
+                db.insertWithOnConflict("protocols", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
 
+    fun getProtocols(): List<Protocol> {
+        val list = ArrayList<Protocol>()
         val cursor = readableDatabase.rawQuery(
-            """
-            SELECT animal_id, barn_id, barn_code, breed, weight_kg, health_status, tag_epc
-            FROM cached_cattle
-            WHERE UPPER(tag_epc) = ? OR UPPER(animal_id) = ?
-            LIMIT 1
-            """,
-            arrayOf(clean, clean)
+            "SELECT protocol_id, record_type, title, resulting_status, default_dose_ml, route, interval_days " +
+                    "FROM protocols ORDER BY sort_order ASC", null
         )
         cursor.use {
-            if (it.moveToFirst()) {
-                return CachedAnimal(
-                    animalId = it.getString(0),
-                    barnId = it.getString(1),
-                    barnCode = it.getString(2),
-                    breed = it.getString(3),
-                    weightKg = it.getDouble(4),
-                    healthStatus = it.getString(5),
-                    tagEpc = it.getString(6)
+            while (it.moveToNext()) {
+                list.add(
+                    Protocol(
+                        protocolId = it.getString(0),
+                        recordType = it.getString(1),
+                        title = it.getString(2),
+                        resultingStatus = it.getString(3),
+                        defaultDoseMl = if (it.isNull(4)) null else it.getDouble(4),
+                        route = if (it.isNull(5)) null else it.getString(5),
+                        intervalDays = if (it.isNull(6)) null else it.getInt(6)
+                    )
                 )
+            }
+        }
+        return list
+    }
+
+    fun replaceVaccinationHistory(rows: JSONArray) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            db.delete("vaccination_history", null, null)
+            for (i in 0 until rows.length()) {
+                val obj = rows.getJSONObject(i)
+                val title = obj.optString("title")
+                val lastAt = obj.optString("last_at")
+                if (title.isEmpty() || lastAt.isEmpty()) continue
+                val cv = ContentValues().apply {
+                    put("animal_id", obj.optString("animal_id"))
+                    put("title", normaliseTitle(title))
+                    put("last_at", lastAt)
+                }
+                db.insertWithOnConflict("vaccination_history", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    /**
+     * When this animal was last given this vaccine: the newest of the server history and the records that
+     * were made on this phone and are not synced yet, so a second dose is noticed even without network.
+     */
+    fun lastVaccination(animalId: String, title: String): Instant? {
+        val wanted = normaliseTitle(title)
+        val times = ArrayList<String>()
+        readableDatabase.rawQuery(
+            "SELECT last_at FROM vaccination_history WHERE animal_id = ? AND title = ?",
+            arrayOf(animalId, wanted)
+        ).use { while (it.moveToNext()) times.add(it.getString(0)) }
+        readableDatabase.rawQuery(
+            "SELECT recorded_at FROM health_outbox WHERE animal_id = ? AND record_type = 'VACCINATION' " +
+                    "AND UPPER(TRIM(title)) = ?",
+            arrayOf(animalId, wanted)
+        ).use { while (it.moveToNext()) times.add(it.getString(0)) }
+        return times.mapNotNull { parseInstantOrNull(it) }.maxOrNull()
+    }
+
+    private fun normaliseTitle(title: String) = title.trim().uppercase()
+
+    private fun parseInstantOrNull(text: String?): Instant? =
+        try {
+            if (text.isNullOrEmpty()) null else Instant.parse(text)
+        } catch (e: Exception) {
+            null
+        }
+
+    fun findAnimalByTagOrId(query: String): CachedAnimal? {
+        for (candidate in TagCodes.candidates(query)) {
+            if (candidate.isEmpty()) continue
+            readableDatabase.rawQuery(
+                """
+                SELECT animal_id, barn_id, barn_code, breed, weight_kg, health_status, tag_epc
+                FROM cached_cattle
+                WHERE UPPER(tag_epc) = ? OR REPLACE(UPPER(animal_id), ' ', '') = ?
+                LIMIT 1
+                """,
+                arrayOf(candidate, candidate)
+            ).use {
+                if (it.moveToFirst()) return readAnimal(it)
             }
         }
         return null
     }
 
     fun getRandomCachedAnimal(): CachedAnimal? {
-        val cursor = readableDatabase.rawQuery(
+        readableDatabase.rawQuery(
             "SELECT animal_id, barn_id, barn_code, breed, weight_kg, health_status, tag_epc FROM cached_cattle ORDER BY RANDOM() LIMIT 1",
             null
-        )
-        cursor.use {
-            if (it.moveToFirst()) {
-                return CachedAnimal(
-                    animalId = it.getString(0),
-                    barnId = it.getString(1),
-                    barnCode = it.getString(2),
-                    breed = it.getString(3),
-                    weightKg = it.getDouble(4),
-                    healthStatus = it.getString(5),
-                    tagEpc = it.getString(6)
-                )
-            }
+        ).use {
+            if (it.moveToFirst()) return readAnimal(it)
         }
         return null
     }
 
-    fun getCachedCount(): Int {
-        val cursor = readableDatabase.rawQuery("SELECT COUNT(*) FROM cached_cattle", null)
-        cursor.use {
-            return if (it.moveToFirst()) it.getInt(0) else 0
-        }
-    }
+    private fun readAnimal(c: android.database.Cursor) = CachedAnimal(
+        animalId = c.getString(0),
+        barnId = c.getString(1),
+        barnCode = c.getString(2),
+        breed = c.getString(3),
+        weightKg = c.getDouble(4),
+        healthStatus = c.getString(5),
+        tagEpc = c.getString(6)
+    )
 
-    fun enqueueHealthRecord(clientEventId: String, payloadJson: JSONObject, createdAt: String) {
+    fun getCachedCount(): Int = count("SELECT COUNT(*) FROM cached_cattle")
+
+    // ---------------------------------------------------------------- outbox
+
+    /** Stores the record on the phone. It stays here until the server acknowledges it. */
+    fun enqueueHealthRecord(payloadJson: JSONObject, label: String) {
+        val clientEventId = payloadJson.getString("clientEventId")
+        val recordType = payloadJson.optString("recordType")
         val cv = ContentValues().apply {
             put("client_event_id", clientEventId)
             put("payload_json", payloadJson.toString())
-            put("created_at", createdAt)
+            put("created_at", Instant.now().toString())
+            put("status", "PENDING")
+            put("label", label)
+            put("title", payloadJson.optString("title"))
+            put("animal_id", payloadJson.optString("animalId"))
+            put("record_type", recordType)
+            put("recorded_at", payloadJson.optString("recordedAt"))
         }
         writableDatabase.insertWithOnConflict("health_outbox", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
 
-        // Immediately update local cached health_status so subsequent scans reflect it offline
+        // A vaccination says what was given, not how the animal is; the server leaves the status alone too.
         val animalId = payloadJson.optString("animalId")
         val newStatus = payloadJson.optString("healthStatus")
-        if (animalId.isNotEmpty() && newStatus.isNotEmpty()) {
+        if (recordType != "VACCINATION" && animalId.isNotEmpty() && newStatus.isNotEmpty()) {
             val statusCv = ContentValues().apply { put("health_status", newStatus) }
             writableDatabase.update("cached_cattle", statusCv, "animal_id = ?", arrayOf(animalId))
         }
     }
 
-    fun getPendingOutbox(): JSONArray {
+    /** Records waiting to be sent, oldest first. Rejected records are not sent again until retried. */
+    fun getPendingOutbox(limit: Int = 100): JSONArray {
         val arr = JSONArray()
-        val cursor = readableDatabase.rawQuery("SELECT payload_json FROM health_outbox ORDER BY created_at ASC", null)
-        cursor.use {
-            while (it.moveToNext()) {
-                arr.put(JSONObject(it.getString(0)))
-            }
+        readableDatabase.rawQuery(
+            "SELECT payload_json FROM health_outbox WHERE status = 'PENDING' ORDER BY created_at ASC LIMIT ?",
+            arrayOf(limit.toString())
+        ).use {
+            while (it.moveToNext()) arr.put(JSONObject(it.getString(0)))
         }
         return arr
     }
 
-    fun getPendingCount(): Int {
-        val cursor = readableDatabase.rawQuery("SELECT COUNT(*) FROM health_outbox", null)
-        cursor.use {
-            return if (it.moveToFirst()) it.getInt(0) else 0
+    fun getPendingCount(): Int = count("SELECT COUNT(*) FROM health_outbox WHERE status = 'PENDING'")
+
+    fun getRejectedCount(): Int = count("SELECT COUNT(*) FROM health_outbox WHERE status = 'REJECTED'")
+
+    fun getRejected(): List<RejectedRecord> {
+        val list = ArrayList<RejectedRecord>()
+        readableDatabase.rawQuery(
+            "SELECT client_event_id, label, title, last_error FROM health_outbox WHERE status = 'REJECTED' ORDER BY created_at ASC",
+            null
+        ).use {
+            while (it.moveToNext()) {
+                list.add(RejectedRecord(it.getString(0), it.getString(1) ?: "", it.getString(2) ?: "", it.getString(3) ?: ""))
+            }
         }
+        return list
     }
 
     fun deleteAcknowledgedIds(ids: JSONArray) {
@@ -182,4 +336,28 @@ class OfflineFieldDbHelper(context: Context) :
             db.endTransaction()
         }
     }
+
+    fun markRejected(clientEventId: String, reason: String) {
+        val cv = ContentValues().apply {
+            put("status", "REJECTED")
+            put("last_error", reason)
+        }
+        writableDatabase.update("health_outbox", cv, "client_event_id = ?", arrayOf(clientEventId))
+    }
+
+    /** Puts rejected records back in the queue, for example after the animal was registered in the web app. */
+    fun retryRejected() {
+        val cv = ContentValues().apply {
+            put("status", "PENDING")
+            putNull("last_error")
+        }
+        writableDatabase.update("health_outbox", cv, "status = 'REJECTED'", null)
+    }
+
+    fun discardRejected() {
+        writableDatabase.delete("health_outbox", "status = 'REJECTED'", null)
+    }
+
+    private fun count(sql: String): Int =
+        readableDatabase.rawQuery(sql, null).use { if (it.moveToFirst()) it.getInt(0) else 0 }
 }

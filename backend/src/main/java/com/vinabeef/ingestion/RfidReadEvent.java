@@ -25,7 +25,8 @@ public class RfidReadEvent {
     @Column(name = "device_key")
     private String deviceKey;
 
-    @Column(name = "company_key", nullable = false)
+    // Temperature and similar events carry no COMPANY_KEY (nullable since V14).
+    @Column(name = "company_key")
     private String companyKey;
 
     @Column(name = "reader_name", nullable = false)
@@ -56,4 +57,29 @@ public class RfidReadEvent {
 
     @Column(name = "received_at")
     private Instant receivedAt = Instant.now();
+
+    @Column(name = "ingress_source")
+    private String ingressSource;
+
+    /** CARD_READ, READER_STATUS, READER_TELEMETRY or OTHER. */
+    @Column(name = "event_class", nullable = false)
+    private String eventClass = "CARD_READ";
+
+    @Column(name = "reader_key")
+    private Long readerKey;
+
+    @Column(name = "user_key")
+    private Long userKey;
+
+    @Column(name = "building_access_key")
+    private Long buildingAccessKey;
+
+    @Column(name = "credential_type")
+    private String credentialType;
+
+    @Column(name = "sensor_type")
+    private String sensorType;
+
+    @Column(name = "cloud_modified_ms")
+    private Long cloudModifiedMs;
 }

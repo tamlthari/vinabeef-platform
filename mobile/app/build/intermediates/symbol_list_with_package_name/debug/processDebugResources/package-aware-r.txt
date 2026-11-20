@@ -3096,7 +3096,10 @@ id bounce
 id btnConnectBle
 id btnDownloadBundle
 id btnLookupTag
+id btnReviewRejected
 id btnSaveOffline
+id btnSignIn
+id btnSignOut
 id btnSimulateScan
 id btnSyncNow
 id buttonPanel
@@ -3170,10 +3173,13 @@ id enterAlwaysCollapsed
 id escape
 id etBarnId
 id etClinicalNotes
+id etDoseMl
 id etMedicationBatch
+id etPassword
 id etServerUrl
 id etTagInput
 id etTreatmentTitle
+id etUsername
 id exitUntilCollapsed
 id expand_activities_button
 id expanded_menu
@@ -3230,6 +3236,8 @@ id line3
 id linear
 id listMode
 id list_item
+id llSession
+id llSignIn
 id m3_side_sheet
 id marquee
 id masked
@@ -3384,7 +3392,9 @@ id snackbar_text
 id snap
 id snapMargins
 id spHealthStatus
+id spProtocol
 id spRecordType
+id spRoute
 id spacer
 id special_effects_controller_view_tag
 id spline
@@ -3456,7 +3466,10 @@ id transition_scene_layoutid_cache
 id transition_transform
 id triangle
 id tvAnimalCard
+id tvHistory
+id tvNextDue
 id tvReaderStatus
+id tvSession
 id tvSyncStatus
 id unchecked
 id uniform

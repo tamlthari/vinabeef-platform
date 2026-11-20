@@ -1,9 +1,10 @@
 -- Merging decision tree log ---
 manifest
-ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:2:1-35:12
-INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:2:1-35:12
-INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:2:1-35:12
-INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:2:1-35:12
+ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:2:1-38:12
+MERGED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:2:1-38:12
+INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/debug/AndroidManifest.xml:2:1-5:12
+INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/debug/AndroidManifest.xml:2:1-5:12
+INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/debug/AndroidManifest.xml:2:1-5:12
 MERGED from [com.google.android.material:material:1.12.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/30d172588f815a7129852f31471d561a/transformed/material-1.12.0/AndroidManifest.xml:17:1-24:12
 MERGED from [androidx.appcompat:appcompat-resources:1.7.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/1a3b6ab00c5cf8c4a33832f362173319/transformed/appcompat-resources-1.7.0/AndroidManifest.xml:2:1-7:12
 MERGED from [androidx.constraintlayout:constraintlayout:2.0.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/9fc54eb8e20053120eff880bf022583b/transformed/constraintlayout-2.0.1/AndroidManifest.xml:2:1-11:12
@@ -46,11 +47,11 @@ MERGED from [androidx.documentfile:documentfile:1.0.0] /Applications/Android Stu
 MERGED from [androidx.localbroadcastmanager:localbroadcastmanager:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/1be38a7a2456c5713fba300fa3b77865/transformed/localbroadcastmanager-1.0.0/AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.print:print:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/d3d5aec85d3be107366ee2adc987d45f/transformed/print-1.0.0/AndroidManifest.xml:17:1-22:12
 	package
-		INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml
+		INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/debug/AndroidManifest.xml
 	android:versionName
-		INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml
+		INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/debug/AndroidManifest.xml
 	android:versionCode
-		INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml
+		INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/debug/AndroidManifest.xml
 	xmlns:android
 		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:2:11-69
 uses-permission#android.permission.INTERNET
@@ -94,8 +95,10 @@ ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/mai
 	android:name
 		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:16:22-59
 application
-ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:18:5-33:19
-INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:18:5-33:19
+ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:21:5-36:19
+MERGED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:21:5-36:19
+MERGED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:21:5-36:19
+INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/debug/AndroidManifest.xml:4:5-56
 MERGED from [com.google.android.material:material:1.12.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/30d172588f815a7129852f31471d561a/transformed/material-1.12.0/AndroidManifest.xml:22:5-20
 MERGED from [com.google.android.material:material:1.12.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/30d172588f815a7129852f31471d561a/transformed/material-1.12.0/AndroidManifest.xml:22:5-20
 MERGED from [androidx.constraintlayout:constraintlayout:2.0.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/9fc54eb8e20053120eff880bf022583b/transformed/constraintlayout-2.0.1/AndroidManifest.xml:9:5-20
@@ -113,39 +116,42 @@ MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] /Applicatio
 MERGED from [androidx.startup:startup-runtime:1.1.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/4af92f0112ec7171ce23ee44b0be3205/transformed/startup-runtime-1.1.1/AndroidManifest.xml:25:5-31:19
 MERGED from [androidx.startup:startup-runtime:1.1.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/4af92f0112ec7171ce23ee44b0be3205/transformed/startup-runtime-1.1.1/AndroidManifest.xml:25:5-31:19
 	android:extractNativeLibs
-		INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml
+		INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/debug/AndroidManifest.xml
 	android:appComponentFactory
 		ADDED from [androidx.core:core:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/491caade41e8059f1701c9c6b2691b8e/transformed/core-1.13.1/AndroidManifest.xml:28:18-86
 	android:label
-		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:20:9-44
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:23:9-44
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:23:9-44
 	android:allowBackup
-		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:19:9-35
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:22:9-35
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:22:9-35
 	android:theme
-		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:22:9-79
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:25:9-79
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:25:9-79
 	android:usesCleartextTraffic
-		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:21:9-44
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:24:9-44
 activity#com.vinabeef.field.MainActivity
-ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:24:9-32:20
+ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:27:9-35:20
 	android:screenOrientation
-		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:27:13-49
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:30:13-49
 	android:exported
-		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:26:13-36
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:29:13-36
 	android:name
-		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:25:13-41
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:28:13-41
 intent-filter#action:name:android.intent.action.MAIN+category:name:android.intent.category.LAUNCHER
-ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:28:13-31:29
+ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:31:13-34:29
 action#android.intent.action.MAIN
-ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:29:17-69
+ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:32:17-69
 	android:name
-		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:29:25-66
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:32:25-66
 category#android.intent.category.LAUNCHER
-ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:30:17-77
+ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:33:17-77
 	android:name
-		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:30:27-74
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:33:27-74
 uses-sdk
-INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml reason: use-sdk injection requested
-INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml
-INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml
+INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/debug/AndroidManifest.xml reason: use-sdk injection requested
+INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/debug/AndroidManifest.xml
+INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/debug/AndroidManifest.xml
 MERGED from [com.google.android.material:material:1.12.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/30d172588f815a7129852f31471d561a/transformed/material-1.12.0/AndroidManifest.xml:20:5-44
 MERGED from [com.google.android.material:material:1.12.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/30d172588f815a7129852f31471d561a/transformed/material-1.12.0/AndroidManifest.xml:20:5-44
 MERGED from [androidx.appcompat:appcompat-resources:1.7.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/1a3b6ab00c5cf8c4a33832f362173319/transformed/appcompat-resources-1.7.0/AndroidManifest.xml:5:5-44
@@ -229,9 +235,9 @@ MERGED from [androidx.localbroadcastmanager:localbroadcastmanager:1.0.0] /Applic
 MERGED from [androidx.print:print:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/d3d5aec85d3be107366ee2adc987d45f/transformed/print-1.0.0/AndroidManifest.xml:20:5-44
 MERGED from [androidx.print:print:1.0.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/d3d5aec85d3be107366ee2adc987d45f/transformed/print-1.0.0/AndroidManifest.xml:20:5-44
 	android:targetSdkVersion
-		INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml
+		INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/debug/AndroidManifest.xml
 	android:minSdkVersion
-		INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml
+		INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/debug/AndroidManifest.xml
 provider#androidx.startup.InitializationProvider
 ADDED from [androidx.emoji2:emoji2:1.3.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/bb6d72a34c047ac15669c171ced2538d/transformed/emoji2-1.3.0/AndroidManifest.xml:24:9-32:20
 MERGED from [androidx.lifecycle:lifecycle-process:2.6.2] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/c69791e00d88421e19d2ba943400b966/transformed/lifecycle-process-2.6.2/AndroidManifest.xml:24:9-32:20

@@ -28,4 +28,15 @@ public class Movement {
 
     @Column(name = "occurred_at", nullable = false)
     private Instant occurredAt;
+
+    /** GATE_MODE (one reader, direction from the gate setting) or PAIRED_READERS (inner/outer order). */
+    @Column(name = "detection_method", nullable = false)
+    private String detectionMethod = "GATE_MODE";
+
+    /** For PAIRED_READERS: the first of the two reads. {@code sourceEventId} is the second one. */
+    @Column(name = "first_event_id")
+    private String firstEventId;
+
+    @Column(name = "crossing_started_at")
+    private Instant crossingStartedAt;
 }

@@ -3,6 +3,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="#F3F4F6"
+    android:fillViewport="true"
     android:padding="16dp">
 
     <LinearLayout
@@ -10,7 +11,7 @@
         android:layout_height="wrap_content"
         android:orientation="vertical">
 
-        <!-- Status & Offline Outbox Banner -->
+        <!-- Status banner: what is on the phone and what still has to be sent -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -22,22 +23,42 @@
                 android:id="@+id/tvSyncStatus"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Cache: 0 cattle | Pending Outbox: 0"
+                android:text="Herd on phone: 0 | Waiting to send: 0"
                 android:textColor="#FFFFFF"
                 android:textSize="13sp"
                 android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvSession"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="Not signed in"
+                android:textColor="#FCD34D"
+                android:textSize="12sp" />
 
             <TextView
                 android:id="@+id/tvReaderStatus"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
-                android:text="RFID Reader: Standby (BLE / NFC / Demo Scan)"
+                android:text="RFID reader: not connected (BLE wand, phone NFC or type the tag)"
                 android:textColor="#93C5FD"
                 android:textSize="12sp" />
+
+            <Button
+                android:id="@+id/btnReviewRejected"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:backgroundTint="#B45309"
+                android:text="Records need attention"
+                android:textColor="#FFFFFF"
+                android:textSize="12sp"
+                android:visibility="gone" />
         </LinearLayout>
 
-        <!-- Server & Barn Cache Setup -->
+        <!-- 1. Sign in and barn cache -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -49,49 +70,97 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="1. Server &amp; Barn Offline Cache"
+                android:text="1. Sign in and load the barn"
                 android:textColor="#111827"
                 android:textSize="14sp"
                 android:textStyle="bold" />
 
-            <EditText
-                android:id="@+id/etServerUrl"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:hint="Backend URL (10.0.2.2 for Emulator)"
-                android:inputType="textUri"
-                android:text="http://10.0.2.2:8080/api/v1"
-                android:textSize="13sp" />
-
             <LinearLayout
+                android:id="@+id/llSignIn"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:orientation="horizontal">
+                android:orientation="vertical">
 
                 <EditText
-                    android:id="@+id/etBarnId"
-                    android:layout_width="0dp"
+                    android:id="@+id/etServerUrl"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:hint="Barn ID (e.g. BARN-DL-001)"
-                    android:text="BARN-DL-001"
+                    android:layout_marginTop="6dp"
+                    android:hint="Server address (10.0.2.2 on the emulator)"
+                    android:inputType="textUri"
+                    android:textSize="13sp" />
+
+                <EditText
+                    android:id="@+id/etUsername"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="Username"
+                    android:inputType="textNoSuggestions"
+                    android:textSize="13sp" />
+
+                <EditText
+                    android:id="@+id/etPassword"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="Password"
+                    android:inputType="textPassword"
                     android:textSize="13sp" />
 
                 <Button
-                    android:id="@+id/btnDownloadBundle"
-                    android:layout_width="wrap_content"
+                    android:id="@+id/btnSignIn"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
+                    android:layout_marginTop="6dp"
                     android:backgroundTint="#182232"
-                    android:text="Cache Barn"
+                    android:text="Sign in"
                     android:textColor="#FFFFFF"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/llSession"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:orientation="horizontal">
+
+                    <EditText
+                        android:id="@+id/etBarnId"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:hint="Barn ID (empty = your barn, ALL = every barn)"
+                        android:inputType="textNoSuggestions|textCapCharacters"
+                        android:textSize="13sp" />
+
+                    <Button
+                        android:id="@+id/btnDownloadBundle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:backgroundTint="#182232"
+                        android:text="Load barn"
+                        android:textColor="#FFFFFF"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
+                <Button
+                    android:id="@+id/btnSignOut"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:text="Sign out"
                     android:textSize="12sp" />
             </LinearLayout>
         </LinearLayout>
 
-        <!-- Handheld RFID Scanner Section -->
+        <!-- 2. Scan -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -103,7 +172,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="2. Scan Cattle RFID Ear Tag"
+                android:text="2. Scan the ear tag"
                 android:textColor="#111827"
                 android:textSize="14sp"
                 android:textStyle="bold" />
@@ -120,7 +189,7 @@
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
                     android:backgroundTint="#2F80ED"
-                    android:text="Pair BLE Wand"
+                    android:text="Pair BLE wand"
                     android:textColor="#FFFFFF"
                     android:textSize="12sp" />
 
@@ -131,7 +200,7 @@
                     android:layout_marginStart="8dp"
                     android:layout_weight="1"
                     android:backgroundTint="#059669"
-                    android:text="Scan Tag (Demo)"
+                    android:text="Scan tag (demo)"
                     android:textColor="#FFFFFF"
                     android:textSize="12sp" />
             </LinearLayout>
@@ -147,7 +216,8 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:hint="Scanned EPC or Animal ID (e.g. VB-000001)"
+                    android:hint="Tag ID or animal ID (or hold the phone to the tag)"
+                    android:inputType="textNoSuggestions|textCapCharacters"
                     android:textSize="13sp" />
 
                 <Button
@@ -155,11 +225,10 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="8dp"
-                    android:text="Lookup"
+                    android:text="Look up"
                     android:textSize="12sp" />
             </LinearLayout>
 
-            <!-- Resolved Animal Card -->
             <TextView
                 android:id="@+id/tvAnimalCard"
                 android:layout_width="match_parent"
@@ -167,12 +236,21 @@
                 android:layout_marginTop="10dp"
                 android:background="#EFF6FF"
                 android:padding="12dp"
-                android:text="No animal scanned yet. Pull RFID reader trigger or tap Scan Tag."
+                android:text="No animal scanned yet."
                 android:textColor="#1E3A8A"
                 android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/tvHistory"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text=""
+                android:textColor="#92400E"
+                android:textSize="12sp" />
         </LinearLayout>
 
-        <!-- On-Site Vaccination & Health Recording Form -->
+        <!-- 3. Record -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -184,7 +262,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="3. Record Vaccination / Clinical Treatment"
+                android:text="3. Record the vaccination or treatment"
                 android:textColor="#111827"
                 android:textSize="14sp"
                 android:textStyle="bold" />
@@ -196,18 +274,18 @@
                 android:layout_marginTop="8dp" />
 
             <Spinner
-                android:id="@+id/spHealthStatus"
+                android:id="@+id/spProtocol"
                 android:layout_width="match_parent"
                 android:layout_height="44dp"
-                android:layout_marginTop="6dp" />
+                android:layout_marginTop="2dp" />
 
             <EditText
                 android:id="@+id/etTreatmentTitle"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
-                android:hint="Vaccine or Diagnosis"
-                android:text="Foot-and-Mouth Disease (FMD)"
+                android:hint="Vaccine or diagnosis"
+                android:inputType="textCapSentences"
                 android:textSize="13sp" />
 
             <EditText
@@ -215,16 +293,55 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
-                android:hint="Batch / Dosage"
-                android:text="FMD-2026-B2 (2ml SC)"
+                android:hint="Batch / lot number (read it from the vial)"
+                android:inputType="textNoSuggestions|textCapCharacters"
                 android:textSize="13sp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:orientation="horizontal">
+
+                <EditText
+                    android:id="@+id/etDoseMl"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:hint="Dose (ml)"
+                    android:inputType="numberDecimal"
+                    android:textSize="13sp" />
+
+                <Spinner
+                    android:id="@+id/spRoute"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/tvNextDue"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text=""
+                android:textColor="#374151"
+                android:textSize="12sp" />
+
+            <Spinner
+                android:id="@+id/spHealthStatus"
+                android:layout_width="match_parent"
+                android:layout_height="44dp"
+                android:layout_marginTop="4dp" />
 
             <EditText
                 android:id="@+id/etClinicalNotes"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
-                android:hint="Field Notes (Optional)"
+                android:hint="Notes (optional)"
+                android:inputType="textCapSentences|textMultiLine"
                 android:textSize="13sp" />
 
             <LinearLayout
@@ -239,7 +356,7 @@
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
                     android:backgroundTint="#2F80ED"
-                    android:text="Save Record (Offline-Safe)"
+                    android:text="Save record"
                     android:textColor="#FFFFFF"
                     android:textSize="12sp" />
 
@@ -249,7 +366,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginStart="8dp"
                     android:backgroundTint="#111827"
-                    android:text="Sync Now"
+                    android:text="Send now"
                     android:textColor="#FFFFFF"
                     android:textSize="12sp" />
             </LinearLayout>

@@ -1,166 +1,160 @@
 1<?xml version="1.0" encoding="utf-8"?>
 2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
 3    package="com.vinabeef.field"
-4    android:versionCode="1"
-5    android:versionName="1.0" >
+4    android:versionCode="2"
+5    android:versionName="1.1" >
 6
 7    <uses-sdk
 8        android:minSdkVersion="26"
 9        android:targetSdkVersion="35" />
-10
-11    <!-- Network & Offline Connectivity Detection -->
-12    <uses-permission android:name="android.permission.INTERNET" />
-12-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:5:5-67
-12-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:5:22-64
-13    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-13-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:6:5-79
-13-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:6:22-76
-14
-15    <!-- Handheld Bluetooth Low Energy (BLE) RFID Reader Permissions -->
+10    <!-- Network & Offline Connectivity Detection -->
+11    <uses-permission android:name="android.permission.INTERNET" />
+11-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:5:5-67
+11-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:5:22-64
+12    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" /> <!-- Handheld Bluetooth Low Energy (BLE) RFID Reader Permissions -->
+12-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:6:5-79
+12-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:6:22-76
+13    <uses-permission
+13-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:9:5-95
+14        android:name="android.permission.BLUETOOTH"
+14-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:9:22-65
+15        android:maxSdkVersion="30" />
+15-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:9:66-92
 16    <uses-permission
-16-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:9:5-95
-17        android:name="android.permission.BLUETOOTH"
-17-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:9:22-65
+16-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:10:5-101
+17        android:name="android.permission.BLUETOOTH_ADMIN"
+17-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:10:22-71
 18        android:maxSdkVersion="30" />
-18-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:9:66-92
+18-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:10:72-98
 19    <uses-permission
-19-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:10:5-101
-20        android:name="android.permission.BLUETOOTH_ADMIN"
-20-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:10:22-71
+19-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:11:5-106
+20        android:name="android.permission.ACCESS_FINE_LOCATION"
+20-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:11:22-76
 21        android:maxSdkVersion="30" />
-21-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:10:72-98
+21-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:11:77-103
 22    <uses-permission
-22-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:11:5-106
-23        android:name="android.permission.ACCESS_FINE_LOCATION"
-23-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:11:22-76
-24        android:maxSdkVersion="30" />
-24-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:11:77-103
-25    <uses-permission
-25-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:12:5-120
-26        android:name="android.permission.BLUETOOTH_SCAN"
-26-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:12:22-70
-27        android:usesPermissionFlags="neverForLocation" />
-27-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:12:71-117
-28    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-28-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:13:5-76
-28-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:13:22-73
-29
-30    <!-- Built-in Phone NFC Ear-Tag Reader Support -->
-31    <uses-permission android:name="android.permission.NFC" />
-31-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:16:5-62
-31-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:16:22-59
-32
-33    <permission
-33-->[androidx.core:core:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/491caade41e8059f1701c9c6b2691b8e/transformed/core-1.13.1/AndroidManifest.xml:22:5-24:47
-34        android:name="com.vinabeef.field.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
-34-->[androidx.core:core:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/491caade41e8059f1701c9c6b2691b8e/transformed/core-1.13.1/AndroidManifest.xml:23:9-81
-35        android:protectionLevel="signature" />
-35-->[androidx.core:core:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/491caade41e8059f1701c9c6b2691b8e/transformed/core-1.13.1/AndroidManifest.xml:24:9-44
-36
-37    <uses-permission android:name="com.vinabeef.field.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
-37-->[androidx.core:core:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/491caade41e8059f1701c9c6b2691b8e/transformed/core-1.13.1/AndroidManifest.xml:26:5-97
-37-->[androidx.core:core:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/491caade41e8059f1701c9c6b2691b8e/transformed/core-1.13.1/AndroidManifest.xml:26:22-94
-38
-39    <application
-39-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:18:5-33:19
-40        android:allowBackup="true"
-40-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:19:9-35
-41        android:appComponentFactory="androidx.core.app.CoreComponentFactory"
-41-->[androidx.core:core:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/491caade41e8059f1701c9c6b2691b8e/transformed/core-1.13.1/AndroidManifest.xml:28:18-86
-42        android:debuggable="true"
-43        android:extractNativeLibs="false"
-44        android:label="VinaBeef Field RFID"
-44-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:20:9-44
-45        android:testOnly="true"
-46        android:theme="@style/Theme.MaterialComponents.DayNight.DarkActionBar"
-46-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:22:9-79
-47        android:usesCleartextTraffic="true" >
-47-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:21:9-44
-48        <activity
-48-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:24:9-32:20
-49            android:name="com.vinabeef.field.MainActivity"
-49-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:25:13-41
-50            android:exported="true"
-50-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:26:13-36
-51            android:screenOrientation="portrait" >
-51-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:27:13-49
-52            <intent-filter>
-52-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:28:13-31:29
-53                <action android:name="android.intent.action.MAIN" />
-53-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:29:17-69
-53-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:29:25-66
-54
-55                <category android:name="android.intent.category.LAUNCHER" />
-55-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:30:17-77
-55-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:30:27-74
-56            </intent-filter>
-57        </activity>
-58
-59        <provider
-59-->[androidx.emoji2:emoji2:1.3.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/bb6d72a34c047ac15669c171ced2538d/transformed/emoji2-1.3.0/AndroidManifest.xml:24:9-32:20
-60            android:name="androidx.startup.InitializationProvider"
-60-->[androidx.emoji2:emoji2:1.3.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/bb6d72a34c047ac15669c171ced2538d/transformed/emoji2-1.3.0/AndroidManifest.xml:25:13-67
-61            android:authorities="com.vinabeef.field.androidx-startup"
-61-->[androidx.emoji2:emoji2:1.3.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/bb6d72a34c047ac15669c171ced2538d/transformed/emoji2-1.3.0/AndroidManifest.xml:26:13-68
-62            android:exported="false" >
-62-->[androidx.emoji2:emoji2:1.3.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/bb6d72a34c047ac15669c171ced2538d/transformed/emoji2-1.3.0/AndroidManifest.xml:27:13-37
+22-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:12:5-120
+23        android:name="android.permission.BLUETOOTH_SCAN"
+23-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:12:22-70
+24        android:usesPermissionFlags="neverForLocation" />
+24-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:12:71-117
+25    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" /> <!-- Built-in Phone NFC Ear-Tag Reader Support -->
+25-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:13:5-76
+25-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:13:22-73
+26    <uses-permission android:name="android.permission.NFC" />
+26-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:16:5-62
+26-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:16:22-59
+27
+28    <permission
+28-->[androidx.core:core:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/491caade41e8059f1701c9c6b2691b8e/transformed/core-1.13.1/AndroidManifest.xml:22:5-24:47
+29        android:name="com.vinabeef.field.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+29-->[androidx.core:core:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/491caade41e8059f1701c9c6b2691b8e/transformed/core-1.13.1/AndroidManifest.xml:23:9-81
+30        android:protectionLevel="signature" />
+30-->[androidx.core:core:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/491caade41e8059f1701c9c6b2691b8e/transformed/core-1.13.1/AndroidManifest.xml:24:9-44
+31
+32    <uses-permission android:name="com.vinabeef.field.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" /> <!-- Debug builds only: lets the app talk to http://10.0.2.2:8080 (emulator) or a laptop on the Wi-Fi. -->
+32-->[androidx.core:core:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/491caade41e8059f1701c9c6b2691b8e/transformed/core-1.13.1/AndroidManifest.xml:26:5-97
+32-->[androidx.core:core:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/491caade41e8059f1701c9c6b2691b8e/transformed/core-1.13.1/AndroidManifest.xml:26:22-94
+33    <application
+33-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:21:5-36:19
+34        android:allowBackup="true"
+34-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:22:9-35
+35        android:appComponentFactory="androidx.core.app.CoreComponentFactory"
+35-->[androidx.core:core:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/491caade41e8059f1701c9c6b2691b8e/transformed/core-1.13.1/AndroidManifest.xml:28:18-86
+36        android:debuggable="true"
+37        android:extractNativeLibs="false"
+38        android:label="VinaBeef Field RFID"
+38-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:23:9-44
+39        android:testOnly="true"
+40        android:theme="@style/Theme.MaterialComponents.DayNight.DarkActionBar"
+40-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:25:9-79
+41        android:usesCleartextTraffic="true" >
+41-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:24:9-44
+42        <activity
+42-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:27:9-35:20
+43            android:name="com.vinabeef.field.MainActivity"
+43-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:28:13-41
+44            android:exported="true"
+44-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:29:13-36
+45            android:screenOrientation="portrait" >
+45-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:30:13-49
+46            <intent-filter>
+46-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:31:13-34:29
+47                <action android:name="android.intent.action.MAIN" />
+47-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:32:17-69
+47-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:32:25-66
+48
+49                <category android:name="android.intent.category.LAUNCHER" />
+49-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:33:17-77
+49-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:33:27-74
+50            </intent-filter>
+51        </activity>
+52
+53        <provider
+53-->[androidx.emoji2:emoji2:1.3.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/bb6d72a34c047ac15669c171ced2538d/transformed/emoji2-1.3.0/AndroidManifest.xml:24:9-32:20
+54            android:name="androidx.startup.InitializationProvider"
+54-->[androidx.emoji2:emoji2:1.3.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/bb6d72a34c047ac15669c171ced2538d/transformed/emoji2-1.3.0/AndroidManifest.xml:25:13-67
+55            android:authorities="com.vinabeef.field.androidx-startup"
+55-->[androidx.emoji2:emoji2:1.3.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/bb6d72a34c047ac15669c171ced2538d/transformed/emoji2-1.3.0/AndroidManifest.xml:26:13-68
+56            android:exported="false" >
+56-->[androidx.emoji2:emoji2:1.3.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/bb6d72a34c047ac15669c171ced2538d/transformed/emoji2-1.3.0/AndroidManifest.xml:27:13-37
+57            <meta-data
+57-->[androidx.emoji2:emoji2:1.3.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/bb6d72a34c047ac15669c171ced2538d/transformed/emoji2-1.3.0/AndroidManifest.xml:29:13-31:52
+58                android:name="androidx.emoji2.text.EmojiCompatInitializer"
+58-->[androidx.emoji2:emoji2:1.3.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/bb6d72a34c047ac15669c171ced2538d/transformed/emoji2-1.3.0/AndroidManifest.xml:30:17-75
+59                android:value="androidx.startup" />
+59-->[androidx.emoji2:emoji2:1.3.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/bb6d72a34c047ac15669c171ced2538d/transformed/emoji2-1.3.0/AndroidManifest.xml:31:17-49
+60            <meta-data
+60-->[androidx.lifecycle:lifecycle-process:2.6.2] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/c69791e00d88421e19d2ba943400b966/transformed/lifecycle-process-2.6.2/AndroidManifest.xml:29:13-31:52
+61                android:name="androidx.lifecycle.ProcessLifecycleInitializer"
+61-->[androidx.lifecycle:lifecycle-process:2.6.2] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/c69791e00d88421e19d2ba943400b966/transformed/lifecycle-process-2.6.2/AndroidManifest.xml:30:17-78
+62                android:value="androidx.startup" />
+62-->[androidx.lifecycle:lifecycle-process:2.6.2] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/c69791e00d88421e19d2ba943400b966/transformed/lifecycle-process-2.6.2/AndroidManifest.xml:31:17-49
 63            <meta-data
-63-->[androidx.emoji2:emoji2:1.3.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/bb6d72a34c047ac15669c171ced2538d/transformed/emoji2-1.3.0/AndroidManifest.xml:29:13-31:52
-64                android:name="androidx.emoji2.text.EmojiCompatInitializer"
-64-->[androidx.emoji2:emoji2:1.3.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/bb6d72a34c047ac15669c171ced2538d/transformed/emoji2-1.3.0/AndroidManifest.xml:30:17-75
+63-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:29:13-31:52
+64                android:name="androidx.profileinstaller.ProfileInstallerInitializer"
+64-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:30:17-85
 65                android:value="androidx.startup" />
-65-->[androidx.emoji2:emoji2:1.3.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/bb6d72a34c047ac15669c171ced2538d/transformed/emoji2-1.3.0/AndroidManifest.xml:31:17-49
-66            <meta-data
-66-->[androidx.lifecycle:lifecycle-process:2.6.2] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/c69791e00d88421e19d2ba943400b966/transformed/lifecycle-process-2.6.2/AndroidManifest.xml:29:13-31:52
-67                android:name="androidx.lifecycle.ProcessLifecycleInitializer"
-67-->[androidx.lifecycle:lifecycle-process:2.6.2] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/c69791e00d88421e19d2ba943400b966/transformed/lifecycle-process-2.6.2/AndroidManifest.xml:30:17-78
-68                android:value="androidx.startup" />
-68-->[androidx.lifecycle:lifecycle-process:2.6.2] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/c69791e00d88421e19d2ba943400b966/transformed/lifecycle-process-2.6.2/AndroidManifest.xml:31:17-49
-69            <meta-data
-69-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:29:13-31:52
-70                android:name="androidx.profileinstaller.ProfileInstallerInitializer"
-70-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:30:17-85
-71                android:value="androidx.startup" />
-71-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:31:17-49
-72        </provider>
-73
-74        <receiver
-74-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:34:9-52:20
-75            android:name="androidx.profileinstaller.ProfileInstallReceiver"
-75-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:35:13-76
-76            android:directBootAware="false"
-76-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:36:13-44
-77            android:enabled="true"
-77-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:37:13-35
-78            android:exported="true"
-78-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:38:13-36
-79            android:permission="android.permission.DUMP" >
-79-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:39:13-57
+65-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:31:17-49
+66        </provider>
+67
+68        <receiver
+68-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:34:9-52:20
+69            android:name="androidx.profileinstaller.ProfileInstallReceiver"
+69-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:35:13-76
+70            android:directBootAware="false"
+70-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:36:13-44
+71            android:enabled="true"
+71-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:37:13-35
+72            android:exported="true"
+72-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:38:13-36
+73            android:permission="android.permission.DUMP" >
+73-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:39:13-57
+74            <intent-filter>
+74-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:40:13-42:29
+75                <action android:name="androidx.profileinstaller.action.INSTALL_PROFILE" />
+75-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:41:17-91
+75-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:41:25-88
+76            </intent-filter>
+77            <intent-filter>
+77-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:43:13-45:29
+78                <action android:name="androidx.profileinstaller.action.SKIP_FILE" />
+78-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:44:17-85
+78-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:44:25-82
+79            </intent-filter>
 80            <intent-filter>
-80-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:40:13-42:29
-81                <action android:name="androidx.profileinstaller.action.INSTALL_PROFILE" />
-81-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:41:17-91
-81-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:41:25-88
+80-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:46:13-48:29
+81                <action android:name="androidx.profileinstaller.action.SAVE_PROFILE" />
+81-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:47:17-88
+81-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:47:25-85
 82            </intent-filter>
 83            <intent-filter>
-83-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:43:13-45:29
-84                <action android:name="androidx.profileinstaller.action.SKIP_FILE" />
-84-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:44:17-85
-84-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:44:25-82
+83-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:49:13-51:29
+84                <action android:name="androidx.profileinstaller.action.BENCHMARK_OPERATION" />
+84-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:50:17-95
+84-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:50:25-92
 85            </intent-filter>
-86            <intent-filter>
-86-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:46:13-48:29
-87                <action android:name="androidx.profileinstaller.action.SAVE_PROFILE" />
-87-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:47:17-88
-87-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:47:25-85
-88            </intent-filter>
-89            <intent-filter>
-89-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:49:13-51:29
-90                <action android:name="androidx.profileinstaller.action.BENCHMARK_OPERATION" />
-90-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:50:17-95
-90-->[androidx.profileinstaller:profileinstaller:1.3.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/3634f25c905f8f2d00f92ecd175e6668/transformed/profileinstaller-1.3.1/AndroidManifest.xml:50:25-92
-91            </intent-filter>
-92        </receiver>
-93    </application>
-94
-95</manifest>
+86        </receiver>
+87    </application>
+88
+89</manifest>

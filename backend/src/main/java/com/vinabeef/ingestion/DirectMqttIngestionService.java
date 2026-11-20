@@ -16,17 +16,20 @@ import javax.net.ssl.*;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
-import java.util.Base64;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
 @Slf4j
 @RequiredArgsConstructor
 public class DirectMqttIngestionService implements MqttCallbackExtended {
 
-    // private final SafetrustProcessingService processingService;
     private final TelemetryEventProcessor eventProcessor;
     private final IngestionHealthService healthService;
     private final ObjectMapper objectMapper;
+    private final DeadLetterService deadLetterService;
 
     @Value("${vinabeef.ingestion.safetrust.broker-url}")
     private String brokerUrl;
@@ -40,64 +43,137 @@ public class DirectMqttIngestionService implements MqttCallbackExtended {
     @Value("${vinabeef.ingestion.safetrust.token}")
     private String token;
 
+    /**
+     * Added to the MQTT client id. Two programs that connect with the same client id kick each other off the
+     * broker, so every running copy of the backend (deployed site, local machine) needs its own suffix.
+     */
+    @Value("${vinabeef.ingestion.safetrust.client-id-suffix:}")
+    private String clientIdSuffix;
+
+    /**
+     * false keeps a persistent broker session, so the broker can hold messages while this backend is down.
+     * Needs confirmation that the Safetrust broker honours it, so the default is the previous behaviour.
+     */
+    @Value("${vinabeef.ingestion.safetrust.clean-session:true}")
+    private boolean cleanSession;
+
+    private static final int MAX_BACKOFF_SECONDS = 60;
+
     private MqttAsyncClient mqttClient;
+    private final ScheduledExecutorService reconnector = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "safetrust-mqtt-connect");
+        t.setDaemon(true);
+        return t;
+    });
+    private final AtomicInteger connectAttempts = new AtomicInteger();
 
     @PostConstruct
     public void start() {
-        connectClient();
+        // Never block application start-up on the broker, and keep trying until the first connection works.
+        // Paho's automatic reconnect only starts after one successful connection, so a failed first attempt
+        // (barn internet down at boot, DNS not ready) would otherwise leave the subscriber dead for good.
+        reconnector.execute(this::connectWithRetry);
     }
 
-    public synchronized void connectClient() {
+    private void connectWithRetry() {
+        if (connectClient()) {
+            connectAttempts.set(0);
+            return;
+        }
+        int attempt = connectAttempts.incrementAndGet();
+        long delay = Math.min(MAX_BACKOFF_SECONDS, 1L << Math.min(attempt, 6));
+        log.warn("[PRIMARY_DIRECT_MQTT] Not connected (attempt {}). Next try in {} s.", attempt, delay);
+        reconnector.schedule(this::connectWithRetry, delay, TimeUnit.SECONDS);
+    }
+
+    /** One connection attempt. Subscribing happens in {@link #connectComplete}. Returns true when connected. */
+    public synchronized boolean connectClient() {
         try {
-            // 1. Align Client ID with Safetrust's 'Web_' requirement
-            String clientId = "Web_Direct_" + deviceKey;
-            
-            // 2. Use MemoryPersistence to prevent disk-lock contention
+            closeQuietly();
+            String clientId = clientId();
+
+            // MemoryPersistence prevents disk-lock contention
             mqttClient = new MqttAsyncClient(brokerUrl, clientId, new MemoryPersistence());
             mqttClient.setCallback(this);
 
             MqttConnectOptions options = new MqttConnectOptions();
-            options.setCleanSession(true);
+            options.setCleanSession(cleanSession);
             options.setAutomaticReconnect(true);
+            options.setMaxReconnectDelay(30_000);
             options.setUserName(deviceKey);
             options.setPassword(("token/" + token).toCharArray());
             options.setKeepAliveInterval(30);
 
-            // 3. Disable SSL & Hostname validation (equivalent to client.tls_insecure_set(True) in Python)
+            // Disable SSL & hostname validation (equivalent to client.tls_insecure_set(True) in Python)
             SSLContext sslContext = SSLContext.getInstance("TLSv1.2");
             sslContext.init(null, new TrustManager[]{new X509TrustManager() {
                 public X509Certificate[] getAcceptedIssuers() { return null; }
                 public void checkClientTrusted(X509Certificate[] certs, String authType) {}
                 public void checkServerTrusted(X509Certificate[] certs, String authType) {}
             }}, new SecureRandom());
-            
+
             options.setSocketFactory(sslContext.getSocketFactory());
             options.setHttpsHostnameVerificationEnabled(false); // CRUCIAL for wss:// demo brokers
 
-            log.info("[PRIMARY_DIRECT_MQTT] Establishing direct connection to {} as {}", brokerUrl, clientId);
+            log.info("[PRIMARY_DIRECT_MQTT] Establishing direct connection to {} as {} (cleanSession={})",
+                    brokerUrl, clientId, cleanSession);
             IMqttToken connToken = mqttClient.connect(options);
             connToken.waitForCompletion(10000);
-
-            String topic = String.format("Web/%s/Monitoring/%s", companyKey, deviceKey);
-            String pwdTopic = "token/" + token;
-
-            mqttClient.subscribe(new String[]{pwdTopic, topic}, new int[]{2, 2});
-            healthService.setDirectMqttConnected(true);
-            healthService.setDisconnectReason("NONE");
-            log.info("[PRIMARY_DIRECT_MQTT] Connected & Subscribed to topic: {}", topic);
+            return mqttClient.isConnected();
 
         } catch (MqttException me) {
             String rootCause = me.getCause() != null ? me.getCause().getMessage() : me.getMessage();
             healthService.setDirectMqttConnected(false);
             healthService.setDisconnectReason("ReasonCode " + me.getReasonCode() + ": " + rootCause);
             log.error("[PRIMARY_DIRECT_MQTT] Connection failed [ReasonCode: {}]: {}", me.getReasonCode(), me.getMessage());
-            if (me.getCause() != null) {
-                log.error(" -> Root Cause: {}", me.getCause().getMessage(), me.getCause());
-            }
+            return false;
         } catch (Exception e) {
             healthService.setDirectMqttConnected(false);
             healthService.setDisconnectReason("General error: " + e.getMessage());
             log.error("[PRIMARY_DIRECT_MQTT] Unexpected initialization error: {}", e.getMessage(), e);
+            return false;
+        }
+    }
+
+    private String clientId() {
+        // Safetrust requires the 'Web_' prefix.
+        return "Web_Direct_" + deviceKey + (clientIdSuffix == null || clientIdSuffix.isBlank() ? "" : "_" + clientIdSuffix.trim());
+    }
+
+    private void closeQuietly() {
+        if (mqttClient == null) {
+            return;
+        }
+        try {
+            mqttClient.setCallback(null);
+            if (mqttClient.isConnected()) {
+                mqttClient.disconnect();
+            }
+            mqttClient.close();
+        } catch (Exception ignored) {
+            // a half-open client from a failed attempt
+        }
+        mqttClient = null;
+    }
+
+    private void subscribeAll() {
+        String topic = String.format("Web/%s/Monitoring/%s", companyKey, deviceKey);
+        String pwdTopic = "token/" + token;
+        try {
+            mqttClient.subscribe(new String[]{pwdTopic, topic}, new int[]{2, 2}, null, new IMqttActionListener() {
+                @Override
+                public void onSuccess(IMqttToken asyncActionToken) {
+                    log.info("[PRIMARY_DIRECT_MQTT] Subscribed to topic: {}", topic);
+                }
+
+                @Override
+                public void onFailure(IMqttToken asyncActionToken, Throwable exception) {
+                    healthService.setDisconnectReason("Subscribe failed: " + exception.getMessage());
+                    log.error("[PRIMARY_DIRECT_MQTT] Subscribe to {} failed: {}", topic, exception.getMessage());
+                }
+            });
+        } catch (MqttException me) {
+            log.error("[PRIMARY_DIRECT_MQTT] Subscribe request failed: {}", me.getMessage());
         }
     }
 
@@ -106,6 +182,10 @@ public class DirectMqttIngestionService implements MqttCallbackExtended {
         healthService.setDirectMqttConnected(true);
         healthService.setDisconnectReason("NONE");
         log.info("[PRIMARY_DIRECT_MQTT] Connection active (reconnect={}) to {}", reconnect, serverURI);
+        // A clean session forgets its subscriptions when the connection drops. Paho reconnects on its own but
+        // does not resubscribe, so without this the backend stays "connected" and receives nothing after the
+        // first network outage.
+        subscribeAll();
     }
 
     @Override
@@ -120,18 +200,38 @@ public class DirectMqttIngestionService implements MqttCallbackExtended {
     public void messageArrived(String topic, MqttMessage message) {
         long tIngressNano = System.nanoTime();
         healthService.recordDirectHeartbeat();
+        String jsonString = null;
+        Long eventKey = null;
         try {
-            // Use resilient decoder instead of Base64.getDecoder().decode(payloadBytes)
-            String jsonString = decodeSafetrustPayload(message.getPayload());
+            jsonString = PayloadDecoder.decode(message.getPayload(), token);
 
             SafetrustEventDto dto = objectMapper.readValue(jsonString, SafetrustEventDto.class);
             dto.setRawPayload(jsonString);
+            eventKey = dto.getEventKey();
 
-            // processingService.processSafetrustRead(dto, "DIRECT_MQTT", tIngressNano);
             eventProcessor.processSafetrustRead(dto, "DIRECT_MQTT", tIngressNano);
 
+        } catch (PayloadDecoder.NotAnEventException notAnEvent) {
+            // Not an event (a broker notice, a JSON array...). One line, no stack trace, and kept for inspection.
+            log.warn("[PRIMARY_DIRECT_MQTT] A message on {} is not a Safetrust event: {}", topic, notAnEvent.getMessage());
+            keepDeadLetter(null, "NOT_AN_EVENT: " + notAnEvent.getMessage(),
+                    new String(message.getPayload(), StandardCharsets.UTF_8));
         } catch (Exception ex) {
-            log.error("[PRIMARY_DIRECT_MQTT] Message parsing error: {}", ex.getMessage());
+            // Returning normally acknowledges the message to the broker, so it will not be sent again.
+            // Keep it instead of dropping it, and never throw (that would close the connection).
+            log.error("[PRIMARY_DIRECT_MQTT] Could not process message on {} (eventKey={}): {}",
+                    topic, eventKey, ex.getMessage(), ex);
+            keepDeadLetter(eventKey, ex.getMessage(),
+                    jsonString != null ? jsonString : new String(message.getPayload(), StandardCharsets.UTF_8));
+        }
+    }
+
+    private void keepDeadLetter(Long eventKey, String reason, String payload) {
+        try {
+            deadLetterService.store("DIRECT_MQTT", eventKey, reason, payload);
+        } catch (Exception dlq) {
+            log.error("[PRIMARY_DIRECT_MQTT] EVENT NOT SAVED and dead letter failed too ({}). Payload: {}",
+                    dlq.getMessage(), payload);
         }
     }
 
@@ -140,43 +240,7 @@ public class DirectMqttIngestionService implements MqttCallbackExtended {
 
     @PreDestroy
     public void stop() {
-        try {
-            if (mqttClient != null && mqttClient.isConnected()) {
-                mqttClient.disconnect();
-                mqttClient.close();
-            }
-        } catch (Exception ignored) {}
-    }
-
-    private String decodeSafetrustPayload(byte[] rawBytes) {
-        String rawStr = new String(rawBytes, StandardCharsets.UTF_8).trim();
-
-        // 1. Check if the message is already unencoded plain JSON
-        if (rawStr.startsWith("{") && rawStr.endsWith("}")) {
-            return rawStr;
-        }
-
-        // 2. Strip wrapping quotes if payload was serialized as a quoted string literal
-        if (rawStr.startsWith("\"") && rawStr.endsWith("\"") && rawStr.length() > 1) {
-            rawStr = rawStr.substring(1, rawStr.length() - 1).trim();
-        }
-
-        // 3. Remove whitespace, carriage returns, and newlines (matching Python behavior)
-        String sanitized = rawStr.replaceAll("\\s+", "");
-
-        // 4. Convert URL-safe base64 ('-' and '_') to standard base64 ('+' and '/')
-        sanitized = sanitized.replace('-', '+').replace('_', '/');
-
-        // 5. Restore missing '=' padding if omitted by the publisher
-        int remainder = sanitized.length() % 4;
-        if (remainder == 2) {
-            sanitized += "==";
-        } else if (remainder == 3) {
-            sanitized += "=";
-        }
-
-        // 6. Decode using MIME decoder (resilient to extraneous characters)
-        byte[] decoded = Base64.getMimeDecoder().decode(sanitized.getBytes(StandardCharsets.UTF_8));
-        return new String(decoded, StandardCharsets.UTF_8);
+        reconnector.shutdownNow();
+        closeQuietly();
     }
 }

@@ -1,18 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.vinabeef.field"
-    android:versionCode="1"
-    android:versionName="1.0" >
+    android:versionCode="2"
+    android:versionName="1.1" >
 
     <uses-sdk
         android:minSdkVersion="26"
         android:targetSdkVersion="35" />
-
     <!-- Network & Offline Connectivity Detection -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-
-    <!-- Handheld Bluetooth Low Energy (BLE) RFID Reader Permissions -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" /> <!-- Handheld Bluetooth Low Energy (BLE) RFID Reader Permissions -->
     <uses-permission
         android:name="android.permission.BLUETOOTH"
         android:maxSdkVersion="30" />
@@ -25,17 +22,14 @@
     <uses-permission
         android:name="android.permission.BLUETOOTH_SCAN"
         android:usesPermissionFlags="neverForLocation" />
-    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-
-    <!-- Built-in Phone NFC Ear-Tag Reader Support -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" /> <!-- Built-in Phone NFC Ear-Tag Reader Support -->
     <uses-permission android:name="android.permission.NFC" />
 
     <permission
         android:name="com.vinabeef.field.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
         android:protectionLevel="signature" />
 
-    <uses-permission android:name="com.vinabeef.field.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
-
+    <uses-permission android:name="com.vinabeef.field.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" /> <!-- Debug builds only: lets the app talk to http://10.0.2.2:8080 (emulator) or a laptop on the Wi-Fi. -->
     <application
         android:allowBackup="true"
         android:appComponentFactory="androidx.core.app.CoreComponentFactory"

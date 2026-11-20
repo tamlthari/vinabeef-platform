@@ -5,6 +5,13 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
 import java.util.Map;
 
+/**
+ * One event published by Safetrust on {@code Web/<company>/Monitoring/<device>}.
+ *
+ * <p>Card reads carry {@code CARD_UUID} (the card UID, which is the animal's tag), {@code READER_NAME} (the
+ * reader, for example {@code DrC0F8}) and {@code TIMESTAMP} (reader time in epoch milliseconds). Other events
+ * come on the same topic and have no card: reader connect/disconnect, LiDAR and temperature reports.
+ */
 @Data
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class SafetrustEventDto {
@@ -14,6 +21,7 @@ public class SafetrustEventDto {
     @JsonProperty("TRANSACTION_ID")
     private Long transactionId;
 
+    /** Safetrust DEVICE_KEY. For a card read this identifies the card's device record, not the reader. */
     @JsonProperty("DEVICE_KEY")
     private String deviceKey;
 
@@ -23,20 +31,78 @@ public class SafetrustEventDto {
     @JsonProperty("READER_NAME")
     private String readerName;
 
+    @JsonProperty("READER_KEY")
+    private Long readerKey;
+
     @JsonProperty("CARD_UUID")
     private String cardUuid;
 
     @JsonProperty("CREDENTIAL_IDENTIFIER")
     private String credentialIdentifier;
 
+    @JsonProperty("CREDENTIAL_TYPE")
+    private String credentialType;
+
+    @JsonProperty("USER_KEY")
+    private Long userKey;
+
+    @JsonProperty("BUILDING_ACCESS_KEY")
+    private Long buildingAccessKey;
+
+    @JsonProperty("SENSOR_TYPE")
+    private String sensorType;
+
+    /** Reader time, epoch milliseconds. */
     @JsonProperty("TIMESTAMP")
     private Long timestamp;
+
+    /** Safetrust cloud processing time, epoch milliseconds. */
+    @JsonProperty("MODIFIED")
+    private Long modified;
+
+    /** Only sent with reader connect events. */
+    @JsonProperty("IP_ADDRESS")
+    private String ipAddress;
+
+    @JsonProperty("TRACKING_TYPE")
+    private String trackingType;
+
+    @JsonProperty("DEVICE_SNAPSHOT")
+    private Map<String, Object> deviceSnapshot;
 
     @JsonProperty("NOTES")
     private Map<String, Object> notes;
 
     @JsonProperty("rawPayload")
     private String rawPayload;
+
+    /** The card UID is kept upper case and trimmed, the way Safetrust sends CARD_UUID. */
+    public void setCardUuid(String value) {
+        this.cardUuid = value == null ? null : value.trim().toUpperCase();
+    }
+
+    /** CARD_UUID, or the UID inside DEVICE_SNAPSHOT when CARD_UUID is missing. Upper case, or null. */
+    public String getCardUuid() {
+        if (cardUuid != null && !cardUuid.isBlank()) {
+            return cardUuid;
+        }
+        if (deviceSnapshot != null && deviceSnapshot.get("U_D_I_D") != null) {
+            String udid = String.valueOf(deviceSnapshot.get("U_D_I_D")).trim();
+            return udid.isEmpty() ? null : udid.toUpperCase();
+        }
+        return null;
+    }
+
+    /** READER_NAME, or NOTES.READER_NAME when the top level field is missing. */
+    public String getReaderName() {
+        if (readerName != null && !readerName.isBlank()) {
+            return readerName;
+        }
+        if (notes != null && notes.get("READER_NAME") != null) {
+            return String.valueOf(notes.get("READER_NAME"));
+        }
+        return null;
+    }
 
     public String getUserName() {
         if (notes != null && notes.containsKey("USER_NAME")) {
@@ -45,10 +111,41 @@ public class SafetrustEventDto {
         return null;
     }
 
-    public String getGateAction() {
-        if (notes != null && notes.containsKey("ACTION")) {
+    /** NOTES.ACTION exactly as sent (for example OPEN_DOOR, LIDAR_ACTIVATED), or null. */
+    public String getRawAction() {
+        if (notes != null && notes.get("ACTION") != null) {
             return String.valueOf(notes.get("ACTION"));
         }
+        return null;
+    }
+
+    /** NOTES.ACTION, else the tracking type (for example TEMPERATURE), else PASSAGE. */
+    public String getGateAction() {
+        String action = getRawAction();
+        if (action != null) {
+            return action;
+        }
+        if (trackingType != null && !trackingType.isBlank()) {
+            return trackingType;
+        }
         return "PASSAGE";
+    }
+
+    /**
+     * CARD_READ when a card is present, READER_STATUS for reader connect/disconnect, READER_TELEMETRY for LiDAR,
+     * RF info and temperature reports, otherwise OTHER.
+     */
+    public String getEventClass() {
+        if (getCardUuid() != null) {
+            return "CARD_READ";
+        }
+        String action = getRawAction();
+        if ("READER_CONNECT_MQTT".equals(action) || "READER_DISCONNECT_MQTT".equals(action)) {
+            return "READER_STATUS";
+        }
+        if (trackingType != null || "LIDAR_ACTIVATED".equals(action) || "EVT_RF_INFO_TRACKING".equals(action)) {
+            return "READER_TELEMETRY";
+        }
+        return "OTHER";
     }
 }
