@@ -2,7 +2,8 @@ package com.vinabeef.web;
 
 import com.vinabeef.ingestion.IngestionHealthService;
 import com.vinabeef.ingestion.SafetrustEventDto;
-import com.vinabeef.movement.SafetrustProcessingService;
+import com.vinabeef.ingestion.TelemetryEventProcessor;
+// import com.vinabeef.movement.SafetrustProcessingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -17,7 +18,8 @@ import java.util.Map;
 @Slf4j
 public class SafetrustIngressController {
 
-    private final SafetrustProcessingService processingService;
+    // private final SafetrustProcessingService processingService;
+    private final TelemetryEventProcessor eventProcessor;
     private final IngestionHealthService healthService;
 
     @GetMapping("/failover-status")
@@ -36,7 +38,8 @@ public class SafetrustIngressController {
             log.warn("[FAILOVER_ENGAGED] Ingested event {} via Python Adapter (Direct MQTT Degraded).", eventDto.getEventKey());
         }
 
-        processingService.processSafetrustRead(eventDto, "PYTHON_ADAPTER", tIngressNano);
+        // processingService.processSafetrustRead(eventDto, "PYTHON_ADAPTER", tIngressNano);
+        eventProcessor.processSafetrustRead(eventDto, "PYTHON_ADAPTER", tIngressNano);
         return ResponseEntity.ok("ACCEPTED");
     }
 }

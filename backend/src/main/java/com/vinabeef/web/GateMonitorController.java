@@ -4,9 +4,10 @@ import com.vinabeef.audit.Audited;
 import com.vinabeef.facilities.Barn;
 import com.vinabeef.facilities.BarnRepository;
 import com.vinabeef.ingestion.SafetrustEventDto;
+import com.vinabeef.ingestion.TelemetryEventProcessor;
 import com.vinabeef.movement.Movement;
 import com.vinabeef.movement.MovementRepository;
-import com.vinabeef.movement.SafetrustProcessingService;
+// import com.vinabeef.movement.SafetrustProcessingService;
 import com.vinabeef.security.RbacScopeService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -28,7 +29,8 @@ public class GateMonitorController {
     private final BarnRepository barnRepo;
     private final MovementRepository movementRepo;
     private final JdbcTemplate jdbcTemplate;
-    private final SafetrustProcessingService processingService;
+    // private final SafetrustProcessingService processingService;
+    private final TelemetryEventProcessor eventProcessor;
     private final RbacScopeService rbacScopeService;
 
     @GetMapping("/barns")
@@ -84,7 +86,8 @@ public class GateMonitorController {
         if (dto.getTimestamp() == null) {
             dto.setTimestamp(System.currentTimeMillis());
         }
-        processingService.processSafetrustRead(dto, "GATE_REST", tStart);
+        // processingService.processSafetrustRead(dto, "GATE_REST", tStart);
+        eventProcessor.processSafetrustRead(dto, "GATE_REST", tStart);
         double latencyMs = Math.round((System.nanoTime() - tStart) / 10000.0) / 100.0;
         return ResponseEntity.ok(Map.of(
                 "status", "PROCESSED",

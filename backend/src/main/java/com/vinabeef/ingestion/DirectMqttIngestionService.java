@@ -2,7 +2,7 @@ package com.vinabeef.ingestion;
 
 // import com.fasterxml.jackson.databind.ObjectMapper;
 import tools.jackson.databind.ObjectMapper;
-import com.vinabeef.movement.SafetrustProcessingService;
+// import com.vinabeef.movement.SafetrustProcessingService;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
@@ -23,7 +23,8 @@ import java.util.Base64;
 @RequiredArgsConstructor
 public class DirectMqttIngestionService implements MqttCallbackExtended {
 
-    private final SafetrustProcessingService processingService;
+    // private final SafetrustProcessingService processingService;
+    private final TelemetryEventProcessor eventProcessor;
     private final IngestionHealthService healthService;
     private final ObjectMapper objectMapper;
 
@@ -126,7 +127,8 @@ public class DirectMqttIngestionService implements MqttCallbackExtended {
             SafetrustEventDto dto = objectMapper.readValue(jsonString, SafetrustEventDto.class);
             dto.setRawPayload(jsonString);
 
-            processingService.processSafetrustRead(dto, "DIRECT_MQTT", tIngressNano);
+            // processingService.processSafetrustRead(dto, "DIRECT_MQTT", tIngressNano);
+            eventProcessor.processSafetrustRead(dto, "DIRECT_MQTT", tIngressNano);
 
         } catch (Exception ex) {
             log.error("[PRIMARY_DIRECT_MQTT] Message parsing error: {}", ex.getMessage());

@@ -2,7 +2,8 @@ package com.vinabeef.web;
 
 import com.vinabeef.audit.Audited;
 import com.vinabeef.ingestion.SafetrustEventDto;
-import com.vinabeef.movement.SafetrustProcessingService;
+// import com.vinabeef.movement.SafetrustProcessingService;
+import com.vinabeef.ingestion.TelemetryEventProcessor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -18,7 +19,8 @@ import java.util.*;
 @CrossOrigin(origins = "*")
 public class BatchIngestionController {
 
-    private final SafetrustProcessingService processingService;
+    // private final SafetrustProcessingService processingService;
+    private final TelemetryEventProcessor eventProcessor;
 
     /**
      * Lightweight WAN reachability probe for Barn Edge Gateways
@@ -51,7 +53,8 @@ public class BatchIngestionController {
 
         for (SafetrustEventDto dto : ordered) {
             try {
-                processingService.processSafetrustRead(dto, "EDGE_BATCH", System.nanoTime());
+                // processingService.processSafetrustRead(dto, "EDGE_BATCH", System.nanoTime());
+                eventProcessor.processSafetrustRead(dto, "EDGE_BATCH", System.nanoTime());
                 processed++;
             } catch (Exception ex) {
                 failed++;

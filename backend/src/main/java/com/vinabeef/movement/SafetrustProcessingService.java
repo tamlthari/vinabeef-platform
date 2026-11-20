@@ -4,9 +4,11 @@ import com.vinabeef.cattle.TagAssignmentRepository;
 import com.vinabeef.facilities.BarnRepository;
 import com.vinabeef.facilities.Gate;
 import com.vinabeef.facilities.GateRepository;
+import com.vinabeef.ingestion.IngestionBenchmarkService;
 import com.vinabeef.ingestion.RfidReadEvent;
 import com.vinabeef.ingestion.RfidReadEventRepository;
 import com.vinabeef.ingestion.SafetrustEventDto;
+import com.vinabeef.ingestion.TelemetryEventProcessor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -22,7 +24,7 @@ import java.util.UUID;
 @Service
 @RequiredArgsConstructor
 @Slf4j
-public class SafetrustProcessingService {
+public class SafetrustProcessingService implements TelemetryEventProcessor {
 
     private final StringRedisTemplate redisTemplate;
     private final RfidReadEventRepository readEventRepo;
@@ -34,6 +36,7 @@ public class SafetrustProcessingService {
     private final IngestionBenchmarkService benchmarkService;
     private final JdbcTemplate jdbcTemplate;
 
+    @Override
     @Transactional
     public void processSafetrustRead(SafetrustEventDto dto, String ingressMode, long tIngressNano) {
         long eventKey = dto.getEventKey() != null ? dto.getEventKey() : 0L;
