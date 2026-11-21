@@ -3,6 +3,7 @@ package com.vinabeef.movement;
 import com.vinabeef.cattle.TagAssignmentRepository;
 import com.vinabeef.facilities.BarnRepository;
 import com.vinabeef.facilities.Gate;
+import com.vinabeef.facilities.GateDirectionMode;
 import com.vinabeef.facilities.GateRepository;
 import com.vinabeef.ingestion.IngestionBenchmarkService;
 import com.vinabeef.ingestion.SafetrustEventDto;
@@ -12,13 +13,11 @@ import com.vinabeef.movement.GateCrossingResolver.Sighting;
 import com.vinabeef.movement.GateCrossingStore.ReaderBinding;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.Timestamp;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -29,12 +28,9 @@ import java.util.UUID;
 @Slf4j
 public class SafetrustProcessingService implements TelemetryEventProcessor {
 
-    static final String METHOD_GATE_MODE = "GATE_MODE";
-    static final String METHOD_PAIRED_READERS = "PAIRED_READERS";
     /** Unpaired sightings older than this (event time) can no longer find a partner and are dropped. */
     private static final long UNPAIRED_RETENTION_MS = 3_600_000L;
 
-    private final StringRedisTemplate redisTemplate;
     private final TagAssignmentRepository tagAssignmentRepo;
     private final GateRepository gateRepo;
     private final MovementRepository movementRepo;
@@ -79,9 +75,11 @@ public class SafetrustProcessingService implements TelemetryEventProcessor {
         Optional<ReaderBinding> binding = crossingStore.findReader(readerName);
         crossingStore.touchReader(readerName, hardwareMs);
 
-        Gate gate = binding
+        Gate found = binding
                 .flatMap(b -> gateRepo.findById(b.gateId()))
-                .orElseGet(() -> readerName == null ? null : gateRepo.findByReaderName(readerName).orElse(null));
+                .orElseGet(() -> readerName == null ? null : gateRepo.findByReaderNameAndRetiredAtIsNull(readerName).orElse(null));
+        // a retired reader is no longer part of the farm: its reads raise the "unregistered reader" alert
+        final Gate gate = found != null && found.getRetiredAt() == null ? found : null;
         if (gate == null) {
             log.warn("[{}] ANOMALY: Unregistered Gate Reader '{}'", ingressMode, readerName);
             raiseUnregisteredReaderAlert(readerName, card, metricKey);
@@ -92,7 +90,7 @@ public class SafetrustProcessingService implements TelemetryEventProcessor {
         String animalId = tagAssignmentRepo.findActiveAnimalByTagEpc(card).orElse(null);
         if (animalId == null && dto.getUserName() != null) {
             Integer count = jdbcTemplate.queryForObject(
-                    "SELECT COUNT(*) FROM animals WHERE animal_id = ?", Integer.class, dto.getUserName());
+                    "SELECT COUNT(*) FROM animals WHERE animal_id = ? AND lifecycle_status <> 'ARCHIVED'", Integer.class, dto.getUserName());
             if (count != null && count > 0) {
                 animalId = dto.getUserName();
             }
@@ -127,9 +125,16 @@ public class SafetrustProcessingService implements TelemetryEventProcessor {
         Instant occurredAt = observedAt;
         Instant crossingStartedAt = null;
 
-        if (binding.isPresent() && binding.get().side() != null) {
+        // The gate's direction mode decides how the direction is found:
+        //   IN_ONLY / OUT_ONLY  fixed by the gate, whatever reader saw the animal       (ONE_WAY_GATE)
+        //   BIDIRECTIONAL       two readers: order of the inner and outer read           (PAIRED_READERS)
+        //                       one reader: the opposite of the animal's last presence   (GATE_MODE)
+        GateDirectionMode mode = GateDirectionMode.parseOrDefault(gate.getDirectionMode());
+        boolean readerHasSide = binding.isPresent() && binding.get().side() != null;
+        method = GateDirectionPolicy.methodFor(mode, readerHasSide);
+
+        if (GateDirectionPolicy.PAIRED_READERS.equals(method)) {
             // 5a. Paired readers: direction is the ORDER in which the two readers saw the tag (event time).
-            method = METHOD_PAIRED_READERS;
             String gateId = gate.getGateId();
             long window = gate.getPairWindowMs();
             long debounce = gate.getRepeatDebounceMs();
@@ -161,23 +166,19 @@ public class SafetrustProcessingService implements TelemetryEventProcessor {
             occurredAt = Instant.ofEpochMilli(decision.later().eventMs());
             crossingStartedAt = Instant.ofEpochMilli(decision.first().eventMs());
         } else {
-            // 5b. Single reader gate: honour IN_ONLY, OUT_ONLY or BIDIRECTIONAL (toggle by presence).
-            method = METHOD_GATE_MODE;
-            if (isRepeatRead(card, readerName)) {
+            // 5b. One-way gate, or a single reader: one read is one crossing. An animal that stays in front of the
+            //     reader reports several times, so a read within the debounce time (event time) of this animal's
+            //     last movement at the gate counts once.
+            crossingStore.lockCrossing(card, gate.getGateId());
+            if (crossingStore.movementNear(resolvedAnimalId, gate.getGateId(), hardwareMs, gate.getRepeatDebounceMs())) {
+                log.info("[{}] Repeat read of tag '{}' at gate '{}' ({}) ignored.", ingressMode, card, gate.getGateId(), readerName);
                 benchmarkService.recordMetric(ingressMode, metricKey, tIngressNano, System.nanoTime(), System.nanoTime(), hardwareMs);
                 return;
             }
-            String mode = gate.getDirectionMode() != null ? gate.getDirectionMode().toUpperCase() : "BIDIRECTIONAL";
-            if ("IN_ONLY".equals(mode)) {
-                direction = "IN";
-            } else if ("OUT_ONLY".equals(mode)) {
-                direction = "OUT";
-            } else {
-                direction = "OUT_PASTURE".equals(previousStatus) ? "IN" : "OUT";
-            }
+            direction = GateDirectionPolicy.singleReadDirection(mode, previousStatus);
         }
         long tDedupDoneNano = System.nanoTime();
-        String nextPresence = "IN".equals(direction) ? "IN_BARN" : "OUT_PASTURE";
+        String nextPresence = GateDirectionPolicy.presenceAfter(direction);
 
         // 6. WRONG_BARN: the animal is assigned to another barn
         List<String> assignedBarns = jdbcTemplate.queryForList(
@@ -222,19 +223,15 @@ public class SafetrustProcessingService implements TelemetryEventProcessor {
         state.setUpdatedAt(Instant.now());
         presenceRepo.save(state);
 
-        int delta = "IN".equals(direction) ? 1 : -1;
-        if (METHOD_PAIRED_READERS.equals(method)) {
-            // The direction is measured, not derived from the previous state, so the state can disagree
-            // (a missed crossing earlier). Only count the headcount when the state really changes.
-            boolean changed = !nextPresence.equals(previousStatus) || !gate.getBarnId().equals(previousBarnId);
-            if (!changed) {
-                delta = 0;
-                log.warn("[{}] Animal '{}' crossed {} but was already {} in barn {}. Movement recorded, headcount unchanged.",
-                        ingressMode, resolvedAnimalId, direction, previousStatus, previousBarnId);
-            }
+        // Headcount: only a real change between "in a barn" and "not in a barn" moves it, whatever the method.
+        List<GateDirectionPolicy.HeadcountMove> moves =
+                GateDirectionPolicy.headcountMoves(direction, previousStatus, previousBarnId, gate.getBarnId());
+        if (moves.isEmpty()) {
+            log.warn("[{}] Animal '{}' crossed {} but was already {} (barn {}). Movement recorded, headcount unchanged.",
+                    ingressMode, resolvedAnimalId, direction, previousStatus, previousBarnId);
         }
-        if (delta != 0) {
-            barnRepo.adjustHeadcount(gate.getBarnId(), delta);
+        for (GateDirectionPolicy.HeadcountMove move : moves) {
+            barnRepo.adjustHeadcount(move.barnId(), move.delta());
         }
         if ("IN".equals(direction)) {
             jdbcTemplate.update("UPDATE barns SET daily_in_count = daily_in_count + 1 WHERE barn_id = ?", gate.getBarnId());
@@ -247,22 +244,6 @@ public class SafetrustProcessingService implements TelemetryEventProcessor {
         log.info("[{}] Movement recorded: Animal '{}' -> {} at Gate '{}' via {} [Barn: {}] in {} ms",
                 ingressMode, resolvedAnimalId, direction, gate.getGateId(), method, gate.getBarnId(),
                 Math.round((tDbDoneNano - tIngressNano) / 10000.0) / 100.0);
-    }
-
-    /**
-     * Single reader gates only: a tag held in front of the reader reports several times, so reads within 3 s
-     * count once. Redis is an optimisation here, not a dependency: if it is unreachable the read is counted
-     * instead of the whole event failing.
-     */
-    private boolean isRepeatRead(String card, String readerName) {
-        try {
-            Boolean first = redisTemplate.opsForValue()
-                    .setIfAbsent("dedup:" + readerName + ":" + card, "SEEN", Duration.ofSeconds(3));
-            return Boolean.FALSE.equals(first);
-        } catch (RuntimeException ex) {
-            log.warn("Redis debounce unavailable ({}); counting the read.", ex.getMessage());
-            return false;
-        }
     }
 
     private void recordReaderEvent(SafetrustEventDto dto, long hardwareMs, String ingressMode) {

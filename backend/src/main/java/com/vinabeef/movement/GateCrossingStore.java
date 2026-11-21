@@ -95,6 +95,23 @@ class GateCrossingStore {
         return n != null && n > 0;
     }
 
+    /**
+     * True when this animal already has a movement at this gate within {@code debounceMs} of {@code eventMs}, by any
+     * method. Used for gates without a reader pair, where an animal standing at the reader reports several times.
+     * It compares event time, so a replayed backlog gives the same answer as live ingestion.
+     */
+    boolean movementNear(String animalId, String gateId, long eventMs, long debounceMs) {
+        if (debounceMs <= 0) {
+            return false;
+        }
+        Integer n = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM movements
+                WHERE animal_id = ? AND gate_id = ?
+                  AND occurred_at > ? AND occurred_at < ?
+                """, Integer.class, animalId, gateId, ts(eventMs - debounceMs), ts(eventMs + debounceMs));
+        return n != null && n > 0;
+    }
+
     /** Remembers that a registered reader produced an event at {@code eventMs} (hardware time). */
     void touchReader(String readerName, long eventMs) {
         if (readerName == null) {

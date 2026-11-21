@@ -7,6 +7,7 @@
 {% endblock %}
 
 {% block content %}
+{% set can_manage = user.role in ['SYSTEM_ADMIN', 'FARM_MANAGER'] %}
 <div class="space-y-6">
 
     <!-- Top Sensor Header Card -->
@@ -39,6 +40,12 @@
             <div>
                 <span class="text-gray-400 block mb-1">Direction Mode</span>
                 <strong class="text-gray-800 font-mono">{{ reader.direction_mode }}</strong>
+                <div class="text-[11px] text-gray-400 mt-0.5">
+                    {% if reader.direction_mode == 'IN_ONLY' %}every read = animal returning
+                    {% elif reader.direction_mode == 'OUT_ONLY' %}every read = animal out to pasture
+                    {% elif reader.outer_reader_name %}delta time: inner {{ reader.reader_name }} / outer {{ reader.outer_reader_name }}
+                    {% else %}presence toggle (single reader){% endif %}
+                </div>
             </div>
             <div>
                 <span class="text-gray-400 block mb-1">Friendly Name</span>
@@ -151,7 +158,10 @@
     <!-- TAB: Reader Configuration -->
     <div id="rtab-config" class="hidden bg-white border border-gray-200 rounded-lg shadow-sm p-6 max-w-2xl">
         <h3 class="text-sm font-bold text-gray-800 mb-4">Station Binding & Configuration</h3>
-        <form action="/readers/{{ reader.gate_id }}/update" method="POST" class="space-y-4 text-xs">
+        {% if not can_manage %}
+        <p class="text-xs text-gray-500">Your role can view this reader but not change it.</p>
+        {% else %}
+        <form action="/readers/{{ reader.gate_id | urlencode }}/update" method="POST" class="space-y-4 text-xs">
             <div>
                 <label class="block font-semibold text-gray-700 mb-1">Friendly Gate Label</label>
                 <input type="text" name="label" value="{{ reader.label }}" required
@@ -167,19 +177,32 @@
                     {% endfor %}
                 </select>
             </div>
+            <div>
+                <label class="block font-semibold text-gray-700 mb-1">Direction Rule</label>
+                <select name="direction_mode" id="edit-direction-mode" onchange="syncOuterReader('edit')"
+                        class="w-full border border-gray-300 rounded px-3 py-2 bg-white">
+                    <option value="BIDIRECTIONAL" {% if reader.direction_mode == 'BIDIRECTIONAL' %}selected{% endif %}>Bidirectional gate (animals pass both ways)</option>
+                    <option value="IN_ONLY" {% if reader.direction_mode == 'IN_ONLY' %}selected{% endif %}>IN-only gate (every read = animal returning)</option>
+                    <option value="OUT_ONLY" {% if reader.direction_mode == 'OUT_ONLY' %}selected{% endif %}>OUT-only gate (every read = animal out to pasture)</option>
+                </select>
+            </div>
             <div class="grid grid-cols-2 gap-4">
                 <div>
-                    <label class="block font-semibold text-gray-700 mb-1">Direction Mode</label>
-                    <select name="direction_mode" class="w-full border border-gray-300 rounded px-3 py-2 bg-white">
-                        <option value="BIDIRECTIONAL" {% if reader.direction_mode == 'BIDIRECTIONAL' %}selected{% endif %}>BIDIRECTIONAL</option>
-                        <option value="IN_ONLY" {% if reader.direction_mode == 'IN_ONLY' %}selected{% endif %}>IN_ONLY</option>
-                        <option value="OUT_ONLY" {% if reader.direction_mode == 'OUT_ONLY' %}selected{% endif %}>OUT_ONLY</option>
-                    </select>
+                    <label class="block font-semibold text-gray-700 mb-1">Hardware Reader Name</label>
+                    <input type="text" name="reader_name" value="{{ reader.reader_name }}" required
+                           class="w-full border border-gray-300 rounded px-3 py-2 font-mono focus:outline-none focus:border-blue-500">
+                    <p class="text-[11px] text-gray-400 mt-1">The inner reader when the gate has two readers.</p>
                 </div>
-                <div>
-                    <label class="block font-semibold text-gray-700 mb-1">Firmware Version</label>
-                    <input type="text" name="firmware_version" value="{{ reader.firmware_version }}" class="w-full border border-gray-300 rounded px-3 py-2 font-mono">
+                <div id="edit-outer-wrap">
+                    <label class="block font-semibold text-gray-700 mb-1">Outer Reader Name</label>
+                    <input type="text" name="outer_reader_name" id="edit-outer-reader" value="{{ reader.outer_reader_name or '' }}" placeholder="none (single reader)"
+                           class="w-full border border-gray-300 rounded px-3 py-2 font-mono focus:outline-none focus:border-blue-500">
+                    <p class="text-[11px] text-gray-400 mt-1">Bidirectional gates only. Empty = single reader.</p>
                 </div>
+            </div>
+            <div>
+                <label class="block font-semibold text-gray-700 mb-1">Firmware Version</label>
+                <input type="text" name="firmware_version" value="{{ reader.firmware_version }}" class="w-full border border-gray-300 rounded px-3 py-2 font-mono">
             </div>
             <div class="pt-2">
                 <button type="submit" class="px-5 py-2 bg-[#2f80ed] hover:bg-blue-600 text-white rounded-md font-semibold">
@@ -187,11 +210,51 @@
                 </button>
             </div>
         </form>
+
+        <!-- Danger zone -->
+        <div class="mt-8 pt-5 border-t border-rose-100">
+            <h4 class="text-xs font-bold text-rose-700 mb-1">Remove this reader</h4>
+            <p class="text-xs text-gray-500 mb-3">
+                A reader with no recorded passages is deleted. A reader with passages
+                {% if reader.passage_count %}(this one has {{ reader.passage_count }}){% endif %}
+                is retired instead: its history stays for traceability, but it leaves the lists and its reads raise an
+                "unregistered reader" alert.
+            </p>
+            <form action="/readers/{{ reader.gate_id | urlencode }}/delete" method="POST"
+                  onsubmit="return confirm('Remove reader {{ reader.reader_name | e }}?');">
+                <button type="submit" class="px-4 py-2 bg-white hover:bg-rose-50 border border-rose-300 text-rose-700 rounded-md text-xs font-semibold">
+                    Remove Reader
+                </button>
+            </form>
+        </div>
+        {% endif %}
     </div>
 
 </div>
 
 <script>
+// The readers list opens this page with ?tab=config to edit straight away.
+window.addEventListener('DOMContentLoaded', function () {
+    if (new URLSearchParams(window.location.search).get('tab') === 'config') {
+        switchReaderTab('config');
+    }
+    if (document.getElementById('edit-direction-mode')) {
+        syncOuterReader('edit', true);
+    }
+});
+
+// A one-way (IN-only / OUT-only) gate has a single reader: the gate decides the direction, not the order of two readers.
+function syncOuterReader(prefix, keepValue) {
+    const mode = document.getElementById(prefix + '-direction-mode').value;
+    const wrap = document.getElementById(prefix + '-outer-wrap');
+    const input = document.getElementById(prefix + '-outer-reader');
+    const oneWay = mode !== 'BIDIRECTIONAL';
+    // on page load a one-way gate that still has an outer reader (old data) keeps the field visible so it can be cleared
+    wrap.classList.toggle('hidden', oneWay && (!keepValue || !input.value));
+    // an empty value is sent on purpose: it removes the outer reader, which switching to a one-way gate requires
+    if (oneWay && !keepValue) input.value = '';
+}
+
 function switchReaderTab(tab) {
     ['transactions', 'config'].forEach(t => {
         document.getElementById('rtab-' + t).classList.add('hidden');

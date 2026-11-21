@@ -40,6 +40,13 @@ public class CattleManagementController {
         private String credentialIdentifier;
     }
 
+    /** Fields that are left out (null) keep their value. The barn changes through the transfer, the tag through the tag endpoint. */
+    @Data
+    public static class UpdateCattleRequest {
+        private String breed;
+        private Double weightKg;
+    }
+
     @Data
     public static class AssignTagRequest {
         private String tagEpc;
@@ -79,7 +86,7 @@ public class CattleManagementController {
             int safeSize = Math.min(Math.max(1, size), 100);
             int offset = (safePage - 1) * safeSize;
 
-            StringBuilder scopeWhere = new StringBuilder(" WHERE 1=1 ");
+            StringBuilder scopeWhere = new StringBuilder(" WHERE a.lifecycle_status <> 'ARCHIVED' ");
             List scopeParams = new ArrayList();
 
             if (scope.isFarmScoped()) {
@@ -197,7 +204,8 @@ public class CattleManagementController {
         String animalId = req.getAnimalId().trim();
         Integer exists = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM animals WHERE animal_id = ?", Integer.class, animalId);
         if (exists != null && exists > 0) {
-            return ResponseEntity.badRequest().body(Map.of("error", "Animal ID '" + animalId + "' already exists"));
+            return ResponseEntity.badRequest().body(Map.of("error", "Animal ID '" + animalId + "' already exists"
+                    + (isArchived(animalId) ? " (archived: its history is kept, so the ID cannot be reused)" : "")));
         }
 
         jdbcTemplate.update("""
@@ -329,6 +337,9 @@ public class CattleManagementController {
         if (!canAccessAnimal(animalId)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Access denied for this animal."));
         }
+        if (isArchived(animalId)) {
+            return archivedConflict(animalId);
+        }
         if (req.getTagEpc() == null || req.getTagEpc().isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "RFID Tag EPC is required"));
         }
@@ -345,6 +356,9 @@ public class CattleManagementController {
                                                Authentication auth) {
         if (!canAccessAnimal(animalId)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Access denied for this animal."));
+        }
+        if (isArchived(animalId)) {
+            return archivedConflict(animalId);
         }
         String healthId = "HLT-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
         String actor = auth != null ? auth.getName() : "Veterinary Staff";
@@ -369,6 +383,9 @@ public class CattleManagementController {
                                                   Authentication auth) {
         if (!canAccessAnimal(animalId)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Access denied for this animal."));
+        }
+        if (isArchived(animalId)) {
+            return archivedConflict(animalId);
         }
 
         String healthId = "HLT-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
@@ -417,6 +434,9 @@ public class CattleManagementController {
                                             Authentication auth) {
         if (!canAccessAnimal(animalId)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Access denied for this animal."));
+        }
+        if (isArchived(animalId)) {
+            return archivedConflict(animalId);
         }
         if (req.getToBarnId() == null || req.getToBarnId().isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "Destination barn is required"));
@@ -473,6 +493,112 @@ public class CattleManagementController {
         return ResponseEntity.ok(Map.of("status", "TRANSFERRED", "transferId", transferId, "transferType", transferType));
     }
 
+    /** Edits the descriptive fields of an animal. Fields that are not sent keep their value. */
+    @PutMapping("/{animalId}")
+    @PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'FARM_MANAGER', 'BARN_SUPERVISOR')")
+    @Audited(action = "UPDATE_CATTLE", targetType = "ANIMAL")
+    @Transactional
+    public ResponseEntity<?> updateCattle(@PathVariable String animalId, @RequestBody UpdateCattleRequest req) {
+        if (!animalExists(animalId)) {
+            return ResponseEntity.notFound().build();
+        }
+        if (!canAccessAnimal(animalId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Access denied for this animal."));
+        }
+        if (isArchived(animalId)) {
+            return archivedConflict(animalId);
+        }
+
+        String breed = req.getBreed() != null && !req.getBreed().isBlank() ? req.getBreed().trim() : null;
+        if (breed != null && breed.length() > 80) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Breed can be at most 80 characters."));
+        }
+        Double weight = req.getWeightKg();
+        if (weight != null && (weight.isNaN() || weight <= 0 || weight > 2000)) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Weight must be between 0 and 2000 kg."));
+        }
+        if (breed == null && weight == null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Nothing to update: send a breed or a weight."));
+        }
+
+        jdbcTemplate.update("""
+            UPDATE animals
+            SET breed = COALESCE(?, breed),
+                weight_kg = COALESCE(?, weight_kg)
+            WHERE animal_id = ? AND lifecycle_status <> 'ARCHIVED'
+        """, breed, weight, animalId);
+
+        return ResponseEntity.ok(Map.of("status", "UPDATED", "animalId", animalId));
+    }
+
+    /**
+     * Removes an animal from the herd. An animal that was only registered (no movement, health record, transfer or
+     * alert) is deleted. An animal with history is archived instead: the record stays for traceability, but the
+     * animal leaves the herd, its tag is released, it is taken out of the barn headcount and its open alerts are
+     * closed. The response says which of the two happened.
+     */
+    @DeleteMapping("/{animalId}")
+    @PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'FARM_MANAGER', 'BARN_SUPERVISOR')")
+    @Audited(action = "DELETE_CATTLE", targetType = "ANIMAL")
+    @Transactional
+    public ResponseEntity<?> deleteCattle(@PathVariable String animalId,
+                                          @RequestParam(required = false) String reason) {
+        if (!animalExists(animalId) || isArchived(animalId)) {
+            return ResponseEntity.notFound().build();
+        }
+        if (!canAccessAnimal(animalId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Access denied for this animal."));
+        }
+
+        Integer history = jdbcTemplate.queryForObject("""
+            SELECT (SELECT COUNT(*) FROM movements WHERE animal_id = ?)
+                 + (SELECT COUNT(*) FROM health_records WHERE animal_id = ?)
+                 + (SELECT COUNT(*) FROM animal_transfers WHERE animal_id = ?)
+                 + (SELECT COUNT(*) FROM alerts WHERE animal_id = ?)
+        """, Integer.class, animalId, animalId, animalId, animalId);
+
+        // The animal no longer counts in a barn, whichever way it leaves the herd.
+        var presence = jdbcTemplate.queryForList(
+                "SELECT presence_status, current_barn_id FROM presence_states WHERE animal_id = ?", animalId);
+        if (!presence.isEmpty()) {
+            Object barnId = presence.get(0).get("current_barn_id");
+            if ("IN_BARN".equals(presence.get(0).get("presence_status")) && barnId != null) {
+                jdbcTemplate.update("UPDATE barns SET current_headcount = GREATEST(0, current_headcount - 1) WHERE barn_id = ?", barnId);
+            }
+            jdbcTemplate.update("DELETE FROM presence_states WHERE animal_id = ?", animalId);
+        }
+
+        if (history == null || history == 0) {
+            jdbcTemplate.update("DELETE FROM tag_assignments WHERE animal_id = ?", animalId);
+            jdbcTemplate.update("DELETE FROM animals WHERE animal_id = ?", animalId);
+            return ResponseEntity.ok(Map.of("status", "DELETED", "animalId", animalId));
+        }
+
+        String actor = rbacScopeService.getCurrentScope().username() != null
+                ? rbacScopeService.getCurrentScope().username() : "unknown";
+        String note = reason != null && !reason.isBlank() ? reason.trim() : "Removed from the herd";
+        if (note.length() > 200) {
+            note = note.substring(0, 200);
+        }
+        jdbcTemplate.update("""
+            UPDATE animals
+            SET lifecycle_status = 'ARCHIVED', archived_at = CURRENT_TIMESTAMP, archived_by = ?, archive_reason = ?
+            WHERE animal_id = ?
+        """, actor, note, animalId);
+        jdbcTemplate.update("UPDATE tag_assignments SET valid_to = CURRENT_TIMESTAMP WHERE animal_id = ? AND valid_to IS NULL", animalId);
+        jdbcTemplate.update("""
+            UPDATE alerts
+            SET state = 'RESOLVED', resolved_by = ?, resolved_at = CURRENT_TIMESTAMP,
+                resolution_note = 'Animal archived: ' || ?
+            WHERE animal_id = ? AND state IN ('OPEN', 'ACKNOWLEDGED')
+        """, actor, note, animalId);
+
+        return ResponseEntity.ok(Map.of(
+                "status", "ARCHIVED",
+                "animalId", animalId,
+                "message", "The animal has recorded history, so it was archived instead of deleted. Its history is kept."));
+    }
+
     @GetMapping("/{animalId}/dossier")
     public ResponseEntity<?> downloadAnimalDossier(@PathVariable String animalId) {
         ResponseEntity<?> detailRes = getCattleDetails(animalId);
@@ -483,6 +609,22 @@ public class CattleManagementController {
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"dossier_" + animalId.replace(" ", "_") + ".json\"")
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(detailRes.getBody());
+    }
+
+    private boolean animalExists(String animalId) {
+        Integer n = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM animals WHERE animal_id = ?", Integer.class, animalId);
+        return n != null && n > 0;
+    }
+
+    private boolean isArchived(String animalId) {
+        Integer n = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM animals WHERE animal_id = ? AND lifecycle_status = 'ARCHIVED'", Integer.class, animalId);
+        return n != null && n > 0;
+    }
+
+    private ResponseEntity<?> archivedConflict(String animalId) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Map.of("error", "Animal '" + animalId + "' is archived and can no longer be changed."));
     }
 
     private boolean canAccessAnimal(String animalId) {

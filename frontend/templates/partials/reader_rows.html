@@ -16,6 +16,22 @@
         </div>
     </td>
 
+    <!-- Direction rule of the gate -->
+    <td class="px-5 py-3.5">
+        {% if r.direction_mode == 'IN_ONLY' %}
+        <span class="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">IN only</span>
+        <div class="text-[10px] text-gray-400 mt-0.5">every read = returning</div>
+        {% elif r.direction_mode == 'OUT_ONLY' %}
+        <span class="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">OUT only</span>
+        <div class="text-[10px] text-gray-400 mt-0.5">every read = out to pasture</div>
+        {% else %}
+        <span class="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-blue-50 text-blue-700 border border-blue-200">Bidirectional</span>
+        <div class="text-[10px] text-gray-400 mt-0.5">
+            {% if r.outer_reader_name %}delta time: {{ r.reader_name }} / {{ r.outer_reader_name }}{% else %}presence toggle{% endif %}
+        </div>
+        {% endif %}
+    </td>
+
     <td class="px-5 py-3.5 font-mono text-gray-600">{{ r.firmware_version }}</td>
     <td class="px-5 py-3.5 text-gray-700 font-medium">{{ r.label }}</td>
     <td class="px-5 py-3.5 text-gray-700">{{ r.farm_name or 'Dak Lak Station' }}</td>
@@ -23,9 +39,24 @@
     <td class="px-5 py-3.5 text-right font-mono text-[11px] text-gray-500">
         {{ (r.last_seen | string).replace('T', ' ')[:19] if r.last_seen else 'Awaiting heartbeat' }}
     </td>
+
+    <!-- Row actions: edit and remove, for the roles that may manage readers (the backend checks the scope again) -->
+    <td class="px-5 py-3.5 text-right whitespace-nowrap">
+        {% if user and user.role in ['SYSTEM_ADMIN', 'FARM_MANAGER'] %}
+        <a href="/readers/{{ r.gate_id | urlencode }}?tab=config" onclick="event.stopPropagation()"
+           class="inline-block px-2.5 py-1 rounded border border-gray-300 bg-white text-gray-700 font-semibold hover:bg-gray-50">Edit</a>
+        <button type="button"
+                hx-post="/htmx/readers/{{ r.gate_id | urlencode }}/delete"
+                hx-target="#readers-table-body"
+                hx-swap="innerHTML"
+                hx-confirm="Remove reader {{ r.reader_name }}? A reader with recorded passages is retired (history kept); one without is deleted."
+                onclick="event.stopPropagation()"
+                class="inline-block ml-1 px-2.5 py-1 rounded border border-rose-200 bg-white text-rose-700 font-semibold hover:bg-rose-50">Remove</button>
+        {% endif %}
+    </td>
 </tr>
 {% else %}
 <tr>
-    <td colspan="6" class="py-12 text-center text-gray-400">No gate readers registered.</td>
+    <td colspan="8" class="py-12 text-center text-gray-400">No gate readers registered.</td>
 </tr>
 {% endfor %}

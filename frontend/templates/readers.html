@@ -47,11 +47,13 @@
                 <thead class="bg-gray-50/70 border-b border-gray-200 text-gray-600 font-semibold">
                     <tr>
                         <th class="px-5 py-3.5">Gate Readers <span class="text-gray-400">⇅</span></th>
+                        <th class="px-5 py-3.5">Direction Rule</th>
                         <th class="px-5 py-3.5">Firmware Version</th>
                         <th class="px-5 py-3.5">Friendly Label <span class="text-gray-400">⇅</span></th>
                         <th class="px-5 py-3.5">Facility (Identity System) <span class="text-gray-400">⇅</span></th>
                         <th class="px-5 py-3.5">Assigned Barn</th>
                         <th class="px-5 py-3.5 text-right">Last Seen</th>
+                        <th class="px-5 py-3.5 text-right"></th>
                     </tr>
                 </thead>
                 <tbody id="readers-table-body" class="divide-y divide-gray-100">
@@ -111,19 +113,26 @@
                 </select>
             </div>
 
-            <div class="grid grid-cols-2 gap-3">
-                <div>
-                    <label class="block font-semibold text-gray-700 mb-1">Direction Mode</label>
-                    <select name="direction_mode" class="w-full border border-gray-300 rounded px-3 py-2 bg-white">
-                        <option value="BIDIRECTIONAL">BIDIRECTIONAL</option>
-                        <option value="IN_ONLY">IN_ONLY</option>
-                        <option value="OUT_ONLY">OUT_ONLY</option>
-                    </select>
-                </div>
-                <div>
-                    <label class="block font-semibold text-gray-700 mb-1">Firmware Version</label>
-                    <input type="text" name="firmware_version" value="1.58.1998" class="w-full border border-gray-300 rounded px-3 py-2 font-mono">
-                </div>
+            <div>
+                <label class="block font-semibold text-gray-700 mb-1">Direction Rule</label>
+                <select name="direction_mode" id="add-direction-mode" onchange="syncOuterReader('add')"
+                        class="w-full border border-gray-300 rounded px-3 py-2 bg-white">
+                    <option value="BIDIRECTIONAL">Bidirectional gate (animals pass both ways)</option>
+                    <option value="IN_ONLY">IN-only gate (every read = animal returning)</option>
+                    <option value="OUT_ONLY">OUT-only gate (every read = animal out to pasture)</option>
+                </select>
+            </div>
+
+            <div id="add-outer-wrap">
+                <label class="block font-semibold text-gray-700 mb-1">Outer Reader Name (optional)</label>
+                <input type="text" name="outer_reader_name" id="add-outer-reader" placeholder="e.g. DrC1C4"
+                       class="w-full border border-gray-300 rounded px-3 py-2 font-mono focus:outline-none focus:border-blue-500">
+                <p class="text-[11px] text-gray-400 mt-1">Two readers on one bidirectional gate: the hardware reader name above is the inner reader and the direction is the order in which the two readers see the tag. Leave empty for a single reader.</p>
+            </div>
+
+            <div>
+                <label class="block font-semibold text-gray-700 mb-1">Firmware Version</label>
+                <input type="text" name="firmware_version" value="1.58.1998" class="w-full border border-gray-300 rounded px-3 py-2 font-mono">
             </div>
 
             <div class="pt-2 flex justify-end space-x-2">
@@ -133,4 +142,16 @@
         </form>
     </div>
 </div>
+
+<script>
+// A one-way (IN-only / OUT-only) gate has a single reader: the gate decides the direction, not the order of two readers.
+function syncOuterReader(prefix) {
+    const mode = document.getElementById(prefix + '-direction-mode').value;
+    const wrap = document.getElementById(prefix + '-outer-wrap');
+    const input = document.getElementById(prefix + '-outer-reader');
+    const oneWay = mode !== 'BIDIRECTIONAL';
+    wrap.classList.toggle('hidden', oneWay);
+    if (oneWay) input.value = '';
+}
+</script>
 {% endblock %}

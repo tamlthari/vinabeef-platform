@@ -213,6 +213,22 @@ def extract_backend_error(res: httpx.Response, fallback: str = "") -> str:
     return (res.text or fallback).strip()
 
 
+def flash_header(message: str, kind: str = "ok") -> dict:
+    """HX-Trigger header: base.html shows the message in the flash box after an HTMX swap."""
+    return {"HX-Trigger": json.dumps({"flash": {"message": message, "kind": kind}})}
+
+
+def redirect_with(path: str, notice: str = "", problem: str = "") -> RedirectResponse:
+    """Redirect after a form post; base.html shows `notice` (green) or `problem` (red) above the page."""
+    params = []
+    if notice:
+        params.append("notice=" + quote(notice))
+    if problem:
+        params.append("problem=" + quote(problem))
+    return RedirectResponse(url=path + ("?" + "&".join(params) if params else ""),
+                            status_code=status.HTTP_303_SEE_OTHER)
+
+
 def format_403_security_message(user: dict, detail: str, path: str) -> str:
     username = user.get("username", "unknown") if user else "unknown"
     clean_detail = (detail or "").strip()
@@ -660,6 +676,7 @@ async def htmx_herd_list(request: Request, page: int = 1, q: str = "", user: dic
 
     return templates.TemplateResponse("partials/herd_table_content.html", {
         "request": request,
+        "user": user,
         "oob_update": True,
         **pagination
     })
@@ -704,9 +721,55 @@ async def htmx_herd_create(
 
     return templates.TemplateResponse("partials/herd_table_content.html", {
         "request": request,
+        "user": user,
         "oob_update": True,
         **pagination
     })
+
+
+@app.post("/htmx/herd/{animal_id}/delete", response_class=HTMLResponse)
+async def htmx_herd_delete(request: Request, animal_id: str, user: dict = Depends(get_current_user)):
+    """Delete or archive from the herd list. The backend decides which one and says so."""
+    if not user:
+        return "<div class='p-4 text-red-600 text-xs'>Session expired.</div>"
+
+    headers = get_auth_headers(user)
+    message, kind = "", "ok"
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        res = await client.delete(f"{BACKEND_BASE_URL}/cattle/{animal_id}", headers=headers)
+        if res.status_code == 403:
+            err = extract_backend_error(res, f"remove Cattle '{animal_id}'")
+            message = format_403_security_message(user, err, request.url.path)
+            await log_security_violation_best_effort(user, request.url.path, message)
+            kind = "error"
+        elif res.status_code == 404:
+            message, kind = f"Cattle '{animal_id}' no longer exists.", "error"
+        elif res.status_code != 200:
+            message, kind = extract_backend_error(res, "Failed to remove cattle"), "error"
+        else:
+            message = describe_removal(res, "Cattle", animal_id)
+        pagination = await fetch_paginated_cattle(client, headers, q="", page=1, size=100)
+
+    return templates.TemplateResponse("partials/herd_table_content.html", {
+        "request": request,
+        "user": user,
+        "oob_update": True,
+        **pagination
+    }, headers=flash_header(message, kind))
+
+
+def describe_removal(res: httpx.Response, noun: str, ident: str) -> str:
+    """Message for a delete that the backend answered with DELETED, ARCHIVED or RETIRED."""
+    try:
+        data = res.json()
+    except Exception:
+        data = {}
+    outcome = data.get("status") if isinstance(data, dict) else None
+    if outcome == "ARCHIVED":
+        return f"{noun} '{ident}' has recorded history, so it was archived instead of deleted. Its history is kept."
+    if outcome == "RETIRED":
+        return f"{noun} '{ident}' has recorded passages, so it was retired instead of deleted. Its history is kept."
+    return f"{noun} '{ident}' was deleted."
 
 
 @app.get("/herd/{animal_id}", response_class=HTMLResponse)
@@ -765,6 +828,66 @@ async def cattle_assign_tag(
         return RedirectResponse(url=f"/herd/{animal_id}?error={quote(msg)}", status_code=status.HTTP_303_SEE_OTHER)
 
     return RedirectResponse(url=f"/herd/{animal_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/herd/{animal_id}/update")
+async def cattle_update_action(
+    request: Request,
+    animal_id: str,
+    breed: str = Form(""),
+    weight_kg: str = Form(""),
+    user: dict = Depends(get_current_user)
+):
+    if not user:
+        return RedirectResponse(url="/login")
+
+    payload = {}
+    if breed.strip():
+        payload["breed"] = breed.strip()
+    if weight_kg.strip():
+        try:
+            payload["weightKg"] = float(weight_kg)
+        except ValueError:
+            return redirect_with(f"/herd/{animal_id}", problem="Weight must be a number.")
+
+    async with httpx.AsyncClient(timeout=6.0) as client:
+        res = await client.put(f"{BACKEND_BASE_URL}/cattle/{animal_id}", json=payload, headers=get_auth_headers(user))
+    if res.status_code == 403:
+        err = extract_backend_error(res, f"edit Cattle '{animal_id}'")
+        msg = format_403_security_message(user, err, request.url.path)
+        await log_security_violation_best_effort(user, request.url.path, msg)
+        return RedirectResponse(url=f"/herd/{animal_id}?error={quote(msg)}", status_code=status.HTTP_303_SEE_OTHER)
+    if res.status_code != 200:
+        return redirect_with(f"/herd/{animal_id}", problem=extract_backend_error(res, "Could not update the animal."))
+    return redirect_with(f"/herd/{animal_id}", notice="Animal details updated.")
+
+
+@app.post("/herd/{animal_id}/delete")
+async def cattle_delete_action(
+    request: Request,
+    animal_id: str,
+    reason: str = Form(""),
+    user: dict = Depends(get_current_user)
+):
+    if not user:
+        return RedirectResponse(url="/login")
+
+    async with httpx.AsyncClient(timeout=6.0) as client:
+        res = await client.delete(
+            f"{BACKEND_BASE_URL}/cattle/{animal_id}",
+            params={"reason": reason.strip()} if reason.strip() else None,
+            headers=get_auth_headers(user)
+        )
+    if res.status_code == 403:
+        err = extract_backend_error(res, f"remove Cattle '{animal_id}'")
+        msg = format_403_security_message(user, err, request.url.path)
+        await log_security_violation_best_effort(user, request.url.path, msg)
+        return RedirectResponse(url=f"/herd/{animal_id}?error={quote(msg)}", status_code=status.HTTP_303_SEE_OTHER)
+    if res.status_code == 404:
+        return redirect_with("/herd", problem=f"Cattle '{animal_id}' no longer exists.")
+    if res.status_code != 200:
+        return redirect_with(f"/herd/{animal_id}", problem=extract_backend_error(res, "Could not remove the animal."))
+    return redirect_with("/herd", notice=describe_removal(res, "Cattle", animal_id))
 
 
 @app.post("/herd/{animal_id}/vaccinate")
@@ -915,7 +1038,7 @@ async def htmx_readers_list(request: Request, q: str = "", user: dict = Depends(
             readers = filter_readers_by_scope(res.json() if res.status_code == 200 else [], user)
         except Exception:
             readers = []
-    return templates.TemplateResponse("partials/reader_rows.html", {"request": request, "readers": readers})
+    return templates.TemplateResponse("partials/reader_rows.html", {"request": request, "user": user, "readers": readers})
 
 
 @app.post("/htmx/readers/create", response_class=HTMLResponse)
@@ -925,6 +1048,7 @@ async def htmx_readers_create(
     label: str = Form(...),
     barn_id: str = Form(...),
     direction_mode: str = Form("BIDIRECTIONAL"),
+    outer_reader_name: str = Form(""),
     firmware_version: str = Form("1.58.1998"),
     user: dict = Depends(get_current_user)
 ):
@@ -936,6 +1060,7 @@ async def htmx_readers_create(
             f"{BACKEND_BASE_URL}/readers",
             json={
                 "readerName": reader_name,
+                "outerReaderName": outer_reader_name,
                 "label": label,
                 "barnId": barn_id,
                 "directionMode": direction_mode,
@@ -943,15 +1068,47 @@ async def htmx_readers_create(
             },
             headers=get_auth_headers(user)
         )
+        message, kind = f"Reader '{reader_name.strip()}' registered ({direction_mode}).", "ok"
         if res.status_code == 403:
             err = extract_backend_error(res, f"provision reader in Barn '{barn_id}'")
-            msg = format_403_security_message(user, err, request.url.path)
-            await log_security_violation_best_effort(user, request.url.path, msg)
-            return HTMLResponse(content=render_403_alert_html(msg), status_code=403)
+            message = format_403_security_message(user, err, request.url.path)
+            await log_security_violation_best_effort(user, request.url.path, message)
+            kind = "error"
+        elif res.status_code != 200:
+            message, kind = extract_backend_error(res, "Failed to register the reader"), "error"
 
         list_res = await client.get(f"{BACKEND_BASE_URL}/readers", headers=get_auth_headers(user))
         readers = filter_readers_by_scope(list_res.json() if list_res.status_code == 200 else [], user)
-    return templates.TemplateResponse("partials/reader_rows.html", {"request": request, "readers": readers})
+    return templates.TemplateResponse("partials/reader_rows.html", {"request": request, "user": user, "readers": readers},
+                                      headers=flash_header(message, kind))
+
+
+@app.post("/htmx/readers/{gate_id}/delete", response_class=HTMLResponse)
+async def htmx_readers_delete(request: Request, gate_id: str, user: dict = Depends(get_current_user)):
+    """Delete or retire from the readers list. The backend decides which one and says so."""
+    if not user:
+        return ""
+
+    headers = get_auth_headers(user)
+    async with httpx.AsyncClient(timeout=4.0) as client:
+        res = await client.delete(f"{BACKEND_BASE_URL}/readers/{gate_id}", headers=headers)
+        message, kind = "", "ok"
+        if res.status_code == 403:
+            err = extract_backend_error(res, f"remove Gate Reader '{gate_id}'")
+            message = format_403_security_message(user, err, request.url.path)
+            await log_security_violation_best_effort(user, request.url.path, message)
+            kind = "error"
+        elif res.status_code == 404:
+            message, kind = f"Gate reader '{gate_id}' no longer exists.", "error"
+        elif res.status_code != 200:
+            message, kind = extract_backend_error(res, "Failed to remove the reader"), "error"
+        else:
+            message = describe_removal(res, "Reader", gate_id)
+
+        list_res = await client.get(f"{BACKEND_BASE_URL}/readers", headers=headers)
+        readers = filter_readers_by_scope(list_res.json() if list_res.status_code == 200 else [], user)
+    return templates.TemplateResponse("partials/reader_rows.html", {"request": request, "user": user, "readers": readers},
+                                      headers=flash_header(message, kind))
 
 
 @app.get("/readers/{gate_id}", response_class=HTMLResponse)
@@ -989,30 +1146,60 @@ async def reader_update_action(
     barn_id: str = Form(...),
     label: str = Form(...),
     direction_mode: str = Form(...),
+    reader_name: str = Form(""),
     firmware_version: str = Form("1.58.1998"),
     user: dict = Depends(get_current_user)
 ):
     if not user:
         return RedirectResponse(url="/login")
 
+    # FastAPI turns an empty form value into "missing", but here the difference matters: a form that sends an EMPTY
+    # outer reader removes it, a form without the field leaves it alone.
+    form = await request.form()
+    outer_reader_name = form.get("outer_reader_name")
+
+    payload = {
+        "barnId": barn_id,
+        "label": label,
+        "directionMode": direction_mode,
+        "firmwareVersion": firmware_version
+    }
+    if reader_name.strip():
+        payload["readerName"] = reader_name.strip()
+    if outer_reader_name is not None:
+        # an empty value removes the outer reader (needed to switch a paired gate to IN_ONLY / OUT_ONLY)
+        payload["outerReaderName"] = outer_reader_name.strip()
+
     async with httpx.AsyncClient(timeout=4.0) as client:
-        res = await client.put(
-            f"{BACKEND_BASE_URL}/readers/{gate_id}",
-            json={
-                "barnId": barn_id,
-                "label": label,
-                "directionMode": direction_mode,
-                "firmwareVersion": firmware_version
-            },
-            headers=get_auth_headers(user)
-        )
+        res = await client.put(f"{BACKEND_BASE_URL}/readers/{gate_id}", json=payload, headers=get_auth_headers(user))
     if res.status_code == 403:
         err = extract_backend_error(res, f"mutate Gate Reader '{gate_id}' in Barn '{barn_id}'")
         msg = format_403_security_message(user, err, request.url.path)
         await log_security_violation_best_effort(user, request.url.path, msg)
         return RedirectResponse(url=f"/readers/{gate_id}?error={quote(msg)}", status_code=status.HTTP_303_SEE_OTHER)
+    if res.status_code != 200:
+        return redirect_with(f"/readers/{gate_id}", problem=extract_backend_error(res, "Could not save the reader settings."))
 
-    return RedirectResponse(url=f"/readers/{gate_id}", status_code=status.HTTP_303_SEE_OTHER)
+    return redirect_with(f"/readers/{gate_id}", notice="Reader settings saved.")
+
+
+@app.post("/readers/{gate_id}/delete")
+async def reader_delete_action(request: Request, gate_id: str, user: dict = Depends(get_current_user)):
+    if not user:
+        return RedirectResponse(url="/login")
+
+    async with httpx.AsyncClient(timeout=4.0) as client:
+        res = await client.delete(f"{BACKEND_BASE_URL}/readers/{gate_id}", headers=get_auth_headers(user))
+    if res.status_code == 403:
+        err = extract_backend_error(res, f"remove Gate Reader '{gate_id}'")
+        msg = format_403_security_message(user, err, request.url.path)
+        await log_security_violation_best_effort(user, request.url.path, msg)
+        return RedirectResponse(url=f"/readers/{gate_id}?error={quote(msg)}", status_code=status.HTTP_303_SEE_OTHER)
+    if res.status_code == 404:
+        return redirect_with("/readers", problem=f"Gate reader '{gate_id}' no longer exists.")
+    if res.status_code != 200:
+        return redirect_with(f"/readers/{gate_id}", problem=extract_backend_error(res, "Could not remove the reader."))
+    return redirect_with("/readers", notice=describe_removal(res, "Reader", gate_id))
 
 
 # ================= ABNORMALITY DETECTION & ALERTING =================

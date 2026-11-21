@@ -219,9 +219,31 @@
                 <span>{{ banner_error }}</span>
             </div>
             {% endif %}
+            {% set banner_notice = request.query_params.get('notice', '') %}
+            {% set banner_problem = request.query_params.get('problem', '') %}
+            {% if banner_notice %}
+            <div class="mb-5 px-5 py-3.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold shadow-xs">{{ banner_notice }}</div>
+            {% endif %}
+            {% if banner_problem %}
+            <div class="mb-5 px-5 py-3.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold shadow-xs">{{ banner_problem }}</div>
+            {% endif %}
+            <!-- Filled by HTMX actions (HX-Trigger: flash) -->
+            <div id="flash-box" class="hidden"></div>
             {% block content %}{% endblock %}
         </main>
     </div>
+
+    <!-- Message after an HTMX action (delete, register, ...) -->
+    <script>
+    document.body.addEventListener('flash', function (e) {
+        const box = document.getElementById('flash-box');
+        if (!box) return;
+        const d = e.detail || {};
+        box.textContent = d.message || d.value || '';
+        box.className = 'mb-5 px-5 py-3.5 rounded-lg border text-xs font-semibold shadow-xs ' +
+            (d.kind === 'error' ? 'bg-rose-50 border-rose-200 text-rose-800' : 'bg-emerald-50 border-emerald-200 text-emerald-800');
+    });
+    </script>
 
     <!-- Click handler for avatar menu -->
     <script>

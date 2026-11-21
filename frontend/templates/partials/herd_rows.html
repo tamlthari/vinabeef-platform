@@ -57,9 +57,21 @@
         </div>
     </td>
 
-    <!-- Ellipsis Menu -->
-    <td class="px-5 py-3.5 text-right text-gray-400 font-bold tracking-widest">
-        &bull;&bull;&bull;
+    <!-- Row actions: edit and remove, for the roles that may manage cattle (the backend checks the scope again) -->
+    <td class="px-5 py-3.5 text-right whitespace-nowrap">
+        {% if user and user.role in ['SYSTEM_ADMIN', 'FARM_MANAGER', 'BARN_SUPERVISOR'] %}
+        <a href="/herd/{{ c.animal_id | urlencode }}?edit=1" onclick="event.stopPropagation()"
+           class="inline-block px-2.5 py-1 rounded border border-gray-300 bg-white text-gray-700 font-semibold hover:bg-gray-50">Edit</a>
+        <button type="button"
+                hx-post="/htmx/herd/{{ c.animal_id | urlencode }}/delete"
+                hx-target="#herd-table-container"
+                hx-swap="innerHTML"
+                hx-confirm="Remove {{ c.animal_id }} from the herd? An animal with history is archived (history kept); one without history is deleted."
+                onclick="event.stopPropagation()"
+                class="inline-block ml-1 px-2.5 py-1 rounded border border-rose-200 bg-white text-rose-700 font-semibold hover:bg-rose-50">Remove</button>
+        {% else %}
+        <span class="text-gray-300 font-bold tracking-widest">&bull;&bull;&bull;</span>
+        {% endif %}
     </td>
 </tr>
 {% else %}

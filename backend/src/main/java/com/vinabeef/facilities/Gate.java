@@ -4,6 +4,8 @@ import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
 
+import java.time.Instant;
+
 @Entity
 @Table(name = "gates")
 @Getter
@@ -22,8 +24,9 @@ public class Gate {
     @Column(name = "reader_name")
     private String readerName;
 
-    @Column(name = "direction_mode")
-    private String directionMode;
+    /** BIDIRECTIONAL, IN_ONLY or OUT_ONLY, see {@link GateDirectionMode}. */
+    @Column(name = "direction_mode", nullable = false)
+    private String directionMode = "BIDIRECTIONAL";
 
     /** Longest gap between the inner and the outer read that still counts as one crossing. */
     @Column(name = "pair_window_ms", nullable = false)
@@ -32,4 +35,8 @@ public class Gate {
     /** Repeat reads at the same reader closer than this are treated as one tap. */
     @Column(name = "repeat_debounce_ms", nullable = false)
     private int repeatDebounceMs = 3000;
+
+    /** Set when the reader was retired. A retired gate keeps its history but no longer receives reads. */
+    @Column(name = "retired_at")
+    private Instant retiredAt;
 }

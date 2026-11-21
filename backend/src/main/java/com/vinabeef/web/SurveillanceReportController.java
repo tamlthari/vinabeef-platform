@@ -61,19 +61,19 @@ public class SurveillanceReportController {
             FROM health_records hr
             JOIN animals a ON hr.animal_id = a.animal_id
             LEFT JOIN barns b ON a.assigned_barn_id = b.barn_id
-            WHERE hr.record_type = 'VACCINATION' AND (? = TRUE OR b.farm_id = ?)
+            WHERE hr.record_type = 'VACCINATION' AND a.lifecycle_status = 'ACTIVE' AND (? = TRUE OR b.farm_id = ?)
         """, Long.class, allFarms, effectiveFarm);
 
         Long treatmentCount = jdbcTemplate.queryForObject("""
             SELECT COUNT(*) FROM animals a
             LEFT JOIN barns b ON a.assigned_barn_id = b.barn_id
-            WHERE a.health_status = 'UNDER_TREATMENT' AND (? = TRUE OR b.farm_id = ?)
+            WHERE a.health_status = 'UNDER_TREATMENT' AND a.lifecycle_status = 'ACTIVE' AND (? = TRUE OR b.farm_id = ?)
         """, Long.class, allFarms, effectiveFarm);
 
         Long quarantineCount = jdbcTemplate.queryForObject("""
             SELECT COUNT(*) FROM animals a
             LEFT JOIN barns b ON a.assigned_barn_id = b.barn_id
-            WHERE a.health_status = 'QUARANTINE' AND (? = TRUE OR b.farm_id = ?)
+            WHERE a.health_status = 'QUARANTINE' AND a.lifecycle_status = 'ACTIVE' AND (? = TRUE OR b.farm_id = ?)
         """, Long.class, allFarms, effectiveFarm);
 
         Long transferCount = jdbcTemplate.queryForObject("""

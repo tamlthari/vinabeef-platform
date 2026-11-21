@@ -29,7 +29,7 @@ public class Movement {
     @Column(name = "occurred_at", nullable = false)
     private Instant occurredAt;
 
-    /** GATE_MODE (one reader, direction from the gate setting) or PAIRED_READERS (inner/outer order). */
+    /** PAIRED_READERS (inner/outer order), GATE_MODE (one reader, presence toggle) or ONE_WAY_GATE (IN_ONLY / OUT_ONLY gate). */
     @Column(name = "detection_method", nullable = false)
     private String detectionMethod = "GATE_MODE";
 
