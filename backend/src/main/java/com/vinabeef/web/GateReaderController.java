@@ -66,6 +66,10 @@ public class GateReaderController {
                 (SELECT MAX(re.observed_at) FROM rfid_read_events re
                   WHERE re.reader_name IN (SELECT g.reader_name
                                            UNION SELECT gr.reader_name FROM gate_readers gr WHERE gr.gate_id = g.gate_id)) AS last_seen,
+                (SELECT gr.gate_id FROM gate_readers gr WHERE gr.reader_name = g.reader_name AND gr.gate_id <> g.gate_id) AS linked_to_gate_id,
+                (SELECT gr.side FROM gate_readers gr WHERE gr.reader_name = g.reader_name AND gr.gate_id <> g.gate_id) AS linked_side,
+                (SELECT lg.label FROM gate_readers gr JOIN gates lg ON lg.gate_id = gr.gate_id
+                  WHERE gr.reader_name = g.reader_name AND gr.gate_id <> g.gate_id) AS linked_to_label,
                 (SELECT COUNT(*) FROM movements m WHERE m.gate_id = g.gate_id) AS passage_count
             FROM gates g
             LEFT JOIN barns b ON g.barn_id = b.barn_id
@@ -150,11 +154,9 @@ public class GateReaderController {
             return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", "Gate '" + gateId + "' already exists."));
         }
 
-        for (String name : target.outer() == null ? List.of(target.primary()) : List.of(target.primary(), target.outer())) {
-            if (readerNameTaken(name, null)) {
-                return ResponseEntity.status(HttpStatus.CONFLICT)
-                        .body(Map.of("error", "Reader '" + name + "' is already registered to a gate."));
-            }
+        var nameError = checkReaderNames(target, null, true);
+        if (nameError != null) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", nameError));
         }
 
         jdbcTemplate.update("""
@@ -168,7 +170,12 @@ public class GateReaderController {
             jdbcTemplate.update("INSERT INTO gate_readers (reader_name, gate_id, side) VALUES (?, ?, 'OUTER')", target.outer(), gateId);
         }
 
-        return ResponseEntity.ok(Map.of("status", "REGISTERED", "gateId", gateId, "directionMode", target.mode().name()));
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("status", "REGISTERED");
+        result.put("gateId", gateId);
+        result.put("directionMode", target.mode().name());
+        addLinkNote(result, target, null);
+        return ResponseEntity.ok(result);
     }
 
     @GetMapping("/{gateId}")
@@ -191,6 +198,10 @@ public class GateReaderController {
                 (SELECT MAX(re.observed_at) FROM rfid_read_events re
                   WHERE re.reader_name IN (SELECT g.reader_name
                                            UNION SELECT gr.reader_name FROM gate_readers gr WHERE gr.gate_id = g.gate_id)) AS last_seen,
+                (SELECT gr.gate_id FROM gate_readers gr WHERE gr.reader_name = g.reader_name AND gr.gate_id <> g.gate_id) AS linked_to_gate_id,
+                (SELECT gr.side FROM gate_readers gr WHERE gr.reader_name = g.reader_name AND gr.gate_id <> g.gate_id) AS linked_side,
+                (SELECT lg.label FROM gate_readers gr JOIN gates lg ON lg.gate_id = gr.gate_id
+                  WHERE gr.reader_name = g.reader_name AND gr.gate_id <> g.gate_id) AS linked_to_label,
                 (SELECT COUNT(*) FROM movements m WHERE m.gate_id = g.gate_id) AS passage_count
             FROM gates g
             LEFT JOIN barns b ON g.barn_id = b.barn_id
@@ -278,14 +289,9 @@ public class GateReaderController {
         }
         var target = plan.target();
 
-        List<String> newNames = new ArrayList<>();
-        if (!target.primary().equals(currentPrimary)) newNames.add(target.primary());
-        if (target.outer() != null && !target.outer().equals(currentOuter)) newNames.add(target.outer());
-        for (String name : newNames) {
-            if (readerNameTaken(name, gateId)) {
-                return ResponseEntity.status(HttpStatus.CONFLICT)
-                        .body(Map.of("error", "Reader '" + name + "' is already registered to a gate."));
-            }
+        var nameError = checkReaderNames(target, gateId, !target.primary().equals(currentPrimary));
+        if (nameError != null) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", nameError));
         }
 
         String newLabel = req.getLabel() != null && !req.getLabel().isBlank() ? req.getLabel().trim() : (String) row.get("label");
@@ -317,7 +323,12 @@ public class GateReaderController {
             jdbcTemplate.update("DELETE FROM gate_crossing_candidates WHERE gate_id = ?", gateId);
         }
 
-        return ResponseEntity.ok(Map.of("status", "UPDATED", "gateId", gateId, "directionMode", target.mode().name()));
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("status", "UPDATED");
+        result.put("gateId", gateId);
+        result.put("directionMode", target.mode().name());
+        addLinkNote(result, target, gateId);
+        return ResponseEntity.ok(result);
     }
 
     /**
@@ -370,13 +381,66 @@ public class GateReaderController {
         return n != null && n > 0;
     }
 
-    /** True when another active gate already uses this reader name. {@code exceptGateId} is the gate being edited. */
-    private boolean readerNameTaken(String readerName, String exceptGateId) {
-        String except = exceptGateId != null ? exceptGateId : "";
-        Integer used = jdbcTemplate.queryForObject("""
-            SELECT (SELECT COUNT(*) FROM gates WHERE reader_name = ? AND retired_at IS NULL AND gate_id <> ?)
-                 + (SELECT COUNT(*) FROM gate_readers WHERE reader_name = ? AND gate_id <> ?)
-        """, Integer.class, readerName, except, readerName, except);
-        return used != null && used > 0;
+    /**
+     * A reader has two separate roles, and they do not exclude each other:
+     * <ul>
+     *   <li>its own RECORD: a row in the readers list (label, barn, firmware, last seen). One per reader name.</li>
+     *   <li>its place in a PAIR: the inner or outer reader of a bidirectional gate. One per reader name.</li>
+     * </ul>
+     * So C1C4 can have its own record and also be the outer reader of C0F8's gate. While the pair exists, reads of
+     * C1C4 count for the pair's gate (the pair is looked up first); the own record keeps showing the reader's
+     * status and applies again when the pair is removed.
+     *
+     * @return an error message, or null when the names are fine
+     */
+    private String checkReaderNames(GateReaderPlan.Target target, String gateId, boolean primaryChanged) {
+        if (primaryChanged) {
+            String record = otherRecordOf(target.primary(), gateId);
+            if (record != null) {
+                return "Reader '" + target.primary() + "' already has its own record (gate " + record + ").";
+            }
+        }
+        if (target.outer() != null && target.pairChanged()) {
+            for (String name : List.of(target.primary(), target.outer())) {
+                String pair = otherPairOf(name, gateId);
+                if (pair != null) {
+                    return "Reader '" + name + "' is already part of the reader pair of gate " + pair + ".";
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Tells the user when a reader's own record and its place in a pair overlap (allowed, but worth knowing). */
+    private void addLinkNote(Map<String, Object> result, GateReaderPlan.Target target, String gateId) {
+        if (target.outer() != null) {
+            String record = otherRecordOf(target.outer(), gateId);
+            if (record != null) {
+                result.put("note", "Reader '" + target.outer() + "' also has its own record (gate " + record
+                        + "). While it is the outer reader of this gate, its reads count here.");
+            }
+        } else {
+            String pair = otherPairOf(target.primary(), gateId);
+            if (pair != null) {
+                result.put("note", "Reader '" + target.primary() + "' is part of the reader pair of gate " + pair
+                        + ", so its reads count there while that pair exists.");
+            }
+        }
+    }
+
+    /** Gate id of ANOTHER active gate that has this reader as its own record, or null. */
+    private String otherRecordOf(String readerName, String exceptGateId) {
+        List<String> ids = jdbcTemplate.queryForList(
+                "SELECT gate_id FROM gates WHERE reader_name = ? AND retired_at IS NULL AND gate_id <> ?",
+                String.class, readerName, exceptGateId != null ? exceptGateId : "");
+        return ids.isEmpty() ? null : ids.get(0);
+    }
+
+    /** Gate id of ANOTHER gate whose inner/outer pair already uses this reader, or null. */
+    private String otherPairOf(String readerName, String exceptGateId) {
+        List<String> ids = jdbcTemplate.queryForList(
+                "SELECT gate_id FROM gate_readers WHERE reader_name = ? AND gate_id <> ?",
+                String.class, readerName, exceptGateId != null ? exceptGateId : "");
+        return ids.isEmpty() ? null : ids.get(0);
     }
 }

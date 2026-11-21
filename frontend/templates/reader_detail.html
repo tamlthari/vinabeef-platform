@@ -41,7 +41,10 @@
                 <span class="text-gray-400 block mb-1">Direction Mode</span>
                 <strong class="text-gray-800 font-mono">{{ reader.direction_mode }}</strong>
                 <div class="text-[11px] text-gray-400 mt-0.5">
-                    {% if reader.direction_mode == 'IN_ONLY' %}every read = animal returning
+                    {% if reader.linked_to_gate_id %}not used while linked: this reader is the {{ reader.linked_side | lower }} reader of
+                    <a href="/readers/{{ reader.linked_to_gate_id | urlencode }}" class="text-blue-600 hover:underline">{{ reader.linked_to_label or reader.linked_to_gate_id }}</a>,
+                    which decides the direction. It applies again if that pair is removed.
+                    {% elif reader.direction_mode == 'IN_ONLY' %}every read = animal returning
                     {% elif reader.direction_mode == 'OUT_ONLY' %}every read = animal out to pasture
                     {% elif reader.outer_reader_name %}delta time: inner {{ reader.reader_name }} / outer {{ reader.outer_reader_name }}
                     {% else %}presence toggle (single reader){% endif %}

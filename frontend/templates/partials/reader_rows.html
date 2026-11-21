@@ -18,7 +18,10 @@
 
     <!-- Direction rule of the gate -->
     <td class="px-5 py-3.5">
-        {% if r.direction_mode == 'IN_ONLY' %}
+        {% if r.linked_to_gate_id %}
+        <span class="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-gray-100 text-gray-600 border border-gray-300">Linked</span>
+        <div class="text-[10px] text-gray-400 mt-0.5">{{ r.linked_side | lower }} reader of {{ r.linked_to_label or r.linked_to_gate_id }}: its reads count there</div>
+        {% elif r.direction_mode == 'IN_ONLY' %}
         <span class="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">IN only</span>
         <div class="text-[10px] text-gray-400 mt-0.5">every read = returning</div>
         {% elif r.direction_mode == 'OUT_ONLY' %}
