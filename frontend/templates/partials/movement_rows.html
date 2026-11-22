@@ -1,29 +1,46 @@
 {% if error %}
 <tr>
-    <td colspan="5" class="py-8 text-center text-rose-600">Unable to refresh gate passage stream: {{ error }}</td>
+  <td colspan="5" class="py-8 text-center text-rose-600">
+    Unable to refresh gate passage stream: {{ error }}
+  </td>
 </tr>
-{% else %}
-{% for m in movements %}
+{% else %} {% for m in movements %}
 <tr class="hover:bg-gray-50 transition">
-    <td class="px-4 py-2.5 font-mono text-gray-400">{{ m.movementId[:8] }}...</td>
-    <td class="px-4 py-2.5 font-bold text-gray-800">{{ m.animalId }}</td>
-    <td class="px-4 py-2.5 text-gray-600">{{ m.gateId }}</td>
-    <td class="px-4 py-2.5">
-        {% if m.direction == 'IN' %}
-        <span class="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-            IN
-        </span>
-        {% else %}
-        <span class="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
-            OUT
-        </span>
-        {% endif %}
-    </td>
-    <td class="px-4 py-2.5 font-mono text-gray-500">{{ m.occurredAt }}</td>
+  <td class="px-4 py-2.5 font-mono text-gray-400">{{ m.movementId[:8] }}...</td>
+  <td class="px-4 py-2.5 font-bold text-gray-800">{{ m.animalId }}</td>
+  <td class="px-4 py-2.5" title="Gate key {{ m.gateId }}">
+    <div class="font-mono font-semibold text-gray-800">
+      {%- if m.firstReader and m.readerName and m.firstReader != m.readerName
+      -%} {{ m.firstReader }} &rarr; {{ m.readerName }} {%- elif m.readerName or
+      m.gateReader -%} {{ m.readerName or m.gateReader }} {%- else -%} {{
+      m.gateLabel or m.gateId }} {%- endif -%}
+    </div>
+    <div class="text-[11px] text-gray-400">
+      {{ m.gateLabel or m.gateId }}{% if m.barnCode %} &middot; {{ m.barnCode
+      }}{% endif %}
+    </div>
+  </td>
+  <td class="px-4 py-2.5">
+    {% if m.direction == 'IN' %}
+    <span
+      class="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200"
+    >
+      IN
+    </span>
+    {% else %}
+    <span
+      class="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200"
+    >
+      OUT
+    </span>
+    {% endif %}
+  </td>
+  <td class="px-4 py-2.5 font-mono text-gray-500 whitespace-nowrap">
+    {{ m.occurredAt | localtime }}
+  </td>
 </tr>
 {% else %}
 <tr>
-    <td colspan="5" class="py-8 text-center text-gray-400">No data available</td>
+  <td colspan="5" class="py-8 text-center text-gray-400">No data available</td>
 </tr>
-{% endfor %}
-{% endif %}
+{% endfor %} {% endif %}

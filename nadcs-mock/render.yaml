@@ -1,0 +1,16 @@
+# Render Blueprint. Put this file in the ROOT of the repository Render deploys from.
+# If nadcs-mock/ is a folder inside the VinaBeef repo, keep `rootDir`; if you made a repo of its own, delete the rootDir line.
+services:
+  - type: web
+    name: nadcs-mock
+    runtime: python
+    plan: free                 # spins down after 15 min idle (first request then takes ~1 min); a paid plan stays awake
+    rootDir: nadcs-mock
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: NADCS_MOCK_API_KEYS
+        generateValue: true    # Render generates a secret; copy it from the dashboard into the VinaBeef backend as NADCS_API_KEY
+      - key: PYTHON_VERSION
+        value: 3.12.7

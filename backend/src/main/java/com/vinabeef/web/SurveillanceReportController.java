@@ -115,6 +115,8 @@ public class SurveillanceReportController {
         out.put("nadcs", Map.of(
                 "mode", nadcs.isLive() ? "LIVE" : "SIMULATION",
                 "endpoint", nadcs.endpoint(),
+                "testServer", nadcs.isTestServer(),
+                "targetHost", nadcs.isTestServer() ? nadcs.targetHost() : "",
                 "apiKeyConfigured", nadcs.apiKeyConfigured()));
         out.put("transmissions", transmissions);
         return ResponseEntity.ok(out);

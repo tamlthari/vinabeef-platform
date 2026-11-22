@@ -1635,7 +1635,8 @@ async def htmx_surveillance_transmit(
 
     headers = get_auth_headers(user)
     banner_msg, banner_kind = "", "ok"
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    # a sleeping free-tier test server needs about a minute to wake (the backend waits for it), so wait longer than usual here
+    async with httpx.AsyncClient(timeout=150.0) as client:
         tx_res = await client.post(
             f"{BACKEND_BASE_URL}/surveillance/transmit",
             json={"targetSystem": target_system, "reportType": report_type, "farmScope": farm_scope, "payloadFormat": payload_format},
@@ -1650,6 +1651,8 @@ async def htmx_surveillance_transmit(
             body = tx_res.json()
             banner_msg = body.get("responseSummary", "Transmission recorded.")
             banner_kind = {"DELIVERED": "ok", "SIMULATED": "warn"}.get(body.get("status"), "error")
+            if banner_kind == "ok" and "via test server" in banner_msg:
+                banner_kind = "info"          # accepted by the test server: not a delivery to the agency
         else:
             banner_msg, banner_kind = extract_backend_error(tx_res, "The transmission failed."), "error"
 

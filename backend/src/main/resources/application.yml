@@ -49,3 +49,10 @@ nadcs:
   timeout-ms: ${NADCS_TIMEOUT_MS:5000}
   # hosts allowed over plain http (testing with scripts/mock_nadcs_server.py): e.g. localhost,127.0.0.1
   insecure-hosts: ${NADCS_INSECURE_HOSTS:}
+  # TEST SERVER. While the agency's real API is not available: `endpoint` above stays the agency's address as the nominal
+  # destination (shown on screen and in the log), and this says where the HTTP call REALLY goes, e.g. the nadcs-mock
+  # service on Render: https://nadcs-mock.onrender.com/v2/surveillance/herd-health . Empty = the call goes to `endpoint`.
+  # The result and the log then say "via test server <host>", so it can never be taken for a delivery to the agency.
+  target-url: ${NADCS_TARGET_URL:}
+  # a sleeping free-tier host is woken first (GET /health) and given this long to answer; 0 = no wake-up call
+  warmup-timeout-ms: ${NADCS_WARMUP_TIMEOUT_MS:70000}

@@ -43,6 +43,14 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-VinaBeefProd2026!}
       SPRING_DATA_REDIS_HOST: redis
       SPRING_DATA_REDIS_PORT: 6379
+      # National disease-control reporting (NADCS). Put real values in a `.env` file next to this file (never in git);
+      # compose substitutes them here. SIMULATION (default) sends nothing. See HOW-TO-APPLY-6.md / nadcs-mock/README.md.
+      NADCS_MODE: ${NADCS_MODE:-SIMULATION}
+      NADCS_ENDPOINT: ${NADCS_ENDPOINT:-https://api.nadcs.dah.gov.vn/v2/surveillance/herd-health}
+      NADCS_TARGET_URL: ${NADCS_TARGET_URL:-}
+      NADCS_API_KEY: ${NADCS_API_KEY:-}
+      NADCS_TIMEOUT_MS: ${NADCS_TIMEOUT_MS:-5000}
+      NADCS_WARMUP_TIMEOUT_MS: ${NADCS_WARMUP_TIMEOUT_MS:-70000}
 
   frontend:
     build: ./frontend
