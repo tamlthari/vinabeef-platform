@@ -4,6 +4,19 @@
 {% block content %}
 <div class="space-y-6">
 
+    <!-- What the transmit button really does -->
+    {% if nadcs.mode == 'LIVE' %}
+    <div class="px-5 py-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs">
+        <strong>LIVE mode.</strong> Transmit sends the report to <span class="font-mono">{{ nadcs.endpoint }}</span> and the log shows what the agency answered.
+    </div>
+    {% else %}
+    <div class="px-5 py-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-xs">
+        <strong>SIMULATION mode.</strong> Transmit builds the report and records it as <strong>SIMULATED</strong>; <u>nothing is sent</u> to the national system.
+        An administrator switches this on the server (<span class="font-mono">NADCS_MODE=LIVE</span>, endpoint and API key) once the Department of Animal Health has issued credentials.
+        The endpoint below is a placeholder until then.
+    </div>
+    {% endif %}
+
     <!-- Herd Health & Surveillance KPI Strip -->
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         <div class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
@@ -13,7 +26,7 @@
         <div class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
             <div class="text-[11px] font-semibold text-gray-400 uppercase">Vaccinated Coverage</div>
             <div class="text-2xl font-extrabold text-emerald-600 font-mono mt-1">{{ metrics.vaccinationCoveragePct }}%</div>
-            <div class="text-[10px] text-gray-400 font-mono">{{ "{:,}".format(metrics.vaccinatedHerd) }} immunized</div>
+            <div class="text-[10px] text-gray-400 font-mono">{{ "{:,}".format(metrics.vaccinatedHerd) }} with a vaccination record</div>
         </div>
         <div class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
             <div class="text-[11px] font-semibold text-gray-400 uppercase">Under Treatment</div>
@@ -27,6 +40,30 @@
             <div class="text-[11px] font-semibold text-gray-400 uppercase">Recorded Transfers</div>
             <div class="text-2xl font-extrabold text-blue-600 font-mono mt-1">{{ metrics.totalTransfers }}</div>
         </div>
+    </div>
+
+    <!-- Data consistency: the animals and the clinical / vaccination records must agree before anything is reported -->
+    <div class="bg-white border border-gray-200 rounded-lg shadow-sm">
+        <div class="px-5 py-3 border-b border-gray-100 flex flex-wrap justify-between items-center gap-2">
+            <h3 class="text-sm font-bold text-gray-900">Data consistency</h3>
+            <span class="text-[11px] text-gray-400">{{ vaccinated_definition }}</span>
+        </div>
+        <ul class="divide-y divide-gray-100 text-xs">
+            {% for c in data_checks %}
+            <li class="px-5 py-2.5 flex items-center justify-between gap-4">
+                <span class="text-gray-700">{{ c.label }}</span>
+                <span class="font-mono font-bold px-2 py-0.5 rounded border whitespace-nowrap
+                    {% if c.count == 0 %}bg-emerald-50 text-emerald-700 border-emerald-200
+                    {% elif c.severity == 'error' %}bg-rose-50 text-rose-700 border-rose-200
+                    {% elif c.severity == 'warning' %}bg-amber-50 text-amber-800 border-amber-200
+                    {% else %}bg-gray-50 text-gray-600 border-gray-200{% endif %}">
+                    {{ "{:,}".format(c.count) }}{% if c.count == 0 %} &#10003;{% endif %}
+                </span>
+            </li>
+            {% else %}
+            <li class="px-5 py-4 text-gray-400">The checks could not be loaded.</li>
+            {% endfor %}
+        </ul>
     </div>
 
     <!-- Two-Column Operations: Left = Multi-Format Report Generator, Right = External NADCS API Dispatch -->
@@ -54,10 +91,8 @@
                     <div>
                         <label class="block font-semibold text-gray-700 mb-1">Facility Scope</label>
                         <select name="farm_id" class="w-full border border-gray-300 rounded-md px-3 py-2 bg-white">
-                            <option value="ALL">All Facilities (Enterprise)</option>
-                            <option value="FARM-DAK-LAK">Dak Lak Cattle Station</option>
-                            <option value="FARM-GIA-LAI">Gia Lai Grazing Facility</option>
-                            <option value="FARM-DONG-NAI">Dong Nai Feedlot</option>
+                            {% if user.role in ['SYSTEM_ADMIN', 'EXECUTIVE'] %}<option value="ALL">All Facilities (Enterprise)</option>{% endif %}
+                            {% for f in farms %}<option value="{{ f.farmId }}">{{ f.farmName }}</option>{% endfor %}
                         </select>
                     </div>
                     <div>
@@ -105,9 +140,9 @@
                 </div>
 
                 <div>
-                    <label class="block font-semibold text-gray-700 mb-1">External REST Endpoint URL</label>
-                    <input type="text" name="endpoint_url" value="https://api.nadcs.dah.gov.vn/v2/surveillance/herd-health"
-                           class="w-full border border-gray-300 rounded-md px-3 py-2 font-mono text-gray-700">
+                    <label class="block font-semibold text-gray-700 mb-1">Destination <span class="font-normal text-gray-400">(server setting, not editable here)</span></label>
+                    <div class="w-full border border-gray-200 bg-gray-50 rounded-md px-3 py-2 font-mono text-gray-600 break-all">{{ nadcs.endpoint or 'not configured' }}</div>
+                    <div class="text-[10px] text-gray-400 mt-1">API key: {% if nadcs.apiKeyConfigured %}configured{% else %}not configured{% endif %} &middot; mode: {{ nadcs.mode }}</div>
                 </div>
 
                 <div class="grid grid-cols-2 gap-3">
@@ -123,17 +158,15 @@
                     <div>
                         <label class="block font-semibold text-gray-700 mb-1">Facility Scope</label>
                         <select name="farm_scope" class="w-full border border-gray-300 rounded-md px-3 py-2 bg-white">
-                            <option value="ALL">All Facilities</option>
-                            <option value="FARM-DAK-LAK">Dak Lak Station</option>
-                            <option value="FARM-GIA-LAI">Gia Lai Facility</option>
-                            <option value="FARM-DONG-NAI">Dong Nai Feedlot</option>
+                            {% if user.role in ['SYSTEM_ADMIN', 'EXECUTIVE'] %}<option value="ALL">All Facilities</option>{% endif %}
+                            {% for f in farms %}<option value="{{ f.farmId }}">{{ f.farmName }}</option>{% endfor %}
                         </select>
                     </div>
                 </div>
 
                 <div class="pt-1">
                     <button type="submit" class="w-full py-2.5 px-4 bg-[#2f80ed] hover:bg-blue-600 text-white rounded-md font-semibold shadow-sm transition">
-                        Transmit Data to National Surveillance API
+                        {% if nadcs.mode == 'LIVE' %}Transmit to the National Surveillance API{% else %}Run transmit (simulation, nothing is sent){% endif %}
                     </button>
                 </div>
             </form>

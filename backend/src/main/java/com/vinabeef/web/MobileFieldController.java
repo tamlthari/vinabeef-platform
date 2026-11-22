@@ -75,9 +75,13 @@ public class MobileFieldController {
 
         List<Map<String, Object>> barns = new ArrayList<>();
         for (Map<String, Object> b : jdbcTemplate.queryForList("""
-            SELECT b.barn_id, b.code, b.farm_id, f.name AS farm_name, b.current_headcount
+            SELECT b.barn_id, b.code, b.farm_id, f.name AS farm_name,
+                   COALESCE(c.in_barn_count, 0)     AS current_headcount,
+                   COALESCE(c.assigned_count, 0)    AS assigned_count,
+                   COALESCE(c.out_pasture_count, 0) AS out_pasture_count
             FROM barns b
             JOIN farms f ON b.farm_id = f.farm_id
+            LEFT JOIN v_barn_counts c ON c.barn_id = b.barn_id
             ORDER BY f.farm_id, b.code
         """)) {
             if (scope.canAccessBarn(String.valueOf(b.get("barn_id")), String.valueOf(b.get("farm_id")))) {

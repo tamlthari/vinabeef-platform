@@ -64,12 +64,14 @@ FROM generate_series(1, 25000) AS c
 ON CONFLICT (assignment_id) DO UPDATE
 SET tag_id = EXCLUDED.tag_id;
 
--- 7. Seed Presence States (75% IN_BARN, 25% OUT_PASTURE)
+-- 7. Seed Presence States (75% IN_BARN, 25% OUT_PASTURE in EVERY barn)
+--    Cattle c goes to barn ((c-1) % 120) + 1, so c % 4 is the same for every animal of one barn and `c % 4 = 0` put
+--    ALL cattle of every 4th barn (e.g. DL-BARN-008) at pasture. The position inside the barn, (c-1)/120, spreads them evenly.
 INSERT INTO presence_states (animal_id, current_barn_id, presence_status, updated_at)
 SELECT
     'VB-' || lpad(c::text, 6, '0') AS animal_id,
     'BARN-' || (ARRAY['DL', 'GL', 'DN'])[((((c - 1) % 120)) / 40) + 1] || '-' || lpad(((((c - 1) % 120) % 40) + 1)::text, 3, '0') AS current_barn_id,
-    CASE WHEN (c % 4) = 0 THEN 'OUT_PASTURE' ELSE 'IN_BARN' END AS presence_status,
+    CASE WHEN (((c - 1) / 120) % 4) = 3 THEN 'OUT_PASTURE' ELSE 'IN_BARN' END AS presence_status,
     CURRENT_TIMESTAMP
 FROM generate_series(1, 25000) AS c
 ON CONFLICT (animal_id) DO NOTHING;

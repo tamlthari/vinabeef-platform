@@ -29,6 +29,7 @@ public class CattleManagementController {
 
     private final JdbcTemplate jdbcTemplate;
     private final RbacScopeService rbacScopeService;
+    private final ReportClock clock;
 
     @Data
     public static class CreateCattleRequest {
@@ -79,105 +80,47 @@ public class CattleManagementController {
     public ResponseEntity<?> listCattle(
             @RequestParam(required = false, defaultValue = "") String q,
             @RequestParam(required = false, defaultValue = "1") int page,
-            @RequestParam(required = false, defaultValue = "100") int size) {
+            @RequestParam(required = false, defaultValue = "100") int size,
+            @RequestParam(required = false, defaultValue = "") String sort,
+            @RequestParam(required = false, defaultValue = "") String dir) {
         try {
             var scope = rbacScopeService.getCurrentScope();
             int safePage = Math.max(1, page);
             int safeSize = Math.min(Math.max(1, size), 100);
             int offset = (safePage - 1) * safeSize;
 
-            StringBuilder scopeWhere = new StringBuilder(" WHERE a.lifecycle_status <> 'ARCHIVED' ");
-            List scopeParams = new ArrayList();
-
-            if (scope.isFarmScoped()) {
-                scopeWhere.append(" AND b.farm_id = ? ");
-                scopeParams.add(scope.farmId());
+            ReportQueries.Scope visible;
+            if (scope.isGlobal()) {
+                visible = ReportQueries.Scope.ALL;
+            } else if (scope.isFarmScoped()) {
+                visible = ReportQueries.Scope.farm(scope.farmId());
             } else if (scope.isBarnScoped()) {
-                if (scope.barnIds().isEmpty()) {
-                    return ResponseEntity.ok()
-                            .header("X-Total-Count", "0")
-                            .header("Access-Control-Expose-Headers", "X-Total-Count")
-                            .body(List.of());
-                }
-                String placeholders = String.join(",", Collections.nCopies(scope.barnIds().size(), "?"));
-                scopeWhere.append(" AND a.assigned_barn_id IN (").append(placeholders).append(") ");
-                scopeParams.addAll(scope.barnIds());
+                visible = ReportQueries.Scope.barns(scope.barnIds());
+            } else {
+                visible = ReportQueries.Scope.NONE;
+            }
+            String sortKey = SortSpec.effectiveKey(sort, ListQueries.CATTLE_SORT, "created");
+            String sortDir = SortSpec.effectiveDir(sort, dir, ListQueries.CATTLE_SORT, "created", "desc");
+            if (visible.seesNothing()) {
+                return ResponseEntity.ok()
+                        .header("X-Total-Count", "0")
+                        .header("X-Sort-Key", sortKey)
+                        .header("X-Sort-Dir", sortDir)
+                        .header("Access-Control-Expose-Headers", "X-Total-Count, X-Sort-Key, X-Sort-Dir")
+                        .body(List.of());
             }
 
-            String trimmed = q.trim().toLowerCase();
-            if (!trimmed.isEmpty()) {
-                String pattern = "%" + trimmed + "%";
-                scopeWhere.append("""
-                    AND (
-                        LOWER(a.animal_id) LIKE ?
-                        OR LOWER(COALESCE(a.breed, '')) LIKE ?
-                        OR LOWER(COALESCE(a.health_status, '')) LIKE ?
-                        OR LOWER(COALESCE(b.code, '')) LIKE ?
-                        OR LOWER(COALESCE(f.name, '')) LIKE ?
-                        OR EXISTS (
-                            SELECT 1 FROM tag_assignments ta 
-                            JOIN rfid_tags rt ON ta.tag_id = rt.tag_id 
-                            WHERE ta.animal_id = a.animal_id AND LOWER(rt.epc_value) LIKE ?
-                        )
-                    )
-                """);
-                for (int i = 0; i < 6; i++) {
-                    scopeParams.add(pattern);
-                }
-            }
+            var count = ListQueries.cattleCount(visible, q);
+            Long totalCount = jdbcTemplate.queryForObject(count.sql(), Long.class, count.params().toArray());
 
-            Long totalCount = jdbcTemplate.queryForObject("""
-                SELECT COUNT(*)
-                FROM animals a
-                LEFT JOIN barns b ON a.assigned_barn_id = b.barn_id
-                LEFT JOIN farms f ON b.farm_id = f.farm_id
-            """ + scopeWhere, Long.class, scopeParams.toArray());
-
-            List pageParams = new ArrayList(scopeParams);
-            pageParams.add(safeSize);
-            pageParams.add(offset);
-
-            String fullSql = """
-                WITH page AS (
-                    SELECT a.animal_id, a.assigned_barn_id, a.lifecycle_status,
-                           COALESCE(a.health_status, 'HEALTHY') AS health_status, a.breed, a.weight_kg
-                    FROM animals a
-                    LEFT JOIN barns b ON a.assigned_barn_id = b.barn_id
-                    LEFT JOIN farms f ON b.farm_id = f.farm_id
-            """ + scopeWhere + """
-                    ORDER BY a.animal_id ASC
-                    LIMIT ? OFFSET ?
-                )
-                SELECT 
-                    a.animal_id,
-                    a.assigned_barn_id,
-                    a.lifecycle_status,
-                    a.health_status,
-                    COALESCE(a.breed, 'Brahman Cross') AS breed,
-                    COALESCE(a.weight_kg, 420.0) AS weight_kg,
-                    b.code AS barn_code,
-                    f.farm_id,
-                    f.name AS farm_name,
-                    COALESCE(ps.presence_status, 'OUT_PASTURE') AS presence_status,
-                    (SELECT rt.epc_value 
-                     FROM tag_assignments ta 
-                     JOIN rfid_tags rt ON ta.tag_id = rt.tag_id 
-                     WHERE ta.animal_id = a.animal_id AND ta.valid_to IS NULL 
-                     ORDER BY ta.valid_from DESC LIMIT 1) AS active_tag_epc,
-                    (SELECT COUNT(*) FROM tag_assignments ta WHERE ta.animal_id = a.animal_id AND ta.valid_to IS NULL) AS active_tag_count,
-                    (SELECT COUNT(*) FROM health_records hr WHERE hr.animal_id = a.animal_id AND hr.record_type = 'VACCINATION') AS vaccination_count
-                FROM page a
-                LEFT JOIN barns b ON a.assigned_barn_id = b.barn_id
-                LEFT JOIN farms f ON b.farm_id = f.farm_id
-                LEFT JOIN presence_states ps ON a.animal_id = ps.animal_id
-                ORDER BY a.animal_id ASC
-            """;
-
-            var cattle = jdbcTemplate.queryForList(fullSql, pageParams.toArray());
+            var pageQuery = ListQueries.cattlePage(visible, q, sort, dir, safeSize, offset);
+            var cattle = jdbcTemplate.queryForList(pageQuery.sql(), pageQuery.params().toArray());
 
             return ResponseEntity.ok()
                     .header("X-Total-Count", String.valueOf(totalCount != null ? totalCount : cattle.size()))
-                    .header("Access-Control-Expose-Headers", "X-Total-Count")
+                    .header("X-Sort-Key", sortKey)
+                    .header("X-Sort-Dir", sortDir)
+                    .header("Access-Control-Expose-Headers", "X-Total-Count, X-Sort-Key, X-Sort-Dir")
                     .body(cattle);
 
         } catch (Exception e) {
@@ -305,12 +248,27 @@ public class CattleManagementController {
             ORDER BY t.transferred_at DESC
         """, animalId);
 
-        Integer todayMovements = jdbcTemplate.queryForObject("""
-            SELECT COUNT(*) FROM movements 
-            WHERE animal_id = ? AND occurred_at >= CURRENT_DATE
-        """, Integer.class, animalId);
+        // IN / OUT passes: lifetime and the farm's local day (CURRENT_DATE would cut the day at UTC midnight)
+        var today = clock.today();
+        var passes = jdbcTemplate.queryForMap("""
+            SELECT COUNT(*) FILTER (WHERE direction = 'IN')  AS in_count,
+                   COUNT(*) FILTER (WHERE direction = 'OUT') AS out_count,
+                   COUNT(*) FILTER (WHERE direction = 'IN'  AND occurred_at >= ? AND occurred_at < ?) AS today_in,
+                   COUNT(*) FILTER (WHERE direction = 'OUT' AND occurred_at >= ? AND occurred_at < ?) AS today_out,
+                   MAX(occurred_at) AS last_pass_at
+            FROM movements
+            WHERE animal_id = ?
+        """, java.sql.Timestamp.from(today.fromInclusive()), java.sql.Timestamp.from(today.toExclusive()),
+                java.sql.Timestamp.from(today.fromInclusive()), java.sql.Timestamp.from(today.toExclusive()), animalId);
 
-        profile.put("todayMovements", todayMovements != null ? todayMovements : 0);
+        long todayIn = passes.get("today_in") instanceof Number n ? n.longValue() : 0L;
+        long todayOut = passes.get("today_out") instanceof Number n ? n.longValue() : 0L;
+        profile.put("todayMovements", todayIn + todayOut);
+        profile.put("inCount", passes.get("in_count"));
+        profile.put("outCount", passes.get("out_count"));
+        profile.put("todayIn", todayIn);
+        profile.put("todayOut", todayOut);
+        profile.put("lastPassAt", passes.get("last_pass_at"));
         String activeEpc = "Unassigned";
         for (Map t : tags) {
             if (t.get("valid_to") == null) {

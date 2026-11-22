@@ -12,7 +12,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -48,14 +47,22 @@ public class AuthController {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", "Invalid credentials"));
         }
 
-        String role = user.getRole();
-        String farmId = user.getAssignedFarmIds() != null && !user.getAssignedFarmIds().isEmpty()
-                ? user.getAssignedFarmIds().iterator().next()
-                : "ALL";
+        if (!user.isEnabled()) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of("error", "This account is disabled. Ask an administrator to enable it."));
+        }
 
-        List<String> farmScopes = user.getAssignedFarmIds() != null && !user.getAssignedFarmIds().isEmpty()
-                ? new ArrayList<>(user.getAssignedFarmIds())
-                : List.of();
+        String role = user.getRole();
+
+        // users.farm_id is what RbacScopeService enforces on every request, so it is also what the login reports.
+        // Login used to read user_farm_scopes instead; accounts that only had users.farm_id (manager_dongnai and
+        // everything created from the Users page) logged in with farm "ALL" and saw empty pages.
+        List<String> farmRows = jdbcTemplate.queryForList(
+                "SELECT farm_id FROM users WHERE username = ? AND farm_id IS NOT NULL", String.class, username);
+        String farmId = !farmRows.isEmpty() ? farmRows.get(0)
+                : (user.getAssignedFarmIds() != null && !user.getAssignedFarmIds().isEmpty()
+                        ? user.getAssignedFarmIds().iterator().next() : "ALL");
+        List<String> farmScopes = "ALL".equals(farmId) ? List.of() : List.of(farmId);
 
         List<String> assignedBarns = List.of();
         if ("BARN_SUPERVISOR".equals(role)) {

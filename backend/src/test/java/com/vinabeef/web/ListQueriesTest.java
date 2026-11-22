@@ -1,0 +1,91 @@
+package com.vinabeef.web;
+
+import org.junit.jupiter.api.Test;
+
+import java.time.Instant;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class ListQueriesTest {
+
+    private static final Instant DAY_START = Instant.parse("2026-11-20T17:00:00Z");
+    private static final Instant DAY_END = Instant.parse("2026-11-21T15:23:01Z");
+
+    private static void assertBound(ReportQueries.Query q) {
+        int placeholders = 0;
+        for (char c : q.sql().toCharArray()) {
+            if (c == '?') placeholders++;
+        }
+        assertEquals(placeholders, q.params().size(), "every ? needs exactly one parameter:\n" + q.sql());
+    }
+
+    @Test
+    void cattleStatementsAreFullyBound() {
+        var farm = ReportQueries.Scope.farm("FARM-DONG-NAI");
+        assertBound(ListQueries.cattleCount(farm, "vb-1"));
+        assertBound(ListQueries.cattlePage(farm, "vb-1", "barn", "desc", 100, 200));
+        assertBound(ListQueries.cattlePage(ReportQueries.Scope.ALL, "", null, null, 100, 0));
+        assertBound(ListQueries.cattlePage(ReportQueries.Scope.barns(List.of("B1", "B2")), "", "weight", "asc", 100, 0));
+    }
+
+    @Test
+    void cattleDefaultIsNewestFirstWithAStableTieBreak() {
+        var q = ListQueries.cattlePage(ReportQueries.Scope.ALL, "", null, null, 100, 0);
+
+        assertTrue(q.sql().contains("ROW_NUMBER() OVER (ORDER BY a.created_at DESC NULLS LAST, a.animal_id ASC)"));
+        assertTrue(q.sql().contains("ORDER BY a.rn"));
+    }
+
+    @Test
+    void cattleSortKeysAreFixedSqlAndNeverRequestText() {
+        var q = ListQueries.cattlePage(ReportQueries.Scope.ALL, "", "id'; DROP TABLE animals;--", "desc", 100, 0);
+
+        assertFalse(q.sql().contains("DROP"));
+        assertTrue(ListQueries.cattlePage(ReportQueries.Scope.ALL, "", "presence", "asc", 100, 0).sql()
+                .contains("COALESCE(ps.presence_status, 'OUT_PASTURE') ASC NULLS LAST"));
+    }
+
+    @Test
+    void archivedCattleAreNeverListed() {
+        assertTrue(ListQueries.cattleCount(ReportQueries.Scope.ALL, "").sql().contains("a.lifecycle_status <> 'ARCHIVED'"));
+    }
+
+    @Test
+    void searchWildcardsAreEscaped() {
+        var q = ListQueries.cattleCount(ReportQueries.Scope.ALL, "100%_x");
+
+        assertEquals(6, q.params().size());
+        assertTrue(q.params().stream().allMatch(p -> "%100\\%\\_x%".equals(p)));
+    }
+
+    @Test
+    void readerStatementIsBoundInTheOrderTheMarksAppear() {
+        var q = ListQueries.readers(ReportQueries.Scope.farm("F"), "c0f8", "in", "desc", DAY_START, DAY_END);
+
+        assertBound(q);
+        // four "today" bounds first, then the farm, then five search patterns
+        assertEquals(4 + 1 + 5, q.params().size());
+        assertEquals(java.sql.Timestamp.from(DAY_START), q.params().get(0));
+        assertEquals(java.sql.Timestamp.from(DAY_END), q.params().get(1));
+        assertEquals("F", q.params().get(4));
+    }
+
+    @Test
+    void readerDefaultIsNewestFirstAndRetiredReadersAreHidden() {
+        var q = ListQueries.readers(ReportQueries.Scope.ALL, "", null, null, DAY_START, DAY_END);
+
+        assertTrue(q.sql().contains("g.retired_at IS NULL"));
+        assertTrue(q.sql().endsWith("ORDER BY g.created_at DESC NULLS LAST, g.gate_id ASC"));
+    }
+
+    @Test
+    void readerCanBeSortedByTheSeenTimeAndByInOutCounts() {
+        assertTrue(ListQueries.readers(ReportQueries.Scope.ALL, "", "last_seen", "desc", DAY_START, DAY_END).sql()
+                .endsWith("ORDER BY last_seen DESC NULLS LAST, g.gate_id ASC"));
+        assertTrue(ListQueries.readers(ReportQueries.Scope.ALL, "", "out", "asc", DAY_START, DAY_END).sql()
+                .endsWith("ORDER BY mc.out_count ASC NULLS LAST, g.gate_id ASC"));
+    }
+}

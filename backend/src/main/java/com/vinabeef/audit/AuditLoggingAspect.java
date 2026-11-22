@@ -16,8 +16,9 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 import tools.jackson.databind.ObjectMapper;
 
 import java.lang.reflect.Method;
+import java.sql.Timestamp;
 import java.time.Instant;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 
@@ -63,11 +64,11 @@ public class AuditLoggingAspect {
         } finally {
             try {
                 String auditId = UUID.randomUUID().toString();
-                Map<String, Object> details = new HashMap<>();
+                Map<String, Object> details = new LinkedHashMap<>();
                 details.put("method", method.getName());
                 details.put("executionTimeMs", System.currentTimeMillis() - startTime);
                 details.put("clientIp", clientIp);
-                details.put("arguments", joinPoint.getArgs());
+                details.put("arguments", AuditPayload.sanitize(joinPoint.getArgs(), this::beanToMap));
                 if (errorMessage != null) {
                     details.put("error", errorMessage);
                 }
@@ -77,13 +78,29 @@ public class AuditLoggingAspect {
                 jdbcTemplate.update("""
                     INSERT INTO audit_entries (audit_id, actor_id, action, target, outcome, details, event_at)
                     VALUES (?, ?, ?, ?, ?, ?::jsonb, ?)
-                """, auditId, actorId, auditAnnotation.action(), auditAnnotation.targetType(), outcome, detailsJson, Instant.now());
+                """, auditId, actorId, auditAnnotation.action(), auditAnnotation.targetType(), outcome, detailsJson,
+                        Timestamp.from(Instant.now()));   // pgjdbc cannot bind java.time.Instant: that made every insert fail
 
                 log.info("[AUDIT] Actor: '{}' [{}] | Action: '{}' on '{}' | Outcome: {}",
                         actorId, actorRole, auditAnnotation.action(), auditAnnotation.targetType(), outcome);
             } catch (Exception ex) {
-                log.error("Failed to persist audit log entry: {}", ex.getMessage());
+                log.error("Failed to persist audit log entry for {} by {}: {}", auditAnnotation.action(), actorId,
+                        rootMessage(ex), ex);
             }
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> beanToMap(Object bean) {
+        return objectMapper.convertValue(bean, Map.class);
+    }
+
+    /** The log used to stop at "bad SQL grammar" and hide the driver's reason. */
+    private static String rootMessage(Throwable t) {
+        Throwable root = t;
+        while (root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+        }
+        return root.getClass().getSimpleName() + ": " + root.getMessage();
     }
 }

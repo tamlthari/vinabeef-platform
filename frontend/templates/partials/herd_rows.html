@@ -28,16 +28,24 @@
         <div class="text-[10px] text-gray-400 mt-0.5">{{ c.farm_name or '' }}</div>
     </td>
 
-    <!-- Status Pill -->
+    <!-- Presence: where the last gate pass left the animal -->
     <td class="px-5 py-3.5">
-        {% if c.lifecycle_status == 'ACTIVE' %}
-        <span class="inline-block px-3 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
-            Active
-        </span>
+        {% if c.presence_status == 'IN_BARN' %}
+        <span class="inline-block px-3 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">In barn</span>
         {% else %}
-        <span class="inline-block px-3 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">
-            {{ c.lifecycle_status }}
-        </span>
+        <span class="inline-block px-3 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">At pasture</span>
+        {% endif %}
+        {% if c.lifecycle_status and c.lifecycle_status != 'ACTIVE' %}
+        <div class="text-[10px] text-gray-400 mt-0.5">{{ c.lifecycle_status }}</div>
+        {% endif %}
+    </td>
+
+    <!-- Health -->
+    <td class="px-5 py-3.5">
+        {% if c.health_status == 'HEALTHY' %}
+        <span class="inline-block px-3 py-0.5 rounded-full text-[11px] font-medium bg-gray-50 text-gray-600 border border-gray-200">Healthy</span>
+        {% else %}
+        <span class="inline-block px-3 py-0.5 rounded-full text-[11px] font-medium bg-rose-50 text-rose-700 border border-rose-200">{{ (c.health_status or 'UNKNOWN') | replace('_', ' ') | title }}</span>
         {% endif %}
     </td>
 
@@ -55,6 +63,20 @@
             <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
             <span class="font-semibold text-gray-700 font-mono">{{ c.vaccination_count }}</span>
         </div>
+    </td>
+
+    <!-- Gate passes of this animal -->
+    <td class="px-5 py-3.5 font-mono">
+        <span class="text-emerald-600 font-bold">{{ c.in_count | default(0) }}</span>
+        <span class="text-gray-300">/</span>
+        <span class="text-amber-600 font-bold">{{ c.out_count | default(0) }}</span>
+        {% if c.last_pass_at %}
+        <div class="text-[10px] text-gray-400">last {{ (c.last_pass_direction or '') | lower }} {{ c.last_pass_at | localtime('%Y-%m-%d %H:%M') }}</div>
+        {% endif %}
+    </td>
+
+    <td class="px-5 py-3.5 text-right font-mono text-[11px] text-gray-400">
+        {{ (c.created_at | localtime('%Y-%m-%d %H:%M')) if c.created_at else '' }}
     </td>
 
     <!-- Row actions: edit and remove, for the roles that may manage cattle (the backend checks the scope again) -->
@@ -76,6 +98,6 @@
 </tr>
 {% else %}
 <tr>
-    <td colspan="6" class="py-12 text-center text-gray-400">No cattle records found matching filter.</td>
+    <td colspan="9" class="py-12 text-center text-gray-400">No cattle records found matching filter.</td>
 </tr>
 {% endfor %}

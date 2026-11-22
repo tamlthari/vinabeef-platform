@@ -23,6 +23,7 @@ public class GateReaderController {
 
     private final JdbcTemplate jdbcTemplate;
     private final RbacScopeService rbacScopeService;
+    private final ReportClock clock;
 
     /**
      * Used for registering and for editing. On an edit a field that is left out (null) keeps its current value, so a
@@ -46,72 +47,34 @@ public class GateReaderController {
     }
 
     @GetMapping
-    public ResponseEntity listReaders(@RequestParam(required = false, defaultValue = "") String q) {
+    public ResponseEntity listReaders(@RequestParam(required = false, defaultValue = "") String q,
+                                      @RequestParam(required = false, defaultValue = "") String sort,
+                                      @RequestParam(required = false, defaultValue = "") String dir) {
         var scope = rbacScopeService.getCurrentScope();
-        String pattern = "%" + (q != null ? q.trim().toLowerCase() : "") + "%";
 
-        StringBuilder sql = new StringBuilder("""
-            SELECT
-                g.gate_id,
-                g.barn_id,
-                g.label,
-                g.reader_name,
-                g.direction_mode,
-                COALESCE(g.firmware_version, '1.58.1998') AS firmware_version,
-                COALESCE(g.status, 'ONLINE') AS status,
-                b.code AS barn_code,
-                f.farm_id,
-                f.name AS farm_name,
-                (SELECT gr.reader_name FROM gate_readers gr WHERE gr.gate_id = g.gate_id AND gr.side = 'OUTER') AS outer_reader_name,
-                (SELECT MAX(re.observed_at) FROM rfid_read_events re
-                  WHERE re.reader_name IN (SELECT g.reader_name
-                                           UNION SELECT gr.reader_name FROM gate_readers gr WHERE gr.gate_id = g.gate_id)) AS last_seen,
-                (SELECT gr.gate_id FROM gate_readers gr WHERE gr.reader_name = g.reader_name AND gr.gate_id <> g.gate_id) AS linked_to_gate_id,
-                (SELECT gr.side FROM gate_readers gr WHERE gr.reader_name = g.reader_name AND gr.gate_id <> g.gate_id) AS linked_side,
-                (SELECT lg.label FROM gate_readers gr JOIN gates lg ON lg.gate_id = gr.gate_id
-                  WHERE gr.reader_name = g.reader_name AND gr.gate_id <> g.gate_id) AS linked_to_label,
-                (SELECT COUNT(*) FROM movements m WHERE m.gate_id = g.gate_id) AS passage_count
-            FROM gates g
-            LEFT JOIN barns b ON g.barn_id = b.barn_id
-            LEFT JOIN farms f ON b.farm_id = f.farm_id
-            WHERE g.retired_at IS NULL
-            AND (
-                LOWER(g.reader_name) LIKE ?
-                OR LOWER(g.label) LIKE ?
-                OR LOWER(g.gate_id) LIKE ?
-                OR LOWER(COALESCE(b.code, '')) LIKE ?
-                OR LOWER(COALESCE(f.name, '')) LIKE ?
-            )
-        """);
-
-        List params = new ArrayList();
-        params.add(pattern);
-        params.add(pattern);
-        params.add(pattern);
-        params.add(pattern);
-        params.add(pattern);
-
+        ReportQueries.Scope visible;
         if (scope.isGlobal()) {
-            // SYSTEM_ADMIN and EXECUTIVE see all 125 sensors across all farms
+            visible = ReportQueries.Scope.ALL;   // SYSTEM_ADMIN and EXECUTIVE see every reader on every farm
         } else if (scope.isFarmScoped() && scope.farmId() != null) {
-            sql.append(" AND b.farm_id = ? ");
-            params.add(scope.farmId());
+            visible = ReportQueries.Scope.farm(scope.farmId());
         } else if (scope.isBarnScoped()) {
-            if (scope.barnIds().isEmpty()) {
+            visible = ReportQueries.Scope.barns(scope.barnIds());
+            if (visible.seesNothing()) {
                 return ResponseEntity.ok(List.of());
             }
-            String placeholders = String.join(",", Collections.nCopies(scope.barnIds().size(), "?"));
-            sql.append(" AND g.barn_id IN (").append(placeholders).append(") ");
-            params.addAll(scope.barnIds());
         } else {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body(Map.of("error", "User '" + scope.username() + "' is not authorized to view Gate Readers."));
         }
 
-        sql.append(" ORDER BY g.reader_name ASC ");
-
-        var readers = jdbcTemplate.queryForList(sql.toString(), params.toArray());
-        return ResponseEntity.ok(readers);
+        var today = clock.today();
+        var query = ListQueries.readers(visible, q, sort, dir, today.fromInclusive(), today.toExclusive());
+        var readers = jdbcTemplate.queryForList(query.sql(), query.params().toArray());
+        return ResponseEntity.ok()
+                .header("X-Sort-Key", SortSpec.effectiveKey(sort, ListQueries.READER_SORT, "created"))
+                .header("X-Sort-Dir", SortSpec.effectiveDir(sort, dir, ListQueries.READER_SORT, "created", "desc"))
+                .header("Access-Control-Expose-Headers", "X-Sort-Key, X-Sort-Dir")
+                .body(readers);
     }
 
     @PostMapping
@@ -202,12 +165,24 @@ public class GateReaderController {
                 (SELECT gr.side FROM gate_readers gr WHERE gr.reader_name = g.reader_name AND gr.gate_id <> g.gate_id) AS linked_side,
                 (SELECT lg.label FROM gate_readers gr JOIN gates lg ON lg.gate_id = gr.gate_id
                   WHERE gr.reader_name = g.reader_name AND gr.gate_id <> g.gate_id) AS linked_to_label,
-                (SELECT COUNT(*) FROM movements m WHERE m.gate_id = g.gate_id) AS passage_count
+                COALESCE(mc.in_count, 0)  AS in_count,
+                COALESCE(mc.out_count, 0) AS out_count,
+                COALESCE(mc.today_in, 0)  AS today_in,
+                COALESCE(mc.today_out, 0) AS today_out,
+                COALESCE(mc.in_count, 0) + COALESCE(mc.out_count, 0) AS passage_count
             FROM gates g
             LEFT JOIN barns b ON g.barn_id = b.barn_id
             LEFT JOIN farms f ON b.farm_id = f.farm_id
+            LEFT JOIN LATERAL (
+                SELECT COUNT(*) FILTER (WHERE m.direction = 'IN')  AS in_count,
+                       COUNT(*) FILTER (WHERE m.direction = 'OUT') AS out_count,
+                       COUNT(*) FILTER (WHERE m.direction = 'IN'  AND m.occurred_at >= ? AND m.occurred_at < ?) AS today_in,
+                       COUNT(*) FILTER (WHERE m.direction = 'OUT' AND m.occurred_at >= ? AND m.occurred_at < ?) AS today_out
+                FROM movements m WHERE m.gate_id = g.gate_id
+            ) mc ON TRUE
             WHERE g.gate_id = ? AND g.retired_at IS NULL
-        """, gateId);
+        """, java.sql.Timestamp.from(clock.today().fromInclusive()), java.sql.Timestamp.from(clock.today().toExclusive()),
+                java.sql.Timestamp.from(clock.today().fromInclusive()), java.sql.Timestamp.from(clock.today().toExclusive()), gateId);
 
         if (readers.isEmpty()) {
             return ResponseEntity.notFound().build();

@@ -1,12 +1,15 @@
 {% if banner_msg %}
-<div class="px-5 py-3 bg-emerald-50 border-b border-emerald-200 text-emerald-800 text-xs font-semibold">
+<div class="px-5 py-3 border-b text-xs font-semibold
+    {% if banner_kind == 'ok' %}bg-emerald-50 border-emerald-200 text-emerald-800
+    {% elif banner_kind == 'warn' %}bg-amber-50 border-amber-200 text-amber-900
+    {% else %}bg-rose-50 border-rose-200 text-rose-800{% endif %}">
     {{ banner_msg }}
 </div>
 {% endif %}
 
 <div class="px-5 py-3.5 bg-gray-50/70 border-b border-gray-200 flex justify-between items-center">
     <h3 class="text-xs font-bold text-gray-700 uppercase tracking-wider">External Surveillance API Transmission Log</h3>
-    <span class="text-[11px] text-gray-400">Audited outbound dispatches</span>
+    <span class="text-[11px] text-gray-400">SIMULATED = nothing was sent. Only DELIVERED means the agency answered 2xx.</span>
 </div>
 
 <div class="overflow-x-auto">
@@ -17,7 +20,7 @@
                 <th class="px-5 py-3">Target System & Endpoint</th>
                 <th class="px-5 py-3">Report Type</th>
                 <th class="px-5 py-3">Format / Records</th>
-                <th class="px-5 py-3">Gateway Response</th>
+                <th class="px-5 py-3">Delivery</th>
                 <th class="px-5 py-3 text-right">Dispatched At</th>
             </tr>
         </thead>
@@ -35,15 +38,19 @@
                     <span class="text-gray-500 ml-1">{{ tx.record_count }} rows</span>
                 </td>
                 <td class="px-5 py-3.5">
-                    <span class="inline-block px-2 py-0.5 rounded text-[11px] font-bold {% if tx.http_status in [200, 201, 202] %}bg-emerald-50 text-emerald-700 border border-emerald-200{% else %}bg-rose-50 text-rose-700 border border-rose-200{% endif %}">
-                        HTTP {{ tx.http_status }}
+                    {% set ds = tx.delivery_status or 'SIMULATED' %}
+                    <span class="inline-block px-2 py-0.5 rounded text-[11px] font-bold
+                        {% if ds == 'DELIVERED' %}bg-emerald-50 text-emerald-700 border border-emerald-200
+                        {% elif ds == 'SIMULATED' %}bg-amber-50 text-amber-800 border border-amber-200
+                        {% else %}bg-rose-50 text-rose-700 border border-rose-200{% endif %}">
+                        {{ ds }}{% if tx.http_status %} &middot; HTTP {{ tx.http_status }}{% endif %}
                     </span>
                     <div class="text-[11px] text-gray-500 mt-1 max-w-xs truncate" title="{{ tx.response_summary }}">
                         {{ tx.response_summary }}
                     </div>
                 </td>
                 <td class="px-5 py-3.5 text-right font-mono text-[11px] text-gray-500">
-                    {{ (tx.transmitted_at | string).replace('T', ' ')[:19] }}
+                    {{ tx.transmitted_at | localtime }}
                 </td>
             </tr>
             {% else %}

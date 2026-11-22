@@ -46,6 +46,18 @@ public class UserManagementController {
         private List barnIds;
     }
 
+    @Data
+    public static class UpdateUserRequest {
+        private String fullName;
+        private String role;
+        private String farmId;
+        private List barnIds;
+        /** Optional. Blank or missing keeps the current password. */
+        private String newPassword;
+        /** Optional. Missing keeps the current state. */
+        private Boolean enabled;
+    }
+
     @GetMapping
     @PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'FARM_MANAGER')")
     public ResponseEntity listUsers() {
@@ -55,7 +67,8 @@ public class UserManagementController {
         if (scope.isGlobal()) {
             users = jdbcTemplate.queryForList("""
                 SELECT u.user_id, u.username, COALESCE(u.full_name, u.username) AS full_name,
-                       u.role, COALESCE(u.farm_id, 'ALL') AS farm_id, f.name AS farm_name
+                       u.role, COALESCE(u.farm_id, 'ALL') AS farm_id, f.name AS farm_name,
+                       u.enabled, u.created_at
                 FROM users u
                 LEFT JOIN farms f ON u.farm_id = f.farm_id
                 ORDER BY u.role ASC, u.username ASC
@@ -63,7 +76,8 @@ public class UserManagementController {
         } else if (scope.isFarmScoped() && scope.farmId() != null) {
             users = jdbcTemplate.queryForList("""
                 SELECT u.user_id, u.username, COALESCE(u.full_name, u.username) AS full_name,
-                       u.role, COALESCE(u.farm_id, 'ALL') AS farm_id, f.name AS farm_name
+                       u.role, COALESCE(u.farm_id, 'ALL') AS farm_id, f.name AS farm_name,
+                       u.enabled, u.created_at
                 FROM users u
                 LEFT JOIN farms f ON u.farm_id = f.farm_id
                 WHERE u.farm_id = ?
@@ -141,7 +155,12 @@ public class UserManagementController {
             return ResponseEntity.badRequest().body(Map.of("error", "A target farm must be selected for " + targetRole));
         }
 
-        List cleanBarnIds = sanitizeAndValidateBarns(scope, targetRole, effectiveFarmId, req.getBarnIds());
+        List cleanBarnIds;
+        try {
+            cleanBarnIds = sanitizeAndValidateBarns(scope, targetRole, effectiveFarmId, req.getBarnIds());
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
         if ("BARN_SUPERVISOR".equals(targetRole) && cleanBarnIds.isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("error", "At least one barn must be assigned to a Barn Supervisor."));
         }
@@ -161,6 +180,7 @@ public class UserManagementController {
             INSERT INTO users (user_id, username, password_hash, role, farm_id, full_name)
             VALUES (?, ?, ?, ?, ?, ?)
         """, userId, username, encodedPassword, targetRole, effectiveFarmId, fullName);
+        syncFarmScope(userId, effectiveFarmId);
 
         for (Object barnObj : cleanBarnIds) {
             jdbcTemplate.update("""
@@ -229,13 +249,20 @@ public class UserManagementController {
                             ? req.getFarmId().trim() : currentTargetFarm);
         }
 
-        List cleanBarnIds = sanitizeAndValidateBarns(scope, newRole, effectiveFarmId, req.getBarnIds());
+        List cleanBarnIds;
+        try {
+            cleanBarnIds = sanitizeAndValidateBarns(scope, newRole, effectiveFarmId, req.getBarnIds());
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
         if ("BARN_SUPERVISOR".equals(newRole) && cleanBarnIds.isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("error", "A Barn Supervisor must have at least one assigned barn."));
         }
 
         jdbcTemplate.update("UPDATE users SET role = ?, farm_id = ? WHERE username = ?",
                 newRole, effectiveFarmId, cleanTarget);
+        syncFarmScope(String.valueOf(jdbcTemplate.queryForObject(
+                "SELECT user_id FROM users WHERE username = ?", String.class, cleanTarget)), effectiveFarmId);
 
         jdbcTemplate.update("DELETE FROM user_barn_assignments WHERE username = ?", cleanTarget);
         if ("BARN_SUPERVISOR".equals(newRole)) {
@@ -255,6 +282,158 @@ public class UserManagementController {
                 "farmId", effectiveFarmId != null ? effectiveFarmId : "ALL",
                 "assignedBarns", cleanBarnIds
         ));
+    }
+
+    /**
+     * Full edit of one account: name, role, farm, barns, enabled flag and (optionally) a new password.
+     * The older {@code /role-scope} endpoint stays for scripts that use it.
+     */
+    @PutMapping("/{targetUsername}")
+    @PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'FARM_MANAGER')")
+    @Audited(action = "UPDATE_USER", targetType = "USER")
+    @Transactional
+    public ResponseEntity updateUser(@PathVariable String targetUsername, @RequestBody UpdateUserRequest req) {
+        var scope = rbacScopeService.getCurrentScope();
+        String cleanTarget = targetUsername.trim();
+
+        var rows = jdbcTemplate.queryForList(
+                "SELECT user_id, username, role, farm_id, enabled, full_name FROM users WHERE username = ?", cleanTarget);
+        if (rows.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "User '" + cleanTarget + "' does not exist."));
+        }
+        Map row = (Map) rows.get(0);
+        String userId = String.valueOf(row.get("user_id"));
+        String currentRole = String.valueOf(row.get("role"));
+        String currentFarm = row.get("farm_id") != null ? String.valueOf(row.get("farm_id")) : null;
+        boolean currentEnabled = !Boolean.FALSE.equals(row.get("enabled"));
+
+        String newRole = req.getRole() != null && !req.getRole().isBlank() ? req.getRole().trim().toUpperCase() : currentRole;
+        if (!VALID_ROLES.contains(newRole)) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Invalid role: " + newRole));
+        }
+        boolean newEnabled = req.getEnabled() != null ? req.getEnabled() : currentEnabled;
+
+        var denial = UserChangeGuard.denyChange(
+                new UserChangeGuard.Actor(scope.username(), scope.role(), scope.farmId()),
+                new UserChangeGuard.Target(cleanTarget, currentRole, currentFarm, currentEnabled),
+                newRole, newEnabled, enabledAdminCount());
+        if (denial != null) {
+            return ResponseEntity.status(denial.status()).body(Map.of("error", denial.message()));
+        }
+
+        String effectiveFarmId;
+        if (scope.isFarmScoped()) {
+            effectiveFarmId = scope.farmId();
+        } else if ("SYSTEM_ADMIN".equals(newRole) || "EXECUTIVE".equals(newRole)) {
+            effectiveFarmId = null;
+        } else if (req.getFarmId() != null && !req.getFarmId().isBlank() && !"ALL".equalsIgnoreCase(req.getFarmId())) {
+            effectiveFarmId = req.getFarmId().trim();
+        } else {
+            effectiveFarmId = currentFarm;
+        }
+        if (("FARM_MANAGER".equals(newRole) || "BARN_SUPERVISOR".equals(newRole)) && effectiveFarmId == null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "A target farm must be selected for " + newRole));
+        }
+        if (effectiveFarmId != null && jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM farms WHERE farm_id = ?", Integer.class, effectiveFarmId) == 0) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Farm does not exist: " + effectiveFarmId));
+        }
+
+        List cleanBarnIds;
+        try {
+            cleanBarnIds = sanitizeAndValidateBarns(scope, newRole, effectiveFarmId, req.getBarnIds());
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+        if ("BARN_SUPERVISOR".equals(newRole) && cleanBarnIds.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "A Barn Supervisor must have at least one assigned barn."));
+        }
+
+        String newName = req.getFullName() != null && !req.getFullName().isBlank()
+                ? req.getFullName().trim() : String.valueOf(row.get("full_name"));
+        if (newName.length() > 100) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Full name is too long (100 characters maximum)."));
+        }
+
+        boolean passwordChanged = req.getNewPassword() != null && !req.getNewPassword().isBlank();
+        if (passwordChanged && req.getNewPassword().length() < 6) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Password must be at least 6 characters"));
+        }
+
+        jdbcTemplate.update("UPDATE users SET full_name = ?, role = ?, farm_id = ?, enabled = ? WHERE username = ?",
+                newName, newRole, effectiveFarmId, newEnabled, cleanTarget);
+        if (passwordChanged) {
+            jdbcTemplate.update("UPDATE users SET password_hash = ? WHERE username = ?",
+                    passwordEncoder.encode(req.getNewPassword()), cleanTarget);
+        }
+
+        jdbcTemplate.update("DELETE FROM user_barn_assignments WHERE username = ?", cleanTarget);
+        if ("BARN_SUPERVISOR".equals(newRole)) {
+            for (Object barnObj : cleanBarnIds) {
+                jdbcTemplate.update("INSERT INTO user_barn_assignments (username, barn_id) VALUES (?, ?) ON CONFLICT DO NOTHING",
+                        cleanTarget, String.valueOf(barnObj));
+            }
+        }
+        syncFarmScope(userId, effectiveFarmId);
+
+        Map result = new LinkedHashMap();
+        result.put("status", "UPDATED");
+        result.put("username", cleanTarget);
+        result.put("role", newRole);
+        result.put("farmId", effectiveFarmId != null ? effectiveFarmId : "ALL");
+        result.put("enabled", newEnabled);
+        result.put("assignedBarns", cleanBarnIds);
+        result.put("passwordChanged", passwordChanged);
+        return ResponseEntity.ok(result);
+    }
+
+    @DeleteMapping("/{targetUsername}")
+    @PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'FARM_MANAGER')")
+    @Audited(action = "DELETE_USER", targetType = "USER")
+    @Transactional
+    public ResponseEntity deleteUser(@PathVariable String targetUsername) {
+        var scope = rbacScopeService.getCurrentScope();
+        String cleanTarget = targetUsername.trim();
+
+        var rows = jdbcTemplate.queryForList(
+                "SELECT user_id, role, farm_id, enabled FROM users WHERE username = ?", cleanTarget);
+        if (rows.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "User '" + cleanTarget + "' does not exist."));
+        }
+        Map row = (Map) rows.get(0);
+
+        var denial = UserChangeGuard.denyDelete(
+                new UserChangeGuard.Actor(scope.username(), scope.role(), scope.farmId()),
+                new UserChangeGuard.Target(cleanTarget, String.valueOf(row.get("role")),
+                        row.get("farm_id") != null ? String.valueOf(row.get("farm_id")) : null,
+                        !Boolean.FALSE.equals(row.get("enabled"))),
+                enabledAdminCount());
+        if (denial != null) {
+            return ResponseEntity.status(denial.status()).body(Map.of("error", denial.message()));
+        }
+
+        // user_farm_scopes goes with the user (ON DELETE CASCADE); barn assignments are keyed by username.
+        jdbcTemplate.update("DELETE FROM user_barn_assignments WHERE username = ?", cleanTarget);
+        jdbcTemplate.update("DELETE FROM users WHERE username = ?", cleanTarget);
+        return ResponseEntity.ok(Map.of("status", "DELETED", "username", cleanTarget));
+    }
+
+    private long enabledAdminCount() {
+        Long n = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM users WHERE role = 'SYSTEM_ADMIN' AND enabled IS NOT FALSE", Long.class);
+        return n != null ? n : 0;
+    }
+
+    /** Keeps user_farm_scopes (read by the JPA User entity) in step with users.farm_id. */
+    private void syncFarmScope(String userId, String farmId) {
+        jdbcTemplate.update("DELETE FROM user_farm_scopes WHERE user_id = ?", userId);
+        if (farmId != null) {
+            jdbcTemplate.update("""
+                INSERT INTO user_farm_scopes (scope_id, user_id, farm_id)
+                VALUES ('SCP-' || substr(md5(? || ':' || ?), 1, 16), ?, ?)
+                ON CONFLICT (user_id, farm_id) DO NOTHING
+            """, userId, farmId, userId, farmId);
+        }
     }
 
     private List sanitizeAndValidateBarns(RbacScopeService.UserScope scope,

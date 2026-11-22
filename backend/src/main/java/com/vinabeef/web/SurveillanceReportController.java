@@ -14,12 +14,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
 
@@ -33,11 +28,15 @@ public class SurveillanceReportController {
 
     private final JdbcTemplate jdbcTemplate;
     private final RbacScopeService rbacScopeService;
+    private final NadcsGateway nadcs;
 
+    /**
+     * What the caller may choose. The destination and the credential are NOT part of it: they come from the server's
+     * configuration (nadcs.*), so a request cannot redirect a transmission to another address.
+     */
     @Data
     public static class TransmitRequest {
-        private String targetSystem;
-        private String endpointUrl;
+        private String targetSystem;   // label only
         private String reportType;
         private String farmScope;
         private String payloadFormat; // JSON or XML
@@ -56,6 +55,7 @@ public class SurveillanceReportController {
             WHERE a.lifecycle_status = 'ACTIVE' AND (? = TRUE OR b.farm_id = ?)
         """, Long.class, allFarms, effectiveFarm);
 
+        // "vaccinated" = at least one VACCINATION record (same definition as the dashboard)
         Long vaccinatedHerd = jdbcTemplate.queryForObject("""
             SELECT COUNT(DISTINCT hr.animal_id)
             FROM health_records hr
@@ -83,28 +83,41 @@ public class SurveillanceReportController {
 
         var transmissions = jdbcTemplate.queryForList("""
             SELECT transmission_id, target_system, endpoint_url, report_type, farm_scope,
-                   record_count, payload_format, http_status, response_summary, transmitted_by, transmitted_at
+                   record_count, payload_format, http_status, delivery_status, response_summary, transmitted_by, transmitted_at
             FROM external_transmissions
             WHERE (? = TRUE OR farm_scope = ? OR farm_scope = 'ALL')
             ORDER BY transmitted_at DESC
             LIMIT 25
         """, allFarms, effectiveFarm);
 
+        List<Map<String, Object>> dataChecks = new ArrayList<>();
+        for (var check : SurveillanceQueries.checks().values()) {
+            Long n = jdbcTemplate.queryForObject(check.sql(), Long.class, allFarms, effectiveFarm);
+            dataChecks.add(Map.of("code", check.code(), "label", check.label(), "severity", check.severity(),
+                    "count", n != null ? n : 0L));
+        }
+
         double vacPct = (totalHerd != null && totalHerd > 0 && vaccinatedHerd != null)
                 ? Math.round((vaccinatedHerd * 1000.0) / totalHerd) / 10.0 : 0.0;
 
-        return ResponseEntity.ok(Map.of(
-                "effectiveFarm", effectiveFarm,
-                "metrics", Map.of(
-                        "totalHerd", totalHerd != null ? totalHerd : 0,
-                        "vaccinatedHerd", vaccinatedHerd != null ? vaccinatedHerd : 0,
-                        "vaccinationCoveragePct", vacPct,
-                        "underTreatment", treatmentCount != null ? treatmentCount : 0,
-                        "quarantined", quarantineCount != null ? quarantineCount : 0,
-                        "totalTransfers", transferCount != null ? transferCount : 0
-                ),
-                "transmissions", transmissions
-        ));
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("effectiveFarm", effectiveFarm);
+        out.put("metrics", Map.of(
+                "totalHerd", totalHerd != null ? totalHerd : 0,
+                "vaccinatedHerd", vaccinatedHerd != null ? vaccinatedHerd : 0,
+                "vaccinationCoveragePct", vacPct,
+                "underTreatment", treatmentCount != null ? treatmentCount : 0,
+                "quarantined", quarantineCount != null ? quarantineCount : 0,
+                "totalTransfers", transferCount != null ? transferCount : 0));
+        out.put("vaccinatedDefinition", "At least one vaccination record on file; no validity period is applied.");
+        out.put("dataChecks", dataChecks);
+        // what the page needs to tell the truth about delivery; the API key itself is never returned
+        out.put("nadcs", Map.of(
+                "mode", nadcs.isLive() ? "LIVE" : "SIMULATION",
+                "endpoint", nadcs.endpoint(),
+                "apiKeyConfigured", nadcs.apiKeyConfigured()));
+        out.put("transmissions", transmissions);
+        return ResponseEntity.ok(out);
     }
 
     @GetMapping("/export")
@@ -120,79 +133,61 @@ public class SurveillanceReportController {
         String cleanFarm = resolveEffectiveFarm(scope, farmId.trim());
         String cleanFormat = format.trim().toUpperCase();
 
-        List rows = queryReportRows(cleanType, cleanFarm);
+        ReportRows data = queryReportRows(cleanType, cleanFarm);
+        List rows = data.rows();
         String filename = "vinabeef_" + cleanType.toLowerCase() + "_" + cleanFarm.toLowerCase() + "." + cleanFormat.toLowerCase();
 
+        ResponseEntity.BodyBuilder ok = ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                .header("X-Report-Truncated", String.valueOf(data.truncated()))
+                .header("Access-Control-Expose-Headers", "X-Report-Truncated");
         if ("JSON".equals(cleanFormat)) {
-            String json = renderJsonReport(cleanType, cleanFarm, rows);
-            return ResponseEntity.ok()
-                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(json.getBytes(StandardCharsets.UTF_8));
+            return ok.contentType(MediaType.APPLICATION_JSON).body(renderJsonReport(cleanType, cleanFarm, rows).getBytes(StandardCharsets.UTF_8));
         } else if ("XML".equals(cleanFormat)) {
-            String xml = renderXmlReport(cleanType, cleanFarm, rows);
-            return ResponseEntity.ok()
-                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
-                    .contentType(MediaType.APPLICATION_XML)
-                    .body(xml.getBytes(StandardCharsets.UTF_8));
-        } else {
-            String csv = renderCsvReport(rows);
-            return ResponseEntity.ok()
-                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
-                    .contentType(MediaType.parseMediaType("text/csv; charset=UTF-8"))
-                    .body(csv.getBytes(StandardCharsets.UTF_8));
+            return ok.contentType(MediaType.APPLICATION_XML).body(renderXmlReport(cleanType, cleanFarm, rows).getBytes(StandardCharsets.UTF_8));
         }
+        return ok.contentType(MediaType.parseMediaType("text/csv; charset=UTF-8")).body(renderCsvReport(rows).getBytes(StandardCharsets.UTF_8));
     }
 
+    /**
+     * Sends the report to the national system, or, in SIMULATION mode, records honestly that nothing was sent.
+     * The result is stored with the status the agency really answered (DELIVERED / REJECTED / UNREACHABLE / SIMULATED).
+     */
     @PostMapping("/transmit")
     @PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'FARM_MANAGER', 'EXECUTIVE')")
     @Audited(action = "TRANSMIT_NADCS_SURVEILLANCE", targetType = "EXTERNAL_API")
-    @Transactional
     public ResponseEntity transmitToExternalApi(@RequestBody TransmitRequest req, Authentication auth) {
         var scope = rbacScopeService.getCurrentScope();
         String targetSystem = (req.getTargetSystem() != null && !req.getTargetSystem().isBlank())
                 ? req.getTargetSystem().trim()
                 : "National Animal Disease Control System (NADCS)";
-        String endpointUrl = (req.getEndpointUrl() != null && !req.getEndpointUrl().isBlank())
-                ? req.getEndpointUrl().trim()
-                : "https://api.nadcs.dah.gov.vn/v2/surveillance/herd-health";
         String reportType = (req.getReportType() != null && !req.getReportType().isBlank())
                 ? req.getReportType().trim().toUpperCase() : "OUTBREAK_SURVEILLANCE";
+        if (!SurveillanceQueries.isKnownType(reportType)) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Unknown report type '" + reportType + "'."));
+        }
         String requestedFarm = (req.getFarmScope() != null && !req.getFarmScope().isBlank())
                 ? req.getFarmScope().trim() : "ALL";
         String farmScope = resolveEffectiveFarm(scope, requestedFarm);
         String format = (req.getPayloadFormat() != null && !req.getPayloadFormat().isBlank())
                 ? req.getPayloadFormat().trim().toUpperCase() : "JSON";
 
-        List rows = queryReportRows(reportType, farmScope);
+        ReportRows data = queryReportRows(reportType, farmScope);
+        if (data.truncated()) {
+            // a partial submission to the national system is worse than none
+            return ResponseEntity.status(422).body(Map.of("error",
+                    "The report has more than " + SurveillanceQueries.MAX_ROWS + " records; narrow it to one farm or another report type. Nothing was sent."));
+        }
+        List rows = data.rows();
         String payload = "XML".equals(format)
                 ? renderXmlReport(reportType, farmScope, rows)
                 : renderJsonReport(reportType, farmScope, rows);
 
-        int httpStatus = 202;
-        String responseSummary;
-
-        if (endpointUrl.startsWith("http://localhost") || endpointUrl.startsWith("http://127.0.0.1")) {
-            try {
-                HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
-                HttpRequest httpReq = HttpRequest.newBuilder()
-                        .uri(URI.create(endpointUrl))
-                        .timeout(Duration.ofSeconds(4))
-                        .header("Content-Type", "XML".equals(format) ? "application/xml" : "application/json")
-                        .header("X-VinaBeef-Agency-Key", "NADCS-VN-2026")
-                        .POST(HttpRequest.BodyPublishers.ofString(payload))
-                        .build();
-                HttpResponse httpResp = client.send(httpReq, HttpResponse.BodyHandlers.ofString());
-                httpStatus = httpResp.statusCode();
-                String respBody = String.valueOf(httpResp.body());
-                responseSummary = "LIVE HTTP " + httpStatus + ": " + respBody.substring(0, Math.min(180, respBody.length()));
-            } catch (Exception ex) {
-                httpStatus = 502;
-                responseSummary = "ENDPOINT UNREACHABLE: " + ex.getMessage();
-            }
-        } else {
-            String receiptCode = "VN-DAH-" + (10000 + new Random().nextInt(89999));
-            responseSummary = "ACCEPTED (202): Dispatched " + rows.size() + " records (" + farmScope + ") to " + targetSystem + " [Receipt #" + receiptCode + "]";
+        NadcsGateway.Result result;
+        try {
+            result = nadcs.send(payload, format, rows.size());
+        } catch (NadcsGateway.NotConfiguredException e) {
+            return ResponseEntity.status(503).body(Map.of("error", e.getMessage()));
         }
 
         String txId = "TX-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
@@ -201,17 +196,20 @@ public class SurveillanceReportController {
 
         jdbcTemplate.update("""
             INSERT INTO external_transmissions
-            (transmission_id, target_system, endpoint_url, report_type, farm_scope, record_count, payload_format, http_status, response_summary, payload_snapshot, transmitted_by, transmitted_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        """, txId, targetSystem, endpointUrl, reportType, farmScope, rows.size(), format, httpStatus, responseSummary, snapshot, actor);
+            (transmission_id, target_system, endpoint_url, report_type, farm_scope, record_count, payload_format,
+             http_status, delivery_status, response_summary, payload_snapshot, transmitted_by, transmitted_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        """, txId, targetSystem, nadcs.endpoint(), reportType, farmScope, rows.size(), format,
+                result.httpStatus(), result.deliveryStatus(), result.summary(), snapshot, actor);
 
-        return ResponseEntity.ok(Map.of(
-                "status", "TRANSMITTED",
-                "transmissionId", txId,
-                "httpStatus", httpStatus,
-                "recordCount", rows.size(),
-                "responseSummary", responseSummary
-        ));
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("status", result.deliveryStatus());
+        out.put("delivered", NadcsGateway.DELIVERED.equals(result.deliveryStatus()));
+        out.put("transmissionId", txId);
+        out.put("httpStatus", result.httpStatus());
+        out.put("recordCount", rows.size());
+        out.put("responseSummary", result.summary());
+        return ResponseEntity.ok(out);
     }
 
     private String resolveEffectiveFarm(RbacScopeService.UserScope scope, String requestedFarm) {
@@ -221,80 +219,18 @@ public class SurveillanceReportController {
         return requestedFarm;
     }
 
-    private List queryReportRows(String reportType, String farmId) {
+    /** Rows of a report, and whether the cap cut it. */
+    private record ReportRows(List rows, boolean truncated) {
+    }
+
+    private ReportRows queryReportRows(String reportType, String farmId) {
         boolean allFarms = "ALL".equalsIgnoreCase(farmId);
-
-        if ("MOVEMENT_TRANSFERS".equals(reportType)) {
-            String sql = """
-                SELECT t.transfer_id, t.animal_id, t.transfer_type,
-                       COALESCE(ff.name, t.from_farm_id) AS origin_farm,
-                       COALESCE(fb.code, t.from_barn_id) AS origin_barn,
-                       COALESCE(tf.name, t.to_farm_id) AS destination_farm,
-                       COALESCE(tb.code, t.to_barn_id) AS destination_barn,
-                       t.reason, t.approved_by, t.transferred_at::text AS timestamp
-                FROM animal_transfers t
-                LEFT JOIN barns fb ON t.from_barn_id = fb.barn_id
-                LEFT JOIN farms ff ON t.from_farm_id = ff.farm_id
-                LEFT JOIN barns tb ON t.to_barn_id = tb.barn_id
-                LEFT JOIN farms tf ON t.to_farm_id = tf.farm_id
-                WHERE (? = TRUE OR t.from_farm_id = ? OR t.to_farm_id = ?)
-                ORDER BY t.transferred_at DESC
-                LIMIT 500
-            """;
-            return jdbcTemplate.queryForList(sql, allFarms, farmId, farmId);
-        }
-
-        if ("HEALTH_TREATMENTS".equals(reportType)) {
-            String sql = """
-                SELECT hr.health_id, hr.animal_id, a.health_status AS current_clinical_status,
-                       f.name AS farm_name, b.code AS barn_code,
-                       hr.record_type, hr.administered_by, hr.payload::text AS clinical_payload,
-                       hr.event_at::text AS recorded_at
-                FROM health_records hr
-                JOIN animals a ON hr.animal_id = a.animal_id
-                LEFT JOIN barns b ON a.assigned_barn_id = b.barn_id
-                LEFT JOIN farms f ON b.farm_id = f.farm_id
-                WHERE (? = TRUE OR f.farm_id = ?)
-                ORDER BY hr.event_at DESC
-                LIMIT 500
-            """;
-            return jdbcTemplate.queryForList(sql, allFarms, farmId);
-        }
-
-        if ("VACCINATION_COVERAGE".equals(reportType)) {
-            String sql = """
-                SELECT f.farm_id, f.name AS farm_name, b.barn_id, b.code AS barn_code,
-                       COUNT(a.animal_id) AS total_cattle,
-                       COUNT(v.animal_id) AS vaccinated_cattle,
-                       ROUND(CASE WHEN COUNT(a.animal_id) > 0 THEN (COUNT(v.animal_id) * 100.0) / COUNT(a.animal_id) ELSE 0 END, 2) AS coverage_pct
-                FROM farms f
-                JOIN barns b ON f.farm_id = b.farm_id
-                LEFT JOIN animals a ON b.barn_id = a.assigned_barn_id AND a.lifecycle_status = 'ACTIVE'
-                LEFT JOIN (SELECT DISTINCT animal_id FROM health_records WHERE record_type = 'VACCINATION') v ON a.animal_id = v.animal_id
-                WHERE (? = TRUE OR f.farm_id = ?)
-                GROUP BY f.farm_id, f.name, b.barn_id, b.code
-                ORDER BY f.farm_id, b.code
-            """;
-            return jdbcTemplate.queryForList(sql, allFarms, farmId);
-        }
-
-        String sql = """
-            SELECT f.farm_id, f.name AS farm_name, f.location,
-                   COUNT(DISTINCT b.barn_id) AS barn_count,
-                   COUNT(DISTINCT a.animal_id) AS active_herd_count,
-                   COUNT(DISTINCT CASE WHEN a.health_status = 'HEALTHY' THEN a.animal_id END) AS healthy_count,
-                   COUNT(DISTINCT CASE WHEN a.health_status = 'UNDER_TREATMENT' THEN a.animal_id END) AS under_treatment_count,
-                   COUNT(DISTINCT CASE WHEN a.health_status = 'QUARANTINE' THEN a.animal_id END) AS quarantined_count,
-                   COUNT(DISTINCT v.animal_id) AS fmd_lsd_vaccinated_count
-            FROM farms f
-            LEFT JOIN barns b ON f.farm_id = b.farm_id
-            LEFT JOIN animals a ON b.barn_id = a.assigned_barn_id AND a.lifecycle_status = 'ACTIVE'
-            LEFT JOIN (SELECT DISTINCT animal_id FROM health_records WHERE record_type = 'VACCINATION') v ON a.animal_id = v.animal_id
-            WHERE (? = TRUE OR f.farm_id = ?)
-            GROUP BY f.farm_id, f.name, f.location
-            ORDER BY f.farm_id
-        """;
-        return jdbcTemplate.queryForList(sql, allFarms, farmId);
+        String sql = SurveillanceQueries.report(reportType);
+        List all = SurveillanceQueries.farmParams(reportType) == 3
+                ? jdbcTemplate.queryForList(sql, allFarms, farmId, farmId)
+                : jdbcTemplate.queryForList(sql, allFarms, farmId);
+        boolean truncated = all.size() > SurveillanceQueries.MAX_ROWS;
+        return new ReportRows(truncated ? new ArrayList<>(all.subList(0, SurveillanceQueries.MAX_ROWS)) : all, truncated);
     }
 
     private String renderCsvReport(List rows) {

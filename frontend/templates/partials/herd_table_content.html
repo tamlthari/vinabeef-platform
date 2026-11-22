@@ -2,15 +2,21 @@
 <span id="herd-total-badge" hx-swap-oob="true">({{ "{:,}".format(total_cattle) }})</span>
 {% endif %}
 
+{% from "partials/macros.html" import sort_th %}
+<input type="hidden" id="herd-sort" name="sort" value="{{ sort }}">
+<input type="hidden" id="herd-dir" name="dir" value="{{ dir }}">
 <div class="overflow-x-auto">
     <table class="w-full text-left text-xs text-gray-700">
-        <thead class="bg-gray-50/70 border-b border-gray-200 text-gray-600 font-semibold">
+        <thead class="bg-gray-50/70 border-b border-gray-200 text-gray-600">
             <tr>
-                <th class="px-5 py-3.5">Cattle <span class="text-gray-400">^</span></th>
-                <th class="px-5 py-3.5">Barn & Facility</th>
-                <th class="px-5 py-3.5">Status</th>
-                <th class="px-5 py-3.5">RFID Tags</th>
-                <th class="px-5 py-3.5">Vaccinations</th>
+                {{ sort_th('Cattle', 'id', sort, dir, '/htmx/herd-list', '#herd-table-container', '#herd-search-input', 'asc') }}
+                {{ sort_th('Barn & Facility', 'barn', sort, dir, '/htmx/herd-list', '#herd-table-container', '#herd-search-input', 'asc') }}
+                {{ sort_th('Presence', 'presence', sort, dir, '/htmx/herd-list', '#herd-table-container', '#herd-search-input', 'asc') }}
+                {{ sort_th('Health', 'health', sort, dir, '/htmx/herd-list', '#herd-table-container', '#herd-search-input', 'asc') }}
+                <th class="px-5 py-3.5 font-semibold">RFID Tags</th>
+                <th class="px-5 py-3.5 font-semibold">Vaccinations</th>
+                <th class="px-5 py-3.5 font-semibold" title="Gate passes recorded for this animal">IN / OUT</th>
+                {{ sort_th('Added', 'created', sort, dir, '/htmx/herd-list', '#herd-table-container', '#herd-search-input', 'desc', 'px-5 py-3.5 text-right') }}
                 <th class="px-5 py-3.5 text-right"></th>
             </tr>
         </thead>
@@ -36,7 +42,7 @@
         <!-- Previous Page -->
         <button type="button"
                 {% if page > 1 %}
-                hx-get="/htmx/herd-list?page={{ page - 1 }}"
+                hx-get="/htmx/herd-list?page={{ page - 1 }}&sort={{ sort }}&dir={{ dir }}"
                 hx-include="#herd-search-input"
                 hx-target="#herd-table-container"
                 class="px-2.5 py-1 rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 font-semibold transition"
@@ -55,7 +61,7 @@
             <span class="px-3 py-1 rounded bg-[#2f80ed] text-white font-semibold shadow-xs">{{ p }}</span>
             {% else %}
             <button type="button"
-                    hx-get="/htmx/herd-list?page={{ p }}"
+                    hx-get="/htmx/herd-list?page={{ p }}&sort={{ sort }}&dir={{ dir }}"
                     hx-include="#herd-search-input"
                     hx-target="#herd-table-container"
                     class="px-3 py-1 rounded border border-gray-200 bg-white text-gray-700 hover:bg-blue-50 hover:border-blue-300 font-medium transition">
@@ -67,7 +73,7 @@
         <!-- Next Page -->
         <button type="button"
                 {% if page < total_pages %}
-                hx-get="/htmx/herd-list?page={{ page + 1 }}"
+                hx-get="/htmx/herd-list?page={{ page + 1 }}&sort={{ sort }}&dir={{ dir }}"
                 hx-include="#herd-search-input"
                 hx-target="#herd-table-container"
                 class="px-2.5 py-1 rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 font-semibold transition"

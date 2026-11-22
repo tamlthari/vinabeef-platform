@@ -1,25 +1,76 @@
-{% for log in logs %}
-<tr class="hover:bg-blue-50/40 transition">
-    <td class="px-4 py-3 font-semibold text-gray-800">{{ log.actor_id }}</td>
-    <td class="px-4 py-3 font-mono text-[11px] text-blue-600">{{ log.action }}</td>
-    <td class="px-4 py-3 font-mono text-[11px] text-gray-500 truncate max-w-xs">{{ log.details }}</td>
-    <td class="px-4 py-3 text-gray-600">{{ log.target }}</td>
-    <td class="px-4 py-3 text-gray-500">{{ log.target }}</td>
-    <td class="px-4 py-3">
-        {% if log.outcome == 'SUCCESS' %}
-        <span class="inline-block px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-            SUCCESS
-        </span>
-        {% else %}
-        <span class="inline-block px-2 py-0.5 rounded text-[11px] font-semibold bg-red-50 text-red-700 border border-red-200">
-            {{ log.outcome }}
-        </span>
-        {% endif %}
-    </td>
-    <td class="px-4 py-3 font-mono text-[11px] text-gray-500 text-right">{{ log.event_at }}</td>
-</tr>
+{# The drop-downs of the filter form are filled from what was really logged. OOB swaps keep the chosen value. #}
+<select id="audit-action" name="action" hx-swap-oob="true" class="w-full border border-gray-300 rounded px-3 py-2 bg-white focus:outline-none focus:border-blue-500">
+    <option value="">Any action</option>
+    {% for a in actions %}<option value="{{ a }}" {% if a == sel_action %}selected{% endif %}>{{ a }}</option>{% endfor %}
+</select>
+<select id="audit-target" name="target" hx-swap-oob="true" class="w-full border border-gray-300 rounded px-3 py-2 bg-white focus:outline-none focus:border-blue-500">
+    <option value="">Any asset type</option>
+    {% for t in targets %}<option value="{{ t }}" {% if t == sel_target %}selected{% endif %}>{{ t }}</option>{% endfor %}
+</select>
+
+{% if error %}
+<div class="px-5 py-3 bg-rose-50 border-b border-rose-200 text-rose-800 text-xs font-semibold">{{ error }}</div>
 {% else %}
-<tr>
-    <td colspan="7" class="py-8 text-center text-gray-400">No data available</td>
-</tr>
-{% endfor %}
+<div class="px-5 py-3 border-b border-gray-100 flex flex-wrap justify-between items-center gap-3 text-xs text-gray-500">
+    <span>{{ period_label }}: <strong class="font-mono text-gray-800">{{ "{:,}".format(total) }}</strong> entr{{ 'y' if total == 1 else 'ies' }}</span>
+    <span class="text-gray-400">Newest first. Click a row's "Details" to see what was sent. Passwords and tokens are never stored.</span>
+</div>
+<div class="overflow-x-auto">
+    <table class="w-full text-left text-xs text-gray-700">
+        <thead class="bg-gray-50 border-b border-gray-200 text-gray-600 font-semibold">
+            <tr>
+                <th class="px-4 py-3">Person</th>
+                <th class="px-4 py-3">Action</th>
+                <th class="px-4 py-3">Input (what was sent)</th>
+                <th class="px-4 py-3">Output</th>
+                <th class="px-4 py-3">Asset type</th>
+                <th class="px-4 py-3">Result</th>
+                <th class="px-4 py-3 text-right">Time</th>
+            </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">
+            {% for log in logs %}
+            <tr class="hover:bg-blue-50/40 align-top">
+                <td class="px-4 py-3 font-semibold text-gray-800">{{ log.actor_id }}</td>
+                <td class="px-4 py-3 font-mono text-[11px] text-blue-600">{{ log.action }}</td>
+                <td class="px-4 py-3 text-gray-600 max-w-sm">
+                    <div class="font-mono text-[11px] break-words">{{ log.input_summary }}</div>
+                    {% if log.pretty %}
+                    <details class="mt-1"><summary class="cursor-pointer text-[11px] text-blue-600">Details</summary>
+                        <pre class="mt-1 p-2 bg-gray-50 border border-gray-200 rounded text-[10px] whitespace-pre-wrap break-words max-h-64 overflow-auto">{{ log.pretty }}</pre>
+                    </details>
+                    {% endif %}
+                </td>
+                <td class="px-4 py-3 text-gray-600 max-w-xs break-words">{{ log.output_summary }}</td>
+                <td class="px-4 py-3 text-gray-500">{{ log.target }}</td>
+                <td class="px-4 py-3">
+                    {% if log.outcome == 'SUCCESS' %}
+                    <span class="inline-block px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">SUCCESS</span>
+                    {% else %}
+                    <span class="inline-block px-2 py-0.5 rounded text-[11px] font-semibold bg-red-50 text-red-700 border border-red-200">{{ log.outcome }}</span>
+                    {% endif %}
+                </td>
+                <td class="px-4 py-3 font-mono text-[11px] text-gray-500 text-right whitespace-nowrap">{{ log.event_at | localtime }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="7" class="py-10 text-center text-gray-400">No audit entries match these filters.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% if total_pages > 1 %}
+<div class="px-5 py-3 border-t border-gray-100 flex flex-wrap justify-between items-center gap-3 text-xs text-gray-500">
+    <span>Showing <strong class="font-mono text-gray-800">{{ "{:,}".format(start_item) }}</strong> to <strong class="font-mono text-gray-800">{{ "{:,}".format(end_item) }}</strong> of <strong class="font-mono text-gray-800">{{ "{:,}".format(total) }}</strong></span>
+    <div class="flex items-center space-x-1">
+        {% if page > 1 %}<button type="button" hx-get="/htmx/audit-table?page={{ page - 1 }}" hx-include="#audit-form" hx-target="#audit-table-container" class="px-2.5 py-1 rounded border border-gray-300 bg-white hover:bg-gray-50 font-semibold">&lt;</button>{% endif %}
+        {% for p in page_range %}
+            {% if p == '...' %}<span class="px-2 text-gray-400">...</span>
+            {% elif p == page %}<span class="px-3 py-1 rounded bg-[#2f80ed] text-white font-semibold">{{ p }}</span>
+            {% else %}<button type="button" hx-get="/htmx/audit-table?page={{ p }}" hx-include="#audit-form" hx-target="#audit-table-container" class="px-3 py-1 rounded border border-gray-200 bg-white hover:bg-blue-50">{{ p }}</button>{% endif %}
+        {% endfor %}
+        {% if page < total_pages %}<button type="button" hx-get="/htmx/audit-table?page={{ page + 1 }}" hx-include="#audit-form" hx-target="#audit-table-container" class="px-2.5 py-1 rounded border border-gray-300 bg-white hover:bg-gray-50 font-semibold">&gt;</button>{% endif %}
+    </div>
+</div>
+{% endif %}
+{% endif %}

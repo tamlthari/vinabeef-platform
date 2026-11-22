@@ -7,7 +7,6 @@ import com.vinabeef.ingestion.SafetrustEventDto;
 import com.vinabeef.ingestion.TelemetryEventProcessor;
 import com.vinabeef.movement.Movement;
 import com.vinabeef.movement.MovementRepository;
-// import com.vinabeef.movement.SafetrustProcessingService;
 import com.vinabeef.security.RbacScopeService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -17,6 +16,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
+import java.sql.Timestamp;
 import java.util.*;
 
 @RestController
@@ -29,9 +29,9 @@ public class GateMonitorController {
     private final BarnRepository barnRepo;
     private final MovementRepository movementRepo;
     private final JdbcTemplate jdbcTemplate;
-    // private final SafetrustProcessingService processingService;
     private final TelemetryEventProcessor eventProcessor;
     private final RbacScopeService rbacScopeService;
+    private final ReportClock clock;
 
     @GetMapping("/barns")
     public ResponseEntity<List<Barn>> getAllBarns() {
@@ -86,7 +86,6 @@ public class GateMonitorController {
         if (dto.getTimestamp() == null) {
             dto.setTimestamp(System.currentTimeMillis());
         }
-        // processingService.processSafetrustRead(dto, "GATE_REST", tStart);
         eventProcessor.processSafetrustRead(dto, "GATE_REST", tStart);
         double latencyMs = Math.round((System.nanoTime() - tStart) / 10000.0) / 100.0;
         return ResponseEntity.ok(Map.of(
@@ -109,27 +108,39 @@ public class GateMonitorController {
         }
 
         var barnRows = jdbcTemplate.queryForList("""
-            SELECT barn_id, code, current_headcount,
-                   COALESCE(daily_in_count, 0) AS daily_in_count,
-                   COALESCE(daily_out_count, 0) AS daily_out_count
-            FROM barns
-            WHERE barn_id = ?
-        """, barnId);
+            SELECT b.barn_id, b.code, c.in_barn_count, c.out_pasture_count,
+                   COALESCE(m.in_count, 0)  AS passes_in,
+                   COALESCE(m.out_count, 0) AS passes_out
+            FROM barns b
+            JOIN v_barn_counts c ON c.barn_id = b.barn_id
+            LEFT JOIN (
+                SELECT g.barn_id,
+                       COUNT(*) FILTER (WHERE mv.direction = 'IN')  AS in_count,
+                       COUNT(*) FILTER (WHERE mv.direction = 'OUT') AS out_count
+                FROM movements mv
+                JOIN gates g ON g.gate_id = mv.gate_id
+                WHERE g.barn_id = ? AND mv.occurred_at >= ? AND mv.occurred_at < ?
+                GROUP BY g.barn_id
+            ) m ON m.barn_id = b.barn_id
+            WHERE b.barn_id = ?
+        """, barnId, Timestamp.from(clock.today().fromInclusive()), Timestamp.from(clock.today().toExclusive()), barnId);
 
         if (barnRows.isEmpty()) {
             return ResponseEntity.notFound().build();
         }
 
         Map row = barnRows.get(0);
-        int inCount = ((Number) row.get("daily_in_count")).intValue();
-        int outCount = ((Number) row.get("daily_out_count")).intValue();
-        int deficit = Math.max(0, outCount - inCount);
+        // Today's passes through this barn's gates (local day), and the cattle that are out right now.
+        // The old counters never reset, so "exited" and "returned" were lifetime totals.
+        int inCount = ((Number) row.get("passes_in")).intValue();
+        int outCount = ((Number) row.get("passes_out")).intValue();
+        int deficit = ((Number) row.get("out_pasture_count")).intValue();
 
         List<String> unreturnedAnimals = jdbcTemplate.queryForList("""
             SELECT a.animal_id
             FROM animals a
             JOIN presence_states ps ON a.animal_id = ps.animal_id
-            WHERE a.assigned_barn_id = ?
+            WHERE ps.current_barn_id = ?
               AND a.lifecycle_status = 'ACTIVE'
               AND ps.presence_status = 'OUT_PASTURE'
               AND NOT EXISTS (
@@ -147,7 +158,7 @@ public class GateMonitorController {
             jdbcTemplate.update("""
                 INSERT INTO alerts (alert_id, type, severity, animal_id, barn_id, state, evidence, raised_at)
                 VALUES (?, 'MISSING_CATTLE', 'HIGH', ?, ?, 'OPEN',
-                        jsonb_build_object('reason', 'Fewer cattle returned than left barn', 'exitedCount', ?, 'returnedCount', ?, 'deficit', ?),
+                        jsonb_build_object('reason', 'Cattle that left this barn have not come back', 'exitedToday', ?, 'returnedToday', ?, 'stillOut', ?),
                         CURRENT_TIMESTAMP)
             """, alertId, animalId, barnId, outCount, inCount, deficit);
         }
@@ -156,7 +167,7 @@ public class GateMonitorController {
                 "barnId", barnId,
                 "exitedCount", outCount,
                 "returnedCount", inCount,
-                "deficit", deficit,
+                "deficit", deficit,   // cattle whose last gate pass at this barn was OUT
                 "newlyFlaggedAlerts", unreturnedAnimals.size()
         ));
     }
@@ -165,39 +176,46 @@ public class GateMonitorController {
     public ResponseEntity<?> getFacilityDistribution() {
         var scope = rbacScopeService.getCurrentScope();
 
+        var today = clock.today();
         String sql = """
-            SELECT 
+            SELECT
                 f.farm_id,
                 f.name AS farm_name,
                 f.location,
                 b.barn_id,
                 b.code AS barn_code,
                 b.capacity AS barn_capacity,
-                b.current_headcount AS barn_headcount,
-                COALESCE(b.daily_in_count, 0) AS barn_in_count,
-                COALESCE(b.daily_out_count, 0) AS barn_out_count,
-                COALESCE(stats.assigned_animals, 0) AS barn_assigned_animals,
+                c.in_barn_count AS barn_headcount,
+                c.out_pasture_count AS barn_out_pasture,
+                c.unseen_count AS barn_unseen,
+                COALESCE(m.in_count, 0)  AS barn_in_count,
+                COALESCE(m.out_count, 0) AS barn_out_count,
+                c.assigned_count AS barn_assigned_animals,
                 COALESCE(stats.vaccinated_animals, 0) AS barn_vaccinated_animals
             FROM farms f
             JOIN barns b ON f.farm_id = b.farm_id
+            JOIN v_barn_counts c ON c.barn_id = b.barn_id
             LEFT JOIN (
-                SELECT 
-                    a.assigned_barn_id,
-                    COUNT(a.animal_id) AS assigned_animals,
-                    COUNT(v.animal_id) AS vaccinated_animals
+                SELECT g.barn_id,
+                       COUNT(*) FILTER (WHERE mv.direction = 'IN')  AS in_count,
+                       COUNT(*) FILTER (WHERE mv.direction = 'OUT') AS out_count
+                FROM movements mv
+                JOIN gates g ON g.gate_id = mv.gate_id
+                WHERE mv.occurred_at >= ? AND mv.occurred_at < ?
+                GROUP BY g.barn_id
+            ) m ON m.barn_id = b.barn_id
+            LEFT JOIN (
+                SELECT a.assigned_barn_id, COUNT(*) AS vaccinated_animals
                 FROM animals a
-                LEFT JOIN (
-                    SELECT DISTINCT animal_id 
-                    FROM health_records 
-                    WHERE record_type = 'VACCINATION'
-                ) v ON a.animal_id = v.animal_id
                 WHERE a.lifecycle_status = 'ACTIVE'
+                  AND EXISTS (SELECT 1 FROM health_records hr
+                              WHERE hr.animal_id = a.animal_id AND hr.record_type = 'VACCINATION')
                 GROUP BY a.assigned_barn_id
             ) stats ON b.barn_id = stats.assigned_barn_id
-            ORDER BY f.farm_id, b.current_headcount DESC, b.code ASC
+            ORDER BY f.farm_id, c.assigned_count DESC, b.code ASC
         """;
 
-        var rows = jdbcTemplate.queryForList(sql);
+        var rows = jdbcTemplate.queryForList(sql, Timestamp.from(today.fromInclusive()), Timestamp.from(today.toExclusive()));
         var farmMap = new LinkedHashMap<String, Object>();
 
         for (var row : rows) {
@@ -218,6 +236,8 @@ public class GateMonitorController {
                 map.put("totalHeadcount", 0);
                 map.put("totalInCount", 0);
                 map.put("totalOutCount", 0);
+                map.put("totalOutPasture", 0);
+                map.put("totalNotSeen", 0);
                 map.put("totalAnimals", 0);
                 map.put("vaccinatedAnimals", 0);
                 map.put("barns", new ArrayList<Object>());
@@ -228,6 +248,8 @@ public class GateMonitorController {
             int headcount = ((Number) row.get("barn_headcount")).intValue();
             int inCount = ((Number) row.get("barn_in_count")).intValue();
             int outCount = ((Number) row.get("barn_out_count")).intValue();
+            int outPasture = ((Number) row.get("barn_out_pasture")).intValue();
+            int notSeen = ((Number) row.get("barn_unseen")).intValue();
             int assignedAnimals = ((Number) row.get("barn_assigned_animals")).intValue();
             int vaccinatedAnimals = ((Number) row.get("barn_vaccinated_animals")).intValue();
 
@@ -235,6 +257,8 @@ public class GateMonitorController {
             farmData.put("totalHeadcount", (int) farmData.get("totalHeadcount") + headcount);
             farmData.put("totalInCount", (int) farmData.get("totalInCount") + inCount);
             farmData.put("totalOutCount", (int) farmData.get("totalOutCount") + outCount);
+            farmData.put("totalOutPasture", (int) farmData.get("totalOutPasture") + outPasture);
+            farmData.put("totalNotSeen", (int) farmData.get("totalNotSeen") + notSeen);
             farmData.put("totalAnimals", (int) farmData.get("totalAnimals") + assignedAnimals);
             farmData.put("vaccinatedAnimals", (int) farmData.get("vaccinatedAnimals") + vaccinatedAnimals);
 
@@ -245,7 +269,10 @@ public class GateMonitorController {
             barnInfo.put("currentHeadcount", headcount);
             barnInfo.put("inCount", inCount);
             barnInfo.put("outCount", outCount);
-            barnInfo.put("unreturnedDeficit", Math.max(0, outCount - inCount));
+            barnInfo.put("outPasture", outPasture);
+            barnInfo.put("notSeen", notSeen);
+            // cattle that left through this barn's gate and have not been seen coming back
+            barnInfo.put("unreturnedDeficit", outPasture);
             barnInfo.put("assignedAnimals", assignedAnimals);
             barnInfo.put("vaccinatedAnimals", vaccinatedAnimals);
 
@@ -276,8 +303,8 @@ public class GateMonitorController {
                 Map<String, Object> b = (Map<String, Object>) o2;
 
                 int headCmp = Integer.compare(
-                        ((Number) b.get("currentHeadcount")).intValue(),
-                        ((Number) a.get("currentHeadcount")).intValue()
+                        ((Number) b.get("assignedAnimals")).intValue(),
+                        ((Number) a.get("assignedAnimals")).intValue()
                 );
                 if (headCmp != 0) return headCmp;
 

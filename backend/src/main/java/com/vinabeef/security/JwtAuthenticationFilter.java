@@ -6,6 +6,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -20,6 +21,7 @@ import java.util.Collections;
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtProvider jwtProvider;
+    private final JdbcTemplate jdbcTemplate;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
@@ -32,7 +34,18 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             try {
                 Claims claims = jwtProvider.parseToken(token);
                 String username = claims.getSubject();
-                String role = claims.get("role", String.class);
+
+                // The token only proves who logged in. Role and "still allowed" come from the database on every
+                // request, so deleting, disabling or demoting an account takes effect at once instead of when the
+                // token expires.
+                var rows = jdbcTemplate.queryForList(
+                        "SELECT role, enabled FROM users WHERE username = ?", username);
+                if (rows.isEmpty() || Boolean.FALSE.equals(rows.get(0).get("enabled"))) {
+                    SecurityContextHolder.clearContext();
+                    filterChain.doFilter(request, response);
+                    return;
+                }
+                String role = String.valueOf(rows.get(0).get("role"));
 
                 // Spring Security role prefix convention: ROLE_<ROLE_NAME>
                 SimpleGrantedAuthority authority = new SimpleGrantedAuthority("ROLE_" + role);

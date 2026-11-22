@@ -26,7 +26,12 @@
         </div>
 
         <!-- Metadata Row -->
-        <div class="grid grid-cols-2 sm:grid-cols-5 gap-6 pt-4 border-t border-gray-100 text-xs">
+        <div class="grid grid-cols-2 sm:grid-cols-6 gap-6 pt-4 border-t border-gray-100 text-xs">
+            <div>
+                <span class="text-gray-400 block mb-1">Passes IN / OUT</span>
+                <strong class="font-mono text-sm"><span class="text-emerald-600">{{ "{:,}".format(reader.in_count | default(0)) }}</span> <span class="text-gray-300">/</span> <span class="text-amber-600">{{ "{:,}".format(reader.out_count | default(0)) }}</span></strong>
+                <div class="text-[11px] text-gray-400 mt-0.5">today: {{ reader.today_in | default(0) }} / {{ reader.today_out | default(0) }}</div>
+            </div>
             <div>
                 <span class="text-gray-400 block mb-1">Status</span>
                 <span class="inline-block px-2.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold">

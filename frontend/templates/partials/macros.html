@@ -1,0 +1,18 @@
+{# Sortable table header cell. Clicking it asks the server for the same list ordered by `key`: a second click flips the
+   direction. `first` is the direction used the first time (text columns ascending, dates and counts descending).
+   `include` is a CSS selector of the search box so a typed filter is kept while sorting. #}
+{% macro sort_th(label, key, sort, dir, url, target, include, first='asc', cls='px-5 py-3.5') -%}
+{% set active = (sort == key) %}
+{% set next_dir = (('desc' if dir == 'asc' else 'asc') if active else first) %}
+<th class="{{ cls }}" aria-sort="{{ ('ascending' if dir == 'asc' else 'descending') if active else 'none' }}">
+    <button type="button"
+            hx-get="{{ url }}{{ '&' if '?' in url else '?' }}page=1&sort={{ key }}&dir={{ next_dir }}"
+            {% if include %}hx-include="{{ include }}"{% endif %}
+            hx-target="{{ target }}"
+            title="Sort by {{ label | lower }}"
+            class="inline-flex items-center gap-1 font-semibold hover:text-blue-700 {{ 'text-blue-700' if active else '' }}">
+        <span>{{ label }}</span>
+        <span class="text-[10px] {{ 'text-blue-600' if active else 'text-gray-300' }}">{{ ('▲' if dir == 'asc' else '▼') if active else '↕' }}</span>
+    </button>
+</th>
+{%- endmacro %}

@@ -1,0 +1,29 @@
+{% from "partials/macros.html" import sort_th %}
+<input type="hidden" id="reader-sort" name="sort" value="{{ sort }}">
+<input type="hidden" id="reader-dir" name="dir" value="{{ dir }}">
+<div class="overflow-x-auto">
+    <table class="w-full text-left text-xs text-gray-700">
+        <thead class="bg-gray-50/70 border-b border-gray-200 text-gray-600">
+            <tr>
+                {{ sort_th('Gate Reader', 'reader', sort, dir, '/htmx/readers-list', '#readers-table-container', '#reader-search', 'asc') }}
+                {{ sort_th('Direction Rule', 'direction', sort, dir, '/htmx/readers-list', '#readers-table-container', '#reader-search', 'asc') }}
+                <th class="px-5 py-3.5 font-semibold">Firmware</th>
+                {{ sort_th('Friendly Label', 'label', sort, dir, '/htmx/readers-list', '#readers-table-container', '#reader-search', 'asc') }}
+                {{ sort_th('Facility', 'farm', sort, dir, '/htmx/readers-list', '#readers-table-container', '#reader-search', 'asc') }}
+                {{ sort_th('Barn', 'barn', sort, dir, '/htmx/readers-list', '#readers-table-container', '#reader-search', 'asc') }}
+                {{ sort_th('IN', 'in', sort, dir, '/htmx/readers-list', '#readers-table-container', '#reader-search', 'desc', 'px-5 py-3.5 text-right') }}
+                {{ sort_th('OUT', 'out', sort, dir, '/htmx/readers-list', '#readers-table-container', '#reader-search', 'desc', 'px-5 py-3.5 text-right') }}
+                {{ sort_th('Last Seen', 'last_seen', sort, dir, '/htmx/readers-list', '#readers-table-container', '#reader-search', 'desc', 'px-5 py-3.5 text-right') }}
+                {{ sort_th('Added', 'created', sort, dir, '/htmx/readers-list', '#readers-table-container', '#reader-search', 'desc', 'px-5 py-3.5 text-right') }}
+                <th class="px-5 py-3.5 text-right"></th>
+            </tr>
+        </thead>
+        <tbody id="readers-table-body" class="divide-y divide-gray-100">
+            {% include "partials/reader_rows.html" %}
+        </tbody>
+    </table>
+</div>
+<div class="px-5 py-3 border-t border-gray-100 text-xs text-gray-500 flex justify-between items-center">
+    <span>{{ readers|length }} reader{{ '' if readers|length == 1 else 's' }}{% if q %} matching "{{ q }}"{% endif %}</span>
+    <span class="text-gray-400">Newest first by default. IN / OUT are all recorded gate passes; today's are shown under each number.</span>
+</div>

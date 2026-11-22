@@ -132,8 +132,20 @@
         <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-6 space-y-5">
             <h3 class="text-sm font-bold text-gray-800">Telemetry & Clinical Summary</h3>
             <div class="flex items-center justify-between">
-                <span class="text-xs text-gray-500">Today Gate Passages</span>
-                <span class="text-xl font-bold text-gray-900 font-mono">{{ animal.todayMovements }}</span>
+                <span class="text-xs text-gray-500">Today's gate passes (IN / OUT)</span>
+                <span class="text-xl font-bold font-mono">
+                    <span class="text-emerald-600">{{ animal.todayIn | default(0) }}</span>
+                    <span class="text-gray-300">/</span>
+                    <span class="text-amber-600">{{ animal.todayOut | default(0) }}</span>
+                </span>
+            </div>
+            <div class="flex items-center justify-between pt-3 border-t border-gray-100">
+                <span class="text-xs text-gray-500">All recorded passes (IN / OUT)</span>
+                <span class="text-xl font-bold font-mono">
+                    <span class="text-emerald-600">{{ animal.inCount | default(0) }}</span>
+                    <span class="text-gray-300">/</span>
+                    <span class="text-amber-600">{{ animal.outCount | default(0) }}</span>
+                </span>
             </div>
             <div class="flex items-center justify-between pt-3 border-t border-gray-100">
                 <span class="text-xs text-gray-500">Immunization & Treatment Entries</span>

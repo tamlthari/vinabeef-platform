@@ -33,3 +33,19 @@ vinabeef:
       device-key: "728589"
       company-key: "475"
       token: "eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiI3YTA1MDkwNGFiODM2ODkxYXBpdG9rZW4tdGh1Y3RhbS5ob0BzYWZldHJ1c3QuY29tIiwiTE9HSU5fS0VZIjoiNjE3NzY0IiwiQVVUSEVOVElDQVRFX01FVEhPRCI6ImVtIiwiVE9LRU5fVFlQRSI6ImFwaVRva2VuIiwiQUNDT1VOVF9LRVkiOiI2MTYzNjAiLCJERVZJQ0VfS0VZIjoiNzI4NTg5IiwiVVNFUl9LRVkiOiI4OTk4OTIiLCJTRVNTSU9OX0lEIjoiYTRiYzEyMGMtNmNlNC00ZjZiLWJlODctMWIwMmExYjhhMDcxIiwiQUNDRVNTX0NPTVBBTlkiOiI0NzUiLCJBUElfU0NPUEUiOiJDT01QQU5ZIiwianRpIjoidURJZEZvckdlbmVyYXRlZFRva2VuIiwiVEFSR0VUX0NPTVBBTlkiOiI0NzUifQ.QA55Xkun-a75Dr3Rq_F-fJhXSQNkIP8jLwO7rbSG2vxnL34jOOgdtoScSxpStI2SK73v8MXm8LH3sYgzRXJdtA"
+  # Calendar day used for "today" (IN/OUT today, reports, dashboard). Gate passes are stored in UTC.
+  timezone: ${VINABEEF_TIMEZONE:Asia/Ho_Chi_Minh}
+
+# National Animal Disease Control System (NADCS) delivery of surveillance reports.
+#   SIMULATION (default): nothing leaves the server; the log says SIMULATED.
+#   LIVE: the report is POSTed to `endpoint` with the key in the `api-key-header` header; the log shows what the agency answered.
+# The endpoint and key are server settings only; a request can never change them. Put the key in the environment, not in this file.
+# The default endpoint is a PLACEHOLDER: replace it with the URL and credentials the Department of Animal Health gives you.
+nadcs:
+  mode: ${NADCS_MODE:SIMULATION}
+  endpoint: ${NADCS_ENDPOINT:https://api.nadcs.dah.gov.vn/v2/surveillance/herd-health}
+  api-key: ${NADCS_API_KEY:}
+  api-key-header: ${NADCS_API_KEY_HEADER:X-API-Key}
+  timeout-ms: ${NADCS_TIMEOUT_MS:5000}
+  # hosts allowed over plain http (testing with scripts/mock_nadcs_server.py): e.g. localhost,127.0.0.1
+  insecure-hosts: ${NADCS_INSECURE_HOSTS:}
