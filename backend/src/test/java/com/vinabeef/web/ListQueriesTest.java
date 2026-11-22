@@ -88,4 +88,27 @@ class ListQueriesTest {
         assertTrue(ListQueries.readers(ReportQueries.Scope.ALL, "", "out", "asc", DAY_START, DAY_END).sql()
                 .endsWith("ORDER BY mc.out_count ASC NULLS LAST, g.gate_id ASC"));
     }
+
+    @Test
+    void recentMovementsCarryReaderNamesAndApplyTheScopeBeforeTheLimit() {
+        var all = ListQueries.recentMovements(ReportQueries.Scope.ALL, 15);
+        assertBound(all);
+        assertTrue(all.sql().contains("sr.reader_name AS read_reader"), "the reader that completed the pass");
+        assertTrue(all.sql().contains("fr.reader_name AS first_reader"), "the reader that saw the animal first");
+        assertTrue(all.sql().contains("g.reader_name AS gate_reader") && all.sql().contains("g.label       AS gate_label"));
+        assertTrue(all.sql().contains("ORDER BY mv.occurred_at DESC, mv.movement_id DESC LIMIT ?"));
+        assertEquals(List.of(15), all.params());
+
+        var farm = ListQueries.recentMovements(ReportQueries.Scope.farm("FARM-DONG-NAI"), 15);
+        assertBound(farm);
+        assertTrue(farm.sql().indexOf("b.farm_id = ?") > 0 && farm.sql().indexOf("b.farm_id = ?") < farm.sql().indexOf("LIMIT"),
+                "scope must be inside the statement, before LIMIT");
+        assertEquals(List.of("FARM-DONG-NAI", 15), farm.params());
+
+        var barns = ListQueries.recentMovements(ReportQueries.Scope.barns(List.of("B1", "B2")), 15);
+        assertBound(barns);
+        assertEquals(List.of("B1", "B2", 15), barns.params());
+
+        assertTrue(ListQueries.recentMovements(ReportQueries.Scope.NONE, 15).sql().contains("1 = 0"));
+    }
 }

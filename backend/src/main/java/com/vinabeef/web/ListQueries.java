@@ -141,6 +141,37 @@ final class ListQueries {
         return new ReportQueries.Query(sql.toString(), params);
     }
 
+    // ------------------------------------------------------------------------------------------------ recent movements
+
+    /**
+     * The newest gate passages in scope, for the dashboard's "Gate Passage Stream".
+     * Carries the names people recognise (the reader names printed on the hardware and in the Safetrust console, the gate
+     * label, the barn code), not only the gate's internal key (e.g. "GATE-3A9F2C"), which means nothing outside the database.
+     * The scope is applied inside the statement, before LIMIT: filtering the newest N rows afterwards left a farm manager
+     * with an empty stream whenever the newest N passages belonged to another farm.
+     */
+    static ReportQueries.Query recentMovements(ReportQueries.Scope scope, int limit) {
+        List<Object> params = new ArrayList<>();
+        StringBuilder sql = new StringBuilder("""
+            SELECT mv.movement_id, mv.animal_id, mv.gate_id, mv.direction, mv.detection_method, mv.occurred_at,
+                   g.label       AS gate_label,
+                   g.reader_name AS gate_reader,
+                   sr.reader_name AS read_reader,
+                   fr.reader_name AS first_reader,
+                   b.code        AS barn_code
+            FROM movements mv
+            LEFT JOIN gates g  ON g.gate_id = mv.gate_id
+            LEFT JOIN barns b  ON b.barn_id = g.barn_id
+            LEFT JOIN rfid_read_events sr ON sr.event_id = mv.source_event_id
+            LEFT JOIN rfid_read_events fr ON fr.event_id = mv.first_event_id
+            WHERE 1 = 1
+        """);
+        ReportQueries.scope(sql, params, scope, "b");
+        sql.append(" ORDER BY mv.occurred_at DESC, mv.movement_id DESC LIMIT ? ");
+        params.add(limit);
+        return new ReportQueries.Query(sql.toString(), params);
+    }
+
     // ------------------------------------------------------------------------------------------------------- readers
 
     /** All active readers in scope. {@code dayStart}/{@code dayEnd} bound "today" for the today_in / today_out counts. */

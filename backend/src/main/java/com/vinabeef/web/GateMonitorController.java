@@ -5,8 +5,6 @@ import com.vinabeef.facilities.Barn;
 import com.vinabeef.facilities.BarnRepository;
 import com.vinabeef.ingestion.SafetrustEventDto;
 import com.vinabeef.ingestion.TelemetryEventProcessor;
-import com.vinabeef.movement.Movement;
-import com.vinabeef.movement.MovementRepository;
 import com.vinabeef.security.RbacScopeService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -27,7 +25,6 @@ import java.util.*;
 public class GateMonitorController {
 
     private final BarnRepository barnRepo;
-    private final MovementRepository movementRepo;
     private final JdbcTemplate jdbcTemplate;
     private final TelemetryEventProcessor eventProcessor;
     private final RbacScopeService rbacScopeService;
@@ -53,31 +50,50 @@ public class GateMonitorController {
         return ResponseEntity.ok(List.of());
     }
 
+    /**
+     * Newest gate passages for the dashboard stream. The fields of the old response (movementId, animalId, gateId, direction,
+     * detectionMethod, occurredAt) are unchanged; gateLabel, gateReader, readerName (the reader that completed the pass),
+     * firstReader and barnCode are added so the screen can show names people recognise instead of the internal gate key.
+     */
     @GetMapping("/movements/recent")
-    public ResponseEntity<List<Movement>> getRecentMovements() {
-        var scope = rbacScopeService.getCurrentScope();
-        List<Movement> recent = movementRepo.findTop15ByOrderByOccurredAtDesc();
-        if (scope.isGlobal()) {
-            return ResponseEntity.ok(recent);
+    public ResponseEntity<List<Map<String, Object>>> getRecentMovements() {
+        var scope = currentReportScope();
+        if (scope.seesNothing()) {
+            return ResponseEntity.ok(List.of());
         }
-
-        Set<String> allowedGateIds = new HashSet<>();
-        if (scope.isFarmScoped() && scope.farmId() != null) {
-            allowedGateIds.addAll(jdbcTemplate.queryForList("""
-                SELECT g.gate_id FROM gates g
-                JOIN barns b ON g.barn_id = b.barn_id
-                WHERE b.farm_id = ?
-            """, String.class, scope.farmId()));
-        } else if (scope.isBarnScoped() && !scope.barnIds().isEmpty()) {
-            String placeholders = String.join(",", Collections.nCopies(scope.barnIds().size(), "?"));
-            allowedGateIds.addAll(jdbcTemplate.queryForList(
-                    "SELECT gate_id FROM gates WHERE barn_id IN (" + placeholders + ")",
-                    String.class, scope.barnIds().toArray()));
+        var q = ListQueries.recentMovements(scope, 15);
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(q.sql(), q.params().toArray());
+        List<Map<String, Object>> out = new ArrayList<>(rows.size());
+        for (Map<String, Object> r : rows) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("movementId", r.get("movement_id"));
+            m.put("animalId", r.get("animal_id"));
+            m.put("gateId", r.get("gate_id"));
+            m.put("direction", r.get("direction"));
+            m.put("detectionMethod", r.get("detection_method"));
+            m.put("occurredAt", r.get("occurred_at") instanceof Timestamp t ? t.toInstant().toString() : r.get("occurred_at"));
+            m.put("gateLabel", r.get("gate_label"));
+            m.put("gateReader", r.get("gate_reader"));
+            m.put("readerName", r.get("read_reader"));
+            m.put("firstReader", r.get("first_reader"));
+            m.put("barnCode", r.get("barn_code"));
+            out.add(m);
         }
+        return ResponseEntity.ok(out);
+    }
 
-        return ResponseEntity.ok(recent.stream()
-                .filter(m -> allowedGateIds.contains(m.getGateId()))
-                .toList());
+    private ReportQueries.Scope currentReportScope() {
+        var s = rbacScopeService.getCurrentScope();
+        if (s.isGlobal()) {
+            return ReportQueries.Scope.ALL;
+        }
+        if (s.isFarmScoped()) {
+            return ReportQueries.Scope.farm(s.farmId());
+        }
+        if (s.isBarnScoped()) {
+            return ReportQueries.Scope.barns(s.barnIds());
+        }
+        return ReportQueries.Scope.NONE;
     }
 
     @PostMapping("/gates/simulate-read")
