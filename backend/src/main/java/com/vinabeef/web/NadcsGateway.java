@@ -7,6 +7,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
@@ -109,8 +110,29 @@ public class NadcsGateway {
         }
     }
 
-    /** Sends the payload (LIVE) or reports honestly that it did not (SIMULATION). Never throws for an unreachable agency. */
+    /** Address of the test server's own submissions page; empty unless a test server is configured. */
+    public String testServerUiUrl() {
+        if (!isTestServer()) {
+            return "";
+        }
+        try {
+            URI u = URI.create(target);
+            return u.getScheme() == null || u.getRawAuthority() == null ? "" : u.getScheme() + "://" + u.getRawAuthority() + "/ui";
+        } catch (IllegalArgumentException e) {
+            return "";
+        }
+    }
+
     public Result send(String payload, String format, int recordCount) {
+        return send(payload, format, recordCount, null);
+    }
+
+    /**
+     * Sends the payload (LIVE) or reports honestly that it did not (SIMULATION). Never throws for an unreachable agency.
+     * {@code clientRef} (VinaBeef's own transmission id) travels in the {@code X-Client-Reference} header, so a submission
+     * on the receiving side can be matched to its row in the transmission log.
+     */
+    public Result send(String payload, String format, int recordCount, String clientRef) {
         if (!live) {
             return new Result(SIMULATED, null,
                     "SIMULATED: nothing was sent to the agency (nadcs.mode=SIMULATION). " + recordCount + " records were prepared.");
@@ -125,14 +147,16 @@ public class NadcsGateway {
         }
         Result result;
         try {
-            HttpRequest request = HttpRequest.newBuilder()
+            HttpRequest.Builder builder = HttpRequest.newBuilder()
                     .uri(uri)
                     .timeout(timeout)
-                    .header("Content-Type", "XML".equalsIgnoreCase(format) ? "application/xml" : "application/json")
+                    .header("Content-Type", TransmissionBody.contentType(format))
                     .header("Accept", "application/json")
-                    .header(apiKeyHeader, apiKey)
-                    .POST(HttpRequest.BodyPublishers.ofString(payload))
-                    .build();
+                    .header(apiKeyHeader, apiKey);
+            if (clientRef != null && clientRef.matches("[A-Za-z0-9._:-]{1,64}")) {
+                builder.header("X-Client-Reference", clientRef);
+            }
+            HttpRequest request = builder.POST(HttpRequest.BodyPublishers.ofString(payload, StandardCharsets.UTF_8)).build();
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
             result = classify(response.statusCode(), response.body());
         } catch (InterruptedException e) {

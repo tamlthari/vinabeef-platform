@@ -12,6 +12,7 @@ import httpx
 import json
 import math
 import os
+import re
 
 app = FastAPI(title="VinaBeef Enterprise Portal")
 app.add_middleware(
@@ -1665,6 +1666,92 @@ async def htmx_surveillance_transmit(
         "banner_msg": banner_msg,
         "banner_kind": banner_kind
     })
+
+
+TX_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+def human_bytes(n) -> str:
+    if n is None:
+        return ""
+    n = int(n)
+    if n < 1024:
+        return f"{n} B"
+    if n < 1024 * 1024:
+        return f"{n / 1024:.1f} KB"
+    return f"{n / (1024 * 1024):.1f} MB"
+
+
+def build_transmission_view(d: dict) -> dict:
+    """What the detail window shows, worked out from the backend's answer (pure, so it can be tested without a browser)."""
+    raw = d.get("bodyExcerpt") or ""
+    pretty = None
+    # a pretty-printed copy only when the text shown is the whole body: a cut-off JSON document does not parse
+    if d.get("payloadFormat") == "JSON" and raw and not d.get("excerptTruncated") and not d.get("storedTruncated"):
+        try:
+            pretty = json.dumps(json.loads(raw), indent=2, ensure_ascii=False)
+        except ValueError:
+            pretty = None
+    summary = d.get("responseSummary") or ""
+    host = re.search(r"via test server ([^\s:]+)", summary)
+    status = d.get("deliveryStatus") or "SIMULATED"
+    return {
+        "raw": raw,
+        "pretty": pretty,
+        "has_body": bool(d.get("bodyVisible")) and bool(raw or d.get("storedChars")),
+        "size": human_bytes(d.get("payloadBytes")),
+        "shown_chars": len(raw),
+        "stored_chars": d.get("storedChars") or 0,
+        "simulated": status == "SIMULATED",
+        "via_test": "via test server" in summary,
+        "test_host": host.group(1) if host else "",
+        "sent_note": ("Nothing was sent: this is the body that would have been sent." if status == "SIMULATED"
+                      else "UNREACHABLE: the request was sent but no answer came back." if status == "UNREACHABLE" else ""),
+        "can_link_test_server": str(d.get("testServerUi") or "").startswith(("http://", "https://")) and "via test server" in summary,
+    }
+
+
+@app.get("/htmx/surveillance/transmissions/{tx_id}", response_class=HTMLResponse)
+async def htmx_transmission_detail(request: Request, tx_id: str, user: dict = Depends(get_current_user)):
+    """The window opened by clicking a row of the transmission log: what was sent, and what came back."""
+    if not user:
+        return HTMLResponse("<div class='p-6 text-xs text-rose-700'>Session expired. Sign in again.</div>")
+    if user.get("role") not in ["SYSTEM_ADMIN", "FARM_MANAGER", "EXECUTIVE"]:
+        return HTMLResponse("<div class='p-6 text-xs text-rose-700'>Your role cannot view surveillance transmissions.</div>", status_code=403)
+    if not TX_ID_RE.match(tx_id):
+        return HTMLResponse("<div class='p-6 text-xs text-rose-700'>That is not a transmission id.</div>")
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        res = await client.get(f"{BACKEND_BASE_URL}/surveillance/transmissions/{tx_id}", params={"maxChars": 120000}, headers=get_auth_headers(user))
+    if res.status_code != 200:
+        # 200 on purpose: HTMX does not swap an error status into the window, and the reason belongs there
+        return templates.TemplateResponse("partials/transmission_detail.html", {
+            "request": request, "d": None, "view": None, "tx_id": tx_id,
+            "error": extract_backend_error(res, "The transmission could not be loaded.")})
+    d = res.json()
+    return templates.TemplateResponse("partials/transmission_detail.html", {
+        "request": request, "d": d, "view": build_transmission_view(d), "tx_id": tx_id, "error": ""})
+
+
+@app.get("/surveillance/transmissions/{tx_id}/body")
+async def surveillance_transmission_body(tx_id: str, user: dict = Depends(get_current_user)):
+    """The whole stored body of one transmission as a download."""
+    if not user:
+        return RedirectResponse(url="/login")
+    if user.get("role") not in ["SYSTEM_ADMIN", "FARM_MANAGER", "EXECUTIVE"]:
+        raise HTTPException(status_code=403, detail="Access denied: Insufficient privileges for surveillance transmissions.")
+    if not TX_ID_RE.match(tx_id):
+        raise HTTPException(status_code=404, detail="That is not a transmission id.")
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        res = await client.get(f"{BACKEND_BASE_URL}/surveillance/transmissions/{tx_id}/body", headers=get_auth_headers(user))
+    if res.status_code != 200:
+        raise HTTPException(status_code=res.status_code if res.status_code in (403, 404) else 502,
+                            detail=extract_backend_error(res, "The body could not be loaded."))
+    headers = {"Content-Disposition": res.headers.get("Content-Disposition", f'attachment; filename="{tx_id}.txt"'),
+               "X-Content-Type-Options": "nosniff"}
+    for h in ("X-Payload-Sha256", "X-Payload-Truncated"):
+        if h in res.headers:
+            headers[h] = res.headers[h]
+    return Response(content=res.content, media_type=res.headers.get("Content-Type", "application/octet-stream"), headers=headers)
 
 
 @app.post("/htmx/barns/{barn_id}/verify-return", response_class=HTMLResponse)

@@ -18,15 +18,18 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 import sys
 from collections import deque
 from datetime import datetime, timezone
 from typing import Any
 
-import spec
 from fastapi import FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
+
+import spec
+import ui
 
 try:
     from defusedxml import ElementTree as SafeET
@@ -36,7 +39,15 @@ except ImportError:                       # pragma: no cover - defusedxml is in 
 MAX_BODY_BYTES = 30 * 1024 * 1024
 KEEP_SUBMISSIONS = 200
 PREVIEW_CHARS = 4000
+# how much of each received body is kept for the page (bytes). 200 kept submissions x 200 KB is at most ~40 MB of text.
+BODY_STORE_BYTES = int(os.environ.get("NADCS_MOCK_BODY_BYTES", "200000"))
 BEHAVIORS = ("normal", "reject_all", "server_error", "unavailable", "slow", "rate_limit")
+# behaviours that fail on purpose: (HTTP status, status word, text, extra headers)
+FAULTS = {
+    "server_error": (500, "ERROR", "Simulated internal error (behavior=server_error).", {}),
+    "unavailable": (503, "UNAVAILABLE", "Simulated maintenance window (behavior=unavailable).", {"Retry-After": "120"}),
+    "rate_limit": (429, "RATE_LIMITED", "Simulated rate limit (behavior=rate_limit).", {"Retry-After": "60"}),
+}
 
 app = FastAPI(title="NADCS test server (mock)", version="1.0.0",
               description="A test double of the national animal-disease reporting API. Not the real agency.")
@@ -126,8 +137,42 @@ def _summary(accepted: bool, outcome: spec.Outcome, receipt: str | None) -> str:
 
 
 def _log(entry: dict) -> None:
-    print(json.dumps({k: entry[k] for k in ("submissionId", "receivedAt", "outcome", "reportType", "farmScope", "recordCount",
-                                            "errorCount", "warningCount", "receiptId", "httpStatus")}), file=sys.stdout, flush=True)
+    print(json.dumps({k: entry.get(k) for k in ("submissionId", "receivedAt", "outcome", "reportType", "farmScope", "recordCount",
+                                                "errorCount", "warningCount", "receiptId", "httpStatus", "clientRef", "bytes", "sha256")}),
+          file=sys.stdout, flush=True)
+
+
+def _record(entry: dict) -> None:
+    SUBMISSIONS.appendleft(entry)
+    _log(entry)
+
+
+def _client_ref(request: Request) -> str | None:
+    """VinaBeef's own transmission id (X-Client-Reference), so a submission can be matched to its row in the sender's log.
+    Anything that is not a plain token is dropped rather than stored."""
+    v = (request.headers.get("x-client-reference") or "").strip()
+    return v if re.fullmatch(r"[A-Za-z0-9._:-]{1,64}", v) else None
+
+
+def _stored_text(raw: bytes) -> tuple[str, bool]:
+    """(text kept for the page, whether it is cut). The cut never leaves half a UTF-8 character at the end."""
+    cut = len(raw) > BODY_STORE_BYTES
+    chunk = raw[:BODY_STORE_BYTES]
+    if cut:
+        for end in range(len(chunk), max(len(chunk) - 4, 0), -1):
+            try:
+                return chunk[:end].decode("utf-8"), True
+            except UnicodeDecodeError:
+                continue
+    return chunk.decode("utf-8", "replace"), cut
+
+
+def _entry(request: Request, raw: bytes, label: str, received: datetime, sid: str, fmt: str | None = None) -> dict:
+    ct = (request.headers.get("content-type") or "")[:80]
+    text, cut = _stored_text(raw)
+    return {"submissionId": sid, "receivedAt": received.isoformat(), "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(),
+            "format": fmt or ("XML" if "xml" in ct.lower() else "JSON"), "contentType": ct, "clientRef": _client_ref(request),
+            "keyLabel": label, "payload": text, "payloadTruncated": cut}
 
 
 # ---------------------------------------------------------------------------------------------------- endpoints
@@ -136,7 +181,7 @@ def index():
     return _json(200, {"service": "NADCS test server", "note": "A test double of the national animal-disease reporting API. NOT the real agency.",
                        "behavior": STATE["behavior"],
                        "endpoints": ["POST /v2/surveillance/herd-health", "POST /v2/surveillance/validate", "GET /v2/surveillance/spec",
-                                     "GET /v2/surveillance/submissions", "GET /v2/surveillance/submissions/{id}", "GET|POST /admin/behavior", "GET /health"]})
+                                     "GET /v2/surveillance/submissions", "GET /v2/surveillance/submissions/{id}", "GET|POST /admin/behavior", "GET /health", "GET /ui (browser page)"]})
 
 
 @app.get("/health")
@@ -182,30 +227,56 @@ async def validate_only(request: Request, x_api_key: str | None = Header(None), 
                                         "warningCount": f.warning_count, "warnings": f.warnings})
 
 
+def _early_reject(request: Request, raw: bytes, label: str, received: datetime, sid: str, status: int, code: str, message: str,
+                  declared_bytes: int | None = None) -> JSONResponse:
+    """A request refused before it could be validated (too large, wrong content type): recorded like any other."""
+    entry = _entry(request, raw, label, received, sid)
+    if declared_bytes is not None:
+        entry.update(bytes=declared_bytes, sha256=None)
+    entry.update(outcome="REJECTED", httpStatus=status, reportType=None, farmScope=None, recordCount=None, errorCount=1, warningCount=0,
+                 errors=[{"path": "$", "code": code, "message": message}], warnings=[], receiptId=None, summary=message)
+    _record(entry)
+    word = {413: "TOO_LARGE", 415: "UNSUPPORTED_MEDIA_TYPE"}.get(status, "ERROR")
+    return _json(status, {"status": word, "submissionId": sid, "summary": message, "errorCount": 1, "errors": entry["errors"]})
+
+
 @app.post("/v2/surveillance/herd-health")
 async def receive(request: Request, x_api_key: str | None = Header(None), authorization: str | None = Header(None)):
-    label = _authorize(x_api_key, authorization)
+    label = _authorize(x_api_key, authorization)          # an unauthenticated request is refused and not recorded
+    received = datetime.now(timezone.utc)                 # arrival time, even if the behaviour below makes the answer slow
+    sid = "SUB-" + received.strftime("%Y%m%d") + "-" + secrets.token_hex(3).upper()
     behavior = STATE["behavior"]
-    if behavior == "server_error":
-        return _json(500, {"status": "ERROR", "summary": "Simulated internal error (behavior=server_error)."})
-    if behavior == "unavailable":
-        return _json(503, {"status": "UNAVAILABLE", "summary": "Simulated maintenance window (behavior=unavailable)."}, {"Retry-After": "120"})
-    if behavior == "rate_limit":
-        return _json(429, {"status": "RATE_LIMITED", "summary": "Simulated rate limit (behavior=rate_limit)."}, {"Retry-After": "60"})
+
+    if behavior in FAULTS:
+        status, word, text, extra = FAULTS[behavior]
+        try:
+            raw = await _read(request)
+        except HTTPException:
+            raw = b""                                      # a failing server does not care how big it was
+        entry = _entry(request, raw, label, received, sid)
+        entry.update(outcome="ERROR", httpStatus=status, reportType=None, farmScope=None, recordCount=None, errorCount=1, warningCount=0,
+                     errors=[{"path": "$", "code": "INJECTED_FAULT", "message": text}], warnings=[], receiptId=None, summary=text)
+        _record(entry)
+        return _json(status, {"status": word, "submissionId": sid, "summary": text}, extra)
     if behavior == "slow":
         await asyncio.sleep(STATE["slow_seconds"])
 
-    raw = await _read(request)
-    received = datetime.now(timezone.utc)
-    sid = "SUB-" + received.strftime("%Y%m%d") + "-" + secrets.token_hex(3).upper()
-    outcome, fmt, parse_error = _evaluate(raw, request.headers.get("content-type", ""))
+    try:
+        raw = await _read(request)
+    except HTTPException as e:
+        declared = request.headers.get("content-length")
+        return _early_reject(request, b"", label, received, sid, e.status_code, "BODY_TOO_LARGE", str(e.detail),
+                             int(declared) if declared and declared.isdigit() else 0)
+    try:
+        outcome, fmt, parse_error = _evaluate(raw, request.headers.get("content-type", ""))
+    except HTTPException as e:                              # unsupported content type
+        return _early_reject(request, raw, label, received, sid, e.status_code, "UNSUPPORTED_MEDIA_TYPE", str(e.detail))
 
-    entry: dict[str, Any] = {"submissionId": sid, "receivedAt": received.isoformat(), "format": fmt, "bytes": len(raw), "keyLabel": label,
-                             "payloadPreview": raw[:PREVIEW_CHARS].decode("utf-8", "replace")}
+    entry = _entry(request, raw, label, received, sid, fmt)
     if parse_error:
-        entry.update(outcome="REJECTED", httpStatus=400, reportType=None, farmScope=None, recordCount=0, errorCount=1, warningCount=0,
-                     errors=[{"path": "$", "code": "UNREADABLE", "message": parse_error}], warnings=[], receiptId=None)
-        SUBMISSIONS.appendleft(entry); _log(entry)
+        entry.update(outcome="REJECTED", httpStatus=400, reportType=None, farmScope=None, recordCount=None, errorCount=1, warningCount=0,
+                     errors=[{"path": "$", "code": "UNREADABLE", "message": parse_error}], warnings=[], receiptId=None, summary=parse_error)
+        _record(entry)
         return _json(400, {"status": "REJECTED", "submissionId": sid, "summary": parse_error, "errorCount": 1, "errors": entry["errors"]})
 
     f = outcome.findings
@@ -217,9 +288,9 @@ async def receive(request: Request, x_api_key: str | None = Header(None), author
         entry["errors"] = [{"path": "$", "code": "POLICY", "message": "Rejected on purpose (behavior=reject_all)."}]
         entry["errorCount"] = 1
     if not accepted:
-        entry.update(outcome="REJECTED", httpStatus=422, receiptId=None)
-        SUBMISSIONS.appendleft(entry); _log(entry)
         summary = _summary(False, outcome, None) if f.error_count else "Rejected: Rejected on purpose (behavior=reject_all)."
+        entry.update(outcome="REJECTED", httpStatus=422, receiptId=None, summary=summary)
+        _record(entry)
         return _json(422, {"status": "REJECTED", "submissionId": sid, "summary": summary, "errorCount": entry["errorCount"],
                            "errors": entry["errors"], "warningCount": f.warning_count, "warnings": f.warnings})
 
@@ -234,19 +305,22 @@ async def receive(request: Request, x_api_key: str | None = Header(None), author
         SEEN_CONTENT[digest] = receipt
         if len(SEEN_CONTENT) > 1000:
             SEEN_CONTENT.pop(next(iter(SEEN_CONTENT)))
-    entry.update(outcome="ACCEPTED", httpStatus=202, receiptId=receipt)
-    SUBMISSIONS.appendleft(entry); _log(entry)
+    summary = _summary(True, outcome, receipt)
+    entry.update(outcome="ACCEPTED", httpStatus=202, receiptId=receipt, summary=summary)
+    _record(entry)
     return _json(202, {"status": "ACCEPTED", "receiptId": receipt, "submissionId": sid, "receivedAt": entry["receivedAt"],
                        "reportType": outcome.report_type, "farmScope": outcome.farm_scope, "recordCount": outcome.record_count,
-                       "summary": _summary(True, outcome, receipt), "warningCount": f.warning_count, "warnings": f.warnings})
+                       "summary": summary, "warningCount": f.warning_count, "warnings": f.warnings})
 
 
 def _public(e: dict, full: bool) -> dict:
     keys = ("submissionId", "receivedAt", "outcome", "httpStatus", "receiptId", "reportType", "farmScope", "recordCount",
-            "errorCount", "warningCount", "format", "bytes")
+            "errorCount", "warningCount", "format", "bytes", "clientRef", "contentType", "sha256", "summary", "payloadTruncated")
     d = {k: e.get(k) for k in keys}
     if full:
-        d.update(errors=e.get("errors", []), warnings=e.get("warnings", []), payloadPreview=e.get("payloadPreview", ""), keyLabel=e.get("keyLabel"))
+        payload = e.get("payload", "")
+        d.update(errors=e.get("errors", []), warnings=e.get("warnings", []), payload=payload,
+                 payloadPreview=payload[:PREVIEW_CHARS], payloadStoredBytes=len(payload.encode("utf-8")), keyLabel=e.get("keyLabel"))
     return d
 
 
@@ -255,17 +329,30 @@ def list_submissions(limit: int = Query(20, ge=1, le=KEEP_SUBMISSIONS), outcome:
                      x_api_key: str | None = Header(None), authorization: str | None = Header(None)):
     _authorize(x_api_key, authorization)
     rows = [e for e in SUBMISSIONS if not outcome or e["outcome"] == outcome.upper()]
-    return _json(200, {"count": len(rows[:limit]), "kept": len(SUBMISSIONS),
+    counts = {k: sum(1 for e in SUBMISSIONS if e["outcome"] == k) for k in ("ACCEPTED", "REJECTED", "ERROR")}
+    return _json(200, {"count": len(rows[:limit]), "kept": len(SUBMISSIONS), "maxKept": KEEP_SUBMISSIONS, "counts": counts,
+                       "behavior": STATE["behavior"],
                        "note": "In memory only: cleared on restart / spin-down.", "items": [_public(e, False) for e in rows[:limit]]})
 
 
 @app.get("/v2/surveillance/submissions/{submission_id}")
 def get_submission(submission_id: str, x_api_key: str | None = Header(None), authorization: str | None = Header(None)):
+    """By submission id, receipt id or the sender's reference (X-Client-Reference); the newest match wins."""
     _authorize(x_api_key, authorization)
     for e in SUBMISSIONS:
-        if e["submissionId"] == submission_id or e.get("receiptId") == submission_id:
+        if submission_id in (e["submissionId"], e.get("receiptId"), e.get("clientRef")):
             return _json(200, _public(e, True))
     raise HTTPException(404, detail=f"No submission '{submission_id[:40]}' is kept (the list is in memory and holds the last {KEEP_SUBMISSIONS}).")
+
+
+@app.get("/ui", response_class=HTMLResponse, include_in_schema=False)
+def submissions_page():
+    """The page that shows the submissions. It carries no data and no key: it asks for the key and then calls the API above."""
+    nonce = secrets.token_urlsafe(16)
+    return HTMLResponse(ui.page(nonce), headers={
+        "Content-Security-Policy": (f"default-src 'none'; script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; "
+                                    "connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"),
+        "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer", "X-Mock-Server": "nadcs-mock"})
 
 
 @app.get("/admin/behavior")

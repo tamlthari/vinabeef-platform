@@ -5,6 +5,7 @@ import com.vinabeef.security.RbacScopeService;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -29,6 +30,10 @@ public class SurveillanceReportController {
     private final JdbcTemplate jdbcTemplate;
     private final RbacScopeService rbacScopeService;
     private final NadcsGateway nadcs;
+
+    /** How much of a transmitted body the log keeps (characters). The size and SHA-256 always describe the whole body. */
+    @Value("${nadcs.body-store-max-chars:2000000}")
+    private int bodyStoreMaxChars;
 
     /**
      * What the caller may choose. The destination and the credential are NOT part of it: they come from the server's
@@ -185,24 +190,27 @@ public class SurveillanceReportController {
                 ? renderXmlReport(reportType, farmScope, rows)
                 : renderJsonReport(reportType, farmScope, rows);
 
+        // the id exists before the call so it can travel with the request (X-Client-Reference) and be found on the other side
+        String txId = "TX-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
         NadcsGateway.Result result;
         try {
-            result = nadcs.send(payload, format, rows.size());
+            result = nadcs.send(payload, format, rows.size(), txId);
         } catch (NadcsGateway.NotConfiguredException e) {
             return ResponseEntity.status(503).body(Map.of("error", e.getMessage()));
         }
 
-        String txId = "TX-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
         String actor = auth != null ? auth.getName() : "system";
-        String snapshot = payload.length() > 2500 ? payload.substring(0, 2500) + "...(truncated)" : payload;
+        TransmissionBody.Captured body = TransmissionBody.capture(payload, bodyStoreMaxChars);
 
         jdbcTemplate.update("""
             INSERT INTO external_transmissions
             (transmission_id, target_system, endpoint_url, report_type, farm_scope, record_count, payload_format,
-             http_status, delivery_status, response_summary, payload_snapshot, transmitted_by, transmitted_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+             http_status, delivery_status, response_summary, payload_snapshot, payload_bytes, payload_sha256,
+             payload_truncated, transmitted_by, transmitted_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         """, txId, targetSystem, nadcs.endpoint(), reportType, farmScope, rows.size(), format,
-                result.httpStatus(), result.deliveryStatus(), result.summary(), snapshot, actor);
+                result.httpStatus(), result.deliveryStatus(), result.summary(), body.text(), body.bytes(), body.sha256(),
+                body.truncated(), actor);
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("status", result.deliveryStatus());
@@ -212,6 +220,82 @@ public class SurveillanceReportController {
         out.put("recordCount", rows.size());
         out.put("responseSummary", result.summary());
         return ResponseEntity.ok(out);
+    }
+
+    /**
+     * One row of the transmission log with the body that was sent (or, in SIMULATION, would have been sent).
+     * {@code maxChars} limits the excerpt returned here; the whole stored body is at {@code /transmissions/{id}/body}.
+     * A farm-scoped account sees the metadata of an all-farm report but not its body (it holds other farms' animals).
+     */
+    @GetMapping("/transmissions/{transmissionId}")
+    @PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'FARM_MANAGER', 'EXECUTIVE')")
+    public ResponseEntity getTransmission(@PathVariable String transmissionId,
+                                          @RequestParam(defaultValue = "120000") int maxChars) {
+        var scope = rbacScopeService.getCurrentScope();
+        String farm = resolveEffectiveFarm(scope, "ALL");
+        boolean allFarms = "ALL".equalsIgnoreCase(farm);
+        int excerpt = Math.min(Math.max(maxChars, 0), 500_000);
+
+        var rows = jdbcTemplate.queryForList(SurveillanceQueries.TRANSMISSION_DETAIL,
+                allFarms, farm, allFarms, farm, excerpt, transmissionId, allFarms, farm);
+        if (rows.isEmpty()) {
+            return ResponseEntity.status(404).body(Map.of("error", "No transmission '" + transmissionId + "' is visible to this account."));
+        }
+        Map<String, Object> row = new LinkedHashMap<>(rows.get(0));
+        boolean visible = Boolean.TRUE.equals(row.get("body_visible"));
+        boolean legacy = row.get("payload_bytes") == null;            // recorded before the full body was kept
+        String text = visible && row.get("body_excerpt") != null ? row.get("body_excerpt").toString() : "";
+        long storedChars = ((Number) row.get("stored_chars")).longValue();
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("transmissionId", row.get("transmission_id"));
+        out.put("targetSystem", row.get("target_system"));
+        out.put("endpointUrl", row.get("endpoint_url"));
+        out.put("reportType", row.get("report_type"));
+        out.put("farmScope", row.get("farm_scope"));
+        out.put("recordCount", row.get("record_count"));
+        out.put("payloadFormat", row.get("payload_format"));
+        out.put("contentType", TransmissionBody.contentType(String.valueOf(row.get("payload_format"))));
+        out.put("httpStatus", row.get("http_status"));
+        out.put("deliveryStatus", row.get("delivery_status"));
+        out.put("responseSummary", row.get("response_summary"));
+        out.put("transmittedBy", row.get("transmitted_by"));
+        out.put("transmittedAt", row.get("transmitted_at"));
+        out.put("bodyVisible", visible);
+        out.put("legacy", legacy);
+        out.put("payloadBytes", row.get("payload_bytes"));
+        out.put("payloadSha256", row.get("payload_sha256"));
+        out.put("storedTruncated", Boolean.TRUE.equals(row.get("payload_truncated")));
+        out.put("storedChars", storedChars);
+        out.put("bodyExcerpt", text);
+        out.put("excerptTruncated", visible && storedChars > text.length());
+        out.put("testServerUi", nadcs.testServerUiUrl());
+        return ResponseEntity.ok(out);
+    }
+
+    /** The whole stored body of one transmission, as it was sent (same visibility rule as the detail). */
+    @GetMapping("/transmissions/{transmissionId}/body")
+    @PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'FARM_MANAGER', 'EXECUTIVE')")
+    public ResponseEntity getTransmissionBody(@PathVariable String transmissionId) {
+        var scope = rbacScopeService.getCurrentScope();
+        String farm = resolveEffectiveFarm(scope, "ALL");
+        boolean allFarms = "ALL".equalsIgnoreCase(farm);
+        var rows = jdbcTemplate.queryForList(SurveillanceQueries.TRANSMISSION_BODY, transmissionId, allFarms, farm);
+        if (rows.isEmpty()) {
+            return ResponseEntity.status(404).body(Map.of("error",
+                    "No transmission '" + transmissionId + "' with a body this account may see."));
+        }
+        Map<String, Object> row = rows.get(0);
+        String format = String.valueOf(row.get("payload_format"));
+        String text = row.get("payload_snapshot") == null ? "" : row.get("payload_snapshot").toString();
+        var ok = ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(TransmissionBody.contentType(format) + "; charset=UTF-8"))
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + TransmissionBody.fileName(transmissionId, format) + "\"")
+                .header("X-Payload-Truncated", String.valueOf(Boolean.TRUE.equals(row.get("payload_truncated"))));
+        if (row.get("payload_sha256") != null) {
+            ok = ok.header("X-Payload-Sha256", row.get("payload_sha256").toString());
+        }
+        return ok.body(text.getBytes(StandardCharsets.UTF_8));
     }
 
     private String resolveEffectiveFarm(RbacScopeService.UserScope scope, String requestedFarm) {

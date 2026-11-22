@@ -260,4 +260,68 @@ class NadcsGatewayTest {
         assertEquals("", NadcsGateway.answerText(null, 100));
         assertEquals("abcde...", NadcsGateway.answerText("abcdefghij", 5));
     }
+
+    /** records the reference header and the exact bytes of the request */
+    private static HttpServer capturing(AtomicReference<String> ref, AtomicReference<byte[]> bytes, AtomicReference<String> contentType) throws Exception {
+        HttpServer s = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        s.createContext("/herd-health", ex -> {
+            ref.set(ex.getRequestHeaders().getFirst("X-Client-Reference"));
+            contentType.set(ex.getRequestHeaders().getFirst("Content-Type"));
+            bytes.set(ex.getRequestBody().readAllBytes());
+            byte[] out = "{\"summary\":\"Accepted: receipt R-1\"}".getBytes(StandardCharsets.UTF_8);
+            ex.sendResponseHeaders(202, out.length);
+            ex.getResponseBody().write(out);
+            ex.close();
+        });
+        s.start();
+        return s;
+    }
+
+    @Test
+    void theTransmissionIdTravelsAsAClientReferenceAndTheBodyArrivesByteForByte() throws Exception {
+        var ref = new AtomicReference<String>();
+        var bytes = new AtomicReference<byte[]>();
+        var type = new AtomicReference<String>();
+        var s = capturing(ref, bytes, type);
+        try {
+            // non-ASCII text: the hash of what is stored must equal the hash of what the server received
+            String payload = "{\"farm\":\"Trang trại Đắk Lắk\",\"cow\":\"bò 🐄\"}";
+            var r = viaTestServer("k", "http://127.0.0.1:" + s.getAddress().getPort() + "/herd-health", 0)
+                    .send(payload, "JSON", 1, "TX-AB12CD34");
+
+            assertEquals("DELIVERED", r.deliveryStatus());
+            assertEquals("TX-AB12CD34", ref.get());
+            assertEquals("application/json", type.get());
+            assertEquals(TransmissionBody.sha256(payload.getBytes(StandardCharsets.UTF_8)), TransmissionBody.sha256(bytes.get()));
+            assertEquals(payload, new String(bytes.get(), StandardCharsets.UTF_8));
+        } finally {
+            s.stop(0);
+        }
+    }
+
+    @Test
+    void noReferenceHeaderIsSentWithoutOneOrForAnUnsafeValue() throws Exception {
+        var ref = new AtomicReference<String>("untouched");
+        var s = capturing(ref, new AtomicReference<>(), new AtomicReference<>());
+        try {
+            var g = viaTestServer("k", "http://127.0.0.1:" + s.getAddress().getPort() + "/herd-health", 0);
+            g.send("{}", "JSON", 0);
+            assertNull(ref.get());
+            ref.set("untouched");
+            g.send("{}", "JSON", 0, "TX-1\r\nInjected: yes");
+            assertNull(ref.get());
+            g.send("{}", "XML", 0, "x".repeat(65));
+            assertNull(ref.get());
+        } finally {
+            s.stop(0);
+        }
+    }
+
+    @Test
+    void theTestServerPageIsTheSchemeAndHostOfTheTargetAndOnlyForATestServer() {
+        var g = viaTestServer("k", "https://nadcs-mock.onrender.com/v2/surveillance/herd-health", 0);
+        assertEquals("https://nadcs-mock.onrender.com/ui", g.testServerUiUrl());
+        assertEquals("http://127.0.0.1:9099/ui", viaTestServer("k", "http://127.0.0.1:9099/v2/x", 0).testServerUiUrl());
+        assertEquals("", gateway("LIVE", "https://api.nadcs.dah.gov.vn/v2/surveillance/herd-health", "k", "").testServerUiUrl());
+    }
 }

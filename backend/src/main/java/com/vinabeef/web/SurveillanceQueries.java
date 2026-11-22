@@ -24,6 +24,31 @@ final class SurveillanceQueries {
     private SurveillanceQueries() {
     }
 
+    /**
+     * One transmission for its detail view. Eight parameters, in order: (allFarms, farmId) for body_visible, (allFarms, farmId)
+     * for the excerpt, excerptChars, transmissionId, then (allFarms, farmId) for which rows may be seen at all.
+     * The row is visible like the list (own farm or an all-farm report), but the BODY only when the caller may see every
+     * farm in it: an all-farm report carries other farms' animals, so a farm-scoped account gets the metadata and
+     * {@code body_excerpt = NULL}. Deciding this in SQL keeps a restricted body out of the application entirely.
+     */
+    static final String TRANSMISSION_DETAIL = """
+        SELECT transmission_id, target_system, endpoint_url, report_type, farm_scope, record_count, payload_format,
+               http_status, delivery_status, response_summary, transmitted_by, transmitted_at,
+               payload_bytes, payload_sha256, payload_truncated,
+               (? = TRUE OR farm_scope = ?) AS body_visible,
+               COALESCE(length(payload_snapshot), 0) AS stored_chars,
+               CASE WHEN (? = TRUE OR farm_scope = ?) THEN left(payload_snapshot, ?) END AS body_excerpt
+        FROM external_transmissions
+        WHERE transmission_id = ? AND (? = TRUE OR farm_scope = ? OR farm_scope = 'ALL')
+        """;
+
+    /** The whole stored body, same visibility rule. Parameters: (transmissionId, allFarms, farmId). */
+    static final String TRANSMISSION_BODY = """
+        SELECT transmission_id, payload_format, payload_snapshot, payload_sha256, payload_bytes, payload_truncated
+        FROM external_transmissions
+        WHERE transmission_id = ? AND (? = TRUE OR farm_scope = ?)
+        """;
+
     static boolean isKnownType(String reportType) {
         return List.of("OUTBREAK_SURVEILLANCE", "MOVEMENT_TRANSFERS", "HEALTH_TREATMENTS", "VACCINATION_COVERAGE").contains(reportType);
     }

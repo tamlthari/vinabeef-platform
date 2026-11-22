@@ -56,3 +56,5 @@ nadcs:
   target-url: ${NADCS_TARGET_URL:}
   # a sleeping free-tier host is woken first (GET /health) and given this long to answer; 0 = no wake-up call
   warmup-timeout-ms: ${NADCS_WARMUP_TIMEOUT_MS:70000}
+  # how much of each transmitted body the transmission log keeps, in characters (the size and SHA-256 always cover the whole body)
+  body-store-max-chars: ${NADCS_BODY_STORE_MAX_CHARS:2000000}

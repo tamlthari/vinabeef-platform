@@ -292,3 +292,122 @@ def test_behaviors_simulate_an_unhealthy_agency(client):
 def test_oversized_body_is_refused(client, monkeypatch):
     monkeypatch.setattr(main, "MAX_BODY_BYTES", 100)
     assert post(client, good()).status_code == 413
+
+
+# ---------------------------------------------------------------------------------- what the submissions page shows
+def _items(client, **params):
+    return client.get("/v2/surveillance/submissions", params={"limit": 200, **params}, headers=KEY).json()
+
+
+def test_every_request_that_reaches_the_endpoint_is_recorded_with_its_outcome(client, monkeypatch):
+    post(client, good())                                                              # accepted
+    post(client, good("OUTBREAK_SURVEILLANCE") | {"recordCount": 9})                  # rejected by validation
+    post(client, b"{not json", ct="application/json")                                 # unreadable
+    post(client, "x", ct="text/plain")                                                # unsupported type
+    monkeypatch.setattr(main, "MAX_BODY_BYTES", 10); post(client, good()); monkeypatch.setattr(main, "MAX_BODY_BYTES", 30 * 1024 * 1024)
+    for m in ("server_error", "unavailable", "rate_limit"):
+        client.post("/admin/behavior", json={"mode": m}, headers=KEY); post(client, good())
+    client.post("/admin/behavior", json={"mode": "reject_all"}, headers=KEY); post(client, good())
+    client.post("/admin/behavior", json={"mode": "normal"}, headers=KEY)
+    got = _items(client)
+    by_status = sorted((i["httpStatus"], i["outcome"]) for i in got["items"])
+    assert by_status == sorted([(202, "ACCEPTED"), (422, "REJECTED"), (400, "REJECTED"), (415, "REJECTED"), (413, "REJECTED"),
+                                (500, "ERROR"), (503, "ERROR"), (429, "ERROR"), (422, "REJECTED")])
+    assert got["counts"] == {"ACCEPTED": 1, "REJECTED": 5, "ERROR": 3} and got["kept"] == 9 and got["maxKept"] == 200
+    for i in got["items"]:
+        assert i["submissionId"].startswith("SUB-") and i["summary"], i
+        d = client.get(f"/v2/surveillance/submissions/{i['submissionId']}", headers=KEY).json()
+        assert d["errors"] or d["outcome"] == "ACCEPTED", d
+    assert not any(i["receiptId"] for i in got["items"] if i["outcome"] != "ACCEPTED")
+
+
+def test_a_wrong_key_is_never_recorded(client):
+    post(client, good(), headers={"X-API-Key": "wrong"})
+    assert _items(client)["kept"] == 0
+
+
+def test_the_received_body_is_kept_with_a_hash_of_exactly_the_bytes_sent(client):
+    import hashlib
+    body = json.dumps(good(), ensure_ascii=False).replace("Dak Lak", "Đắk Lắk 🐄")
+    raw = body.encode("utf-8")
+    r = post(client, raw, headers={**KEY, "X-Client-Reference": "TX-AB12CD34"})
+    sid = r.json()["submissionId"]
+    d = client.get(f"/v2/surveillance/submissions/{sid}", headers=KEY).json()
+    assert d["sha256"] == hashlib.sha256(raw).hexdigest() and d["bytes"] == len(raw)
+    assert d["payload"] == body and "Đắk Lắk 🐄" in d["payload"] and d["payloadTruncated"] is False
+    assert d["clientRef"] == "TX-AB12CD34" and d["contentType"] == "application/json" and d["format"] == "JSON"
+    assert d["payloadPreview"] == body[:main.PREVIEW_CHARS]
+
+
+def test_a_body_larger_than_the_store_is_cut_cleanly_but_size_and_hash_stay_whole(client, monkeypatch):
+    import hashlib
+    monkeypatch.setattr(main, "BODY_STORE_BYTES", 1001)
+    body = json.dumps({"pad": "đ" * 3000})                    # 2-byte characters: byte 1001 falls inside a character
+    raw = body.encode("utf-8")
+    sid = post(client, raw).json()["submissionId"]
+    d = client.get(f"/v2/surveillance/submissions/{sid}", headers=KEY).json()
+    assert d["payloadTruncated"] is True and d["bytes"] == len(raw) and d["sha256"] == hashlib.sha256(raw).hexdigest()
+    assert "�" not in d["payload"] and d["payloadStoredBytes"] <= 1001 and body.startswith(d["payload"])
+
+
+def test_xml_bodies_are_kept_as_received(client):
+    xml = ('<?xml version="1.0" encoding="UTF-8"?><SurveillanceReport schema="NADCS-WOAH-2.1" reportType="VACCINATION_COVERAGE" farmScope="ALL" '
+           f'generatedAt="{datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}"><RecordCount>1</RecordCount><Records><Record>'
+           + "".join(f"<{k}>{v}</{k}>" for k, v in COVER.items()) + "</Record></Records></SurveillanceReport>")
+    sid = post(client, xml, ct="application/xml").json()["submissionId"]
+    d = client.get(f"/v2/surveillance/submissions/{sid}", headers=KEY).json()
+    assert d["format"] == "XML" and d["payload"] == xml and d["contentType"] == "application/xml"
+
+
+def test_the_senders_reference_finds_the_submission_and_only_plain_tokens_are_kept(client):
+    sid = post(client, good(), headers={**KEY, "X-Client-Reference": "TX-0001"}).json()["submissionId"]
+    assert client.get("/v2/surveillance/submissions/TX-0001", headers=KEY).json()["submissionId"] == sid
+    for bad in ("x" * 65, "<script>alert(1)</script>", "a b", "TX-1;drop", ""):
+        r = post(client, good("OUTBREAK_SURVEILLANCE"), headers={**KEY, "X-Client-Reference": bad})
+        assert client.get(f"/v2/surveillance/submissions/{r.json()['submissionId']}", headers=KEY).json()["clientRef"] is None, bad
+    newest = post(client, good(), headers={**KEY, "X-Client-Reference": "TX-0001"}).json()["submissionId"]
+    assert client.get("/v2/surveillance/submissions/TX-0001", headers=KEY).json()["submissionId"] == newest, "the newest match wins"
+
+
+def test_an_injected_fault_keeps_the_body_and_the_reference(client):
+    client.post("/admin/behavior", json={"mode": "server_error"}, headers=KEY)
+    r = post(client, good(), headers={**KEY, "X-Client-Reference": "TX-FAULT1"})
+    assert r.status_code == 500 and r.json()["submissionId"].startswith("SUB-")
+    d = client.get("/v2/surveillance/submissions/TX-FAULT1", headers=KEY).json()
+    assert d["outcome"] == "ERROR" and d["httpStatus"] == 500 and d["errors"][0]["code"] == "INJECTED_FAULT" and d["payload"]
+
+
+def test_the_list_can_be_filtered_and_reports_the_mode(client):
+    post(client, good()); post(client, good("OUTBREAK_SURVEILLANCE") | {"recordCount": 9})
+    assert [i["outcome"] for i in _items(client, outcome="rejected")["items"]] == ["REJECTED"]
+    client.post("/admin/behavior", json={"mode": "reject_all"}, headers=KEY)
+    assert _items(client)["behavior"] == "reject_all"
+
+
+# ------------------------------------------------------------------------------------------------------- the page
+def test_the_page_is_public_carries_no_data_and_no_key_and_has_a_strict_policy(client):
+    made = post(client, good(), headers={**KEY, "X-Client-Reference": "TX-PAGE0001"}).json()
+    r = client.get("/ui")                                                         # no key sent
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/html")
+    for secret in ("test-key", "second-key", made["receiptId"], made["submissionId"], "TX-PAGE0001"):
+        assert secret not in r.text, secret
+    csp = r.headers["content-security-policy"]
+    nonce = csp.split("script-src 'nonce-")[1].split("'")[0]
+    assert f'<script nonce="{nonce}">' in r.text and f'<style nonce="{nonce}">' in r.text and "__NONCE__" not in r.text
+    assert "default-src 'none'" in csp and "connect-src 'self'" in csp and "unsafe-inline" not in csp and "frame-ancestors 'none'" in csp
+    assert r.headers["cache-control"] == "no-store" and r.headers["x-content-type-options"] == "nosniff"
+    assert client.get("/ui").headers["content-security-policy"] != csp, "a fresh nonce for every load"
+    import re
+    assert not re.search(r"""(src|href)=["']?(https?:)?//|url\(|@import""", r.text), "the page must load nothing from outside"
+
+
+def test_the_page_never_builds_markup_from_received_text():
+    import ui
+    html = ui.page("N")
+    assert "innerHTML" not in html and "outerHTML" not in html and "insertAdjacentHTML" not in html and "document.write" not in html
+    assert " style=\"" not in html.split("<script")[0].split("</style>")[1], "inline style attributes would be blocked by the policy"
+    assert "onclick=" not in html and "onerror=" not in html
+
+
+def test_the_page_is_listed_on_the_index(client):
+    assert any("/ui" in e for e in client.get("/").json()["endpoints"])

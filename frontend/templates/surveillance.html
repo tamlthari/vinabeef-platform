@@ -187,4 +187,89 @@
     </div>
 
 </div>
+<!-- Window opened by clicking a row of the transmission log: the request body that was sent and the answer that came back. -->
+<div id="tx-modal" class="hidden fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="Transmission details">
+    <div class="bg-white rounded-xl border border-gray-200 shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto relative">
+        <div id="tx-modal-body"></div>
+    </div>
+</div>
+
+<style>
+    .tx-view-btn[aria-pressed="true"] { background:#eff6ff; color:#1d4ed8; border-color:#bfdbfe; }
+    .tx-view-btn[aria-pressed="false"] { background:#fff; color:#374151; border-color:#d1d5db; }
+</style>
+<script>
+(function () {
+    var modal = document.getElementById('tx-modal');
+    var box = document.getElementById('tx-modal-body');
+    var lastRow = null;
+
+    function note(text, cls) {
+        box.textContent = '';
+        var d = document.createElement('div');
+        d.className = cls;
+        d.textContent = text;
+        box.appendChild(d);
+    }
+    function openModal() { modal.classList.remove('hidden'); }
+    function closeModal() {
+        modal.classList.add('hidden');
+        box.textContent = '';
+        if (lastRow) { lastRow.focus(); lastRow = null; }
+    }
+    function isRow(el) { return el && el.hasAttribute && el.hasAttribute('data-tx-row'); }
+
+    document.body.addEventListener('htmx:beforeRequest', function (e) {
+        if (!isRow(e.detail.elt)) return;
+        lastRow = e.detail.elt;
+        note('Loading the request...', 'p-8 text-xs text-gray-500');
+        openModal();
+    });
+    document.body.addEventListener('htmx:responseError', function (e) {
+        if (isRow(e.detail.elt)) note('The transmission could not be loaded (HTTP ' + e.detail.xhr.status + ').', 'p-6 text-xs text-rose-700');
+    });
+    document.body.addEventListener('htmx:sendError', function (e) {
+        if (isRow(e.detail.elt)) note('No answer from the server.', 'p-6 text-xs text-rose-700');
+    });
+    document.body.addEventListener('htmx:afterSwap', function (e) {
+        if (e.detail.target === box) { var c = box.querySelector('[data-tx-close]'); if (c) c.focus(); }
+    });
+
+    function copyText(text, btn) {
+        var old = btn.textContent;
+        function done() { btn.textContent = 'Copied'; setTimeout(function () { btn.textContent = old; }, 1200); }
+        function fallback() {
+            var ta = document.createElement('textarea');
+            ta.value = text; ta.setAttribute('aria-hidden', 'true'); document.body.appendChild(ta); ta.select();
+            try { document.execCommand('copy'); done(); } catch (err) { btn.textContent = 'Copy failed'; }
+            ta.remove();
+        }
+        if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(done, fallback);
+        else fallback();
+    }
+
+    modal.addEventListener('click', function (e) {
+        if (e.target === modal || e.target.closest('[data-tx-close]')) { closeModal(); return; }
+        var view = e.target.closest('[data-tx-view]');
+        if (view) {
+            var which = view.getAttribute('data-tx-view');
+            var pretty = document.getElementById('tx-pre-pretty'), raw = document.getElementById('tx-pre-raw');
+            if (pretty && raw) { pretty.hidden = which !== 'pretty'; raw.hidden = which !== 'raw'; }
+            box.querySelectorAll('[data-tx-view]').forEach(function (b) { b.setAttribute('aria-pressed', String(b === view)); });
+            return;
+        }
+        var copyVisible = e.target.closest('[data-tx-copy]');
+        if (copyVisible) {
+            var pre = box.querySelector('pre:not([hidden])');
+            if (pre) copyText(pre.textContent, copyVisible);
+            return;
+        }
+        var copySha = e.target.closest('[data-tx-copy-text]');
+        if (copySha) copyText(copySha.getAttribute('data-tx-copy-text'), copySha);
+    });
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && !modal.classList.contains('hidden')) closeModal();
+    });
+})();
+</script>
 {% endblock %}

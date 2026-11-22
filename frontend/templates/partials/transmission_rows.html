@@ -1,66 +1,103 @@
 {% if banner_msg %}
-<div class="px-5 py-3 border-b text-xs font-semibold
-    {% if banner_kind == 'ok' %}bg-emerald-50 border-emerald-200 text-emerald-800
-    {% elif banner_kind == 'info' %}bg-sky-50 border-sky-200 text-sky-900
-    {% elif banner_kind == 'warn' %}bg-amber-50 border-amber-200 text-amber-900
-    {% else %}bg-rose-50 border-rose-200 text-rose-800{% endif %}">
-    {{ banner_msg }}
+<div
+  class="px-5 py-3 border-b text-xs font-semibold {% if banner_kind == 'ok' %}bg-emerald-50 border-emerald-200 text-emerald-800 {% elif banner_kind == 'info' %}bg-sky-50 border-sky-200 text-sky-900 {% elif banner_kind == 'warn' %}bg-amber-50 border-amber-200 text-amber-900 {% else %}bg-rose-50 border-rose-200 text-rose-800{% endif %}"
+>
+  {{ banner_msg }}
 </div>
 {% endif %}
 
-<div class="px-5 py-3.5 bg-gray-50/70 border-b border-gray-200 flex justify-between items-center">
-    <h3 class="text-xs font-bold text-gray-700 uppercase tracking-wider">External Surveillance API Transmission Log</h3>
-    <span class="text-[11px] text-gray-400">SIMULATED = nothing was sent. Only DELIVERED means the agency answered 2xx.</span>
+<div
+  class="px-5 py-3.5 bg-gray-50/70 border-b border-gray-200 flex justify-between items-center"
+>
+  <h3 class="text-xs font-bold text-gray-700 uppercase tracking-wider">
+    External Surveillance API Transmission Log
+  </h3>
+  <span class="text-[11px] text-gray-400"
+    >SIMULATED = nothing was sent. Only DELIVERED means the agency answered 2xx.
+    Click a row to see the request body.</span
+  >
 </div>
 
 <div class="overflow-x-auto">
-    <table class="w-full text-left text-xs text-gray-700">
-        <thead class="bg-white border-b border-gray-200 text-gray-600 font-semibold">
-            <tr>
-                <th class="px-5 py-3">Transmission ID</th>
-                <th class="px-5 py-3">Target System & Endpoint</th>
-                <th class="px-5 py-3">Report Type</th>
-                <th class="px-5 py-3">Format / Records</th>
-                <th class="px-5 py-3">Delivery</th>
-                <th class="px-5 py-3 text-right">Dispatched At</th>
-            </tr>
-        </thead>
-        <tbody class="divide-y divide-gray-100">
-            {% for tx in transmissions %}
-            <tr class="hover:bg-gray-50 transition">
-                <td class="px-5 py-3.5 font-mono font-bold text-gray-900">{{ tx.transmission_id }}</td>
-                <td class="px-5 py-3.5">
-                    <div class="font-semibold text-gray-800">{{ tx.target_system }}</div>
-                    <div class="text-[10px] font-mono text-gray-400">{{ tx.endpoint_url }}</div>
-                </td>
-                <td class="px-5 py-3.5 font-mono text-[11px]">{{ tx.report_type }} ({{ tx.farm_scope }})</td>
-                <td class="px-5 py-3.5 font-mono">
-                    <span class="px-2 py-0.5 rounded bg-blue-50 text-blue-700 font-semibold">{{ tx.payload_format }}</span>
-                    <span class="text-gray-500 ml-1">{{ tx.record_count }} rows</span>
-                </td>
-                <td class="px-5 py-3.5">
-                    {% set ds = tx.delivery_status or 'SIMULATED' %}
-                    {% set via_test = 'via test server' in (tx.response_summary or '') %}
-                    <span class="inline-block px-2 py-0.5 rounded text-[11px] font-bold
-                        {% if ds == 'DELIVERED' and via_test %}bg-sky-50 text-sky-800 border border-sky-200
-                        {% elif ds == 'DELIVERED' %}bg-emerald-50 text-emerald-700 border border-emerald-200
-                        {% elif ds == 'SIMULATED' %}bg-amber-50 text-amber-800 border border-amber-200
-                        {% else %}bg-rose-50 text-rose-700 border border-rose-200{% endif %}">
-                        {{ ds }}{% if via_test %} &middot; test server{% endif %}{% if tx.http_status %} &middot; HTTP {{ tx.http_status }}{% endif %}
-                    </span>
-                    <div class="text-[11px] text-gray-500 mt-1 max-w-md break-words" title="{{ tx.response_summary }}">
-                        {{ tx.response_summary }}
-                    </div>
-                </td>
-                <td class="px-5 py-3.5 text-right font-mono text-[11px] text-gray-500">
-                    {{ tx.transmitted_at | localtime }}
-                </td>
-            </tr>
-            {% else %}
-            <tr>
-                <td colspan="6" class="py-10 text-center text-gray-400">No external surveillance API transmissions recorded yet.</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+  <table class="w-full text-left text-xs text-gray-700">
+    <thead
+      class="bg-white border-b border-gray-200 text-gray-600 font-semibold"
+    >
+      <tr>
+        <th class="px-5 py-3">Transmission ID</th>
+        <th class="px-5 py-3">Target System & Endpoint</th>
+        <th class="px-5 py-3">Report Type</th>
+        <th class="px-5 py-3">Format / Records</th>
+        <th class="px-5 py-3">Delivery</th>
+        <th class="px-5 py-3 text-right">Dispatched At</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-gray-100">
+      {% for tx in transmissions %}
+      <tr
+        class="hover:bg-sky-50 transition cursor-pointer focus:outline-none focus:bg-sky-50 focus:ring-2 focus:ring-inset focus:ring-blue-300"
+        data-tx-row
+        tabindex="0"
+        role="button"
+        aria-label="Show the request body of {{ tx.transmission_id }}"
+        hx-get="/htmx/surveillance/transmissions/{{ tx.transmission_id }}"
+        hx-target="#tx-modal-body"
+        hx-swap="innerHTML"
+        hx-trigger="click, keydown[key=='Enter']"
+      >
+        <td class="px-5 py-3.5">
+          <div class="font-mono font-bold text-gray-900">
+            {{ tx.transmission_id }}
+          </div>
+          <div
+            class="mt-1 text-[11px] font-semibold text-blue-600 whitespace-nowrap"
+          >
+            View request &rsaquo;
+          </div>
+        </td>
+        <td class="px-5 py-3.5">
+          <div class="font-semibold text-gray-800">{{ tx.target_system }}</div>
+          <div class="text-[10px] font-mono text-gray-400">
+            {{ tx.endpoint_url }}
+          </div>
+        </td>
+        <td class="px-5 py-3.5 font-mono text-[11px]">
+          {{ tx.report_type }} ({{ tx.farm_scope }})
+        </td>
+        <td class="px-5 py-3.5 font-mono">
+          <span
+            class="px-2 py-0.5 rounded bg-blue-50 text-blue-700 font-semibold"
+            >{{ tx.payload_format }}</span
+          >
+          <span class="text-gray-500 ml-1">{{ tx.record_count }} rows</span>
+        </td>
+        <td class="px-5 py-3.5">
+          {% set ds = tx.delivery_status or 'SIMULATED' %} {% set via_test =
+          'via test server' in (tx.response_summary or '') %}
+          <span
+            class="inline-block px-2 py-0.5 rounded text-[11px] font-bold {% if ds == 'DELIVERED' and via_test %}bg-sky-50 text-sky-800 border border-sky-200 {% elif ds == 'DELIVERED' %}bg-emerald-50 text-emerald-700 border border-emerald-200 {% elif ds == 'SIMULATED' %}bg-amber-50 text-amber-800 border border-amber-200 {% else %}bg-rose-50 text-rose-700 border border-rose-200{% endif %}"
+          >
+            {{ ds }}{% if via_test %} &middot; test server{% endif %}{% if
+            tx.http_status %} &middot; HTTP {{ tx.http_status }}{% endif %}
+          </span>
+          <div
+            class="text-[11px] text-gray-500 mt-1 max-w-md break-words"
+            title="{{ tx.response_summary }}"
+          >
+            {{ tx.response_summary }}
+          </div>
+        </td>
+        <td class="px-5 py-3.5 text-right font-mono text-[11px] text-gray-500">
+          {{ tx.transmitted_at | localtime }}
+        </td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="6" class="py-10 text-center text-gray-400">
+          No external surveillance API transmissions recorded yet.
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
 </div>
