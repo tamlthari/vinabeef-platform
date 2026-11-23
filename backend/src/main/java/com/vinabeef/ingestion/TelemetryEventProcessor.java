@@ -20,4 +20,18 @@ public interface TelemetryEventProcessor {
      *                     for latency measurement
      */
     void processSafetrustRead(SafetrustEventDto dto, String ingressMode, long tIngressNano);
+
+    /**
+     * Retries one stored read from a barn gateway's USB reader whose credential number mapped to no card when it arrived.
+     *
+     * @param eventId the stored read
+     * @return true when its card is known now and the read was processed; false when it is still unmapped
+     */
+    boolean reprocessUnmappedLocalRead(String eventId);
+
+    /** The oldest stored USB reads that still map to no card (at most {@code limit}). */
+    java.util.List<String> unmappedLocalReadIds(int limit);
+
+    /** How many stored USB reads still map to no card. */
+    int countUnmappedLocalReads();
 }

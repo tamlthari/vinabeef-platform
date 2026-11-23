@@ -95,9 +95,9 @@ ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/mai
 	android:name
 		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:16:22-59
 application
-ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:21:5-36:19
-MERGED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:21:5-36:19
-MERGED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:21:5-36:19
+ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:22:5-36:19
+MERGED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:22:5-36:19
+MERGED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:22:5-36:19
 INJECTED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/debug/AndroidManifest.xml:4:5-56
 MERGED from [com.google.android.material:material:1.12.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/30d172588f815a7129852f31471d561a/transformed/material-1.12.0/AndroidManifest.xml:22:5-20
 MERGED from [com.google.android.material:material:1.12.0] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/30d172588f815a7129852f31471d561a/transformed/material-1.12.0/AndroidManifest.xml:22:5-20
@@ -120,16 +120,16 @@ MERGED from [androidx.startup:startup-runtime:1.1.1] /Applications/Android Studi
 	android:appComponentFactory
 		ADDED from [androidx.core:core:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/491caade41e8059f1701c9c6b2691b8e/transformed/core-1.13.1/AndroidManifest.xml:28:18-86
 	android:label
-		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:23:9-44
-		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:23:9-44
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:24:9-44
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:24:9-44
 	android:allowBackup
-		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:22:9-35
-		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:22:9-35
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:23:9-36
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:23:9-36
 	android:theme
 		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:25:9-79
 		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:25:9-79
 	android:usesCleartextTraffic
-		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:24:9-44
+		ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/debug/AndroidManifest.xml:4:18-53
 activity#com.vinabeef.field.MainActivity
 ADDED from /Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:27:9-35:20
 	android:screenOrientation

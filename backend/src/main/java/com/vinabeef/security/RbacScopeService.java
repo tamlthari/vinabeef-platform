@@ -1,8 +1,6 @@
 package com.vinabeef.security;
 
 import lombok.RequiredArgsConstructor;
-import org.springframework.boot.context.event.ApplicationReadyEvent;
-import org.springframework.context.event.EventListener;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -10,90 +8,17 @@ import org.springframework.stereotype.Service;
 
 import java.util.*;
 
+/**
+ * Reads the signed-in person's scope and answers whether they may act on a barn. Controllers depend on the two
+ * small interfaces, {@link CurrentScopeProvider} and {@link BarnAccessPolicy}, not on this class.
+ */
 @Service
 @RequiredArgsConstructor
-public class RbacScopeService {
+public class RbacScopeService implements CurrentScopeProvider, BarnAccessPolicy {
 
     private final JdbcTemplate jdbcTemplate;
 
-    public record UserScope(
-            String username,
-            String role,
-            String farmId,
-            List<String> barnIds
-    ) {
-        public boolean isGlobal() {
-            return "SYSTEM_ADMIN".equals(role) || "EXECUTIVE".equals(role);
-        }
-
-        public boolean isFarmScoped() {
-            return "FARM_MANAGER".equals(role);
-        }
-
-        public boolean isBarnScoped() {
-            return "BARN_SUPERVISOR".equals(role);
-        }
-
-        public boolean canAccessFarm(String targetFarmId) {
-            if (isGlobal()) return true;
-            if (targetFarmId == null) return false;
-            return targetFarmId.equals(farmId);
-        }
-
-        public boolean canAccessBarn(String targetBarnId, String targetFarmId) {
-            if (isGlobal()) return true;
-            if (isFarmScoped()) {
-                return farmId != null && farmId.equals(targetFarmId);
-            }
-            if (isBarnScoped()) {
-                return targetBarnId != null && barnIds.contains(targetBarnId);
-            }
-            return false;
-        }
-    }
-
-    @EventListener(ApplicationReadyEvent.class)
-    public void ensureDemoSupervisorBarnAssignments() {
-        try {
-            Integer count = jdbcTemplate.queryForObject(
-                    "SELECT COUNT(*) FROM user_barn_assignments", Integer.class);
-            if (count != null && count > 0) {
-                return;
-            }
-            jdbcTemplate.update("""
-                INSERT INTO user_barn_assignments (username, barn_id)
-                SELECT 'supervisor_daklak', barn_id FROM barns
-                WHERE farm_id = 'FARM-DAK-LAK' ORDER BY current_headcount DESC, code ASC LIMIT 3
-                ON CONFLICT DO NOTHING
-            """);
-            jdbcTemplate.update("""
-                INSERT INTO user_barn_assignments (username, barn_id)
-                SELECT 'supervisor_barn1', barn_id FROM barns
-                WHERE farm_id = 'FARM-DAK-LAK' ORDER BY code ASC LIMIT 2
-                ON CONFLICT DO NOTHING
-            """);
-            jdbcTemplate.update("""
-                INSERT INTO user_barn_assignments (username, barn_id)
-                SELECT 'supervisor_dongnai', barn_id FROM barns
-                WHERE farm_id = 'FARM-DONG-NAI' ORDER BY current_headcount DESC, code ASC LIMIT 3
-                ON CONFLICT DO NOTHING
-            """);
-            jdbcTemplate.update("""
-                INSERT INTO user_barn_assignments (username, barn_id)
-                SELECT 'supervisor_gialai', barn_id FROM barns
-                WHERE farm_id = 'FARM-GIA-LAI' ORDER BY current_headcount DESC, code ASC LIMIT 3
-                ON CONFLICT DO NOTHING
-            """);
-            jdbcTemplate.update("""
-                INSERT INTO user_barn_assignments (username, barn_id)
-                SELECT 'supervisor_gialai_2barns', barn_id FROM barns
-                WHERE farm_id = 'FARM-GIA-LAI' ORDER BY code ASC LIMIT 2
-                ON CONFLICT DO NOTHING
-            """);
-        } catch (Exception ignored) {
-        }
-    }
-
+    @Override
     public UserScope getCurrentScope() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getPrincipal())) {
@@ -122,6 +47,7 @@ public class RbacScopeService {
         return new UserScope(username, role, farmId, barnIds);
     }
 
+    @Override
     public boolean canAccessBarnId(UserScope scope, String barnId) {
         if (scope.isGlobal()) return true;
         if (barnId == null || barnId.isBlank()) return false;

@@ -1,7 +1,8 @@
 package com.vinabeef.web;
 
 import com.vinabeef.security.JwtProvider;
-import com.vinabeef.security.RbacScopeService;
+import com.vinabeef.security.CurrentScopeProvider;
+import com.vinabeef.security.UserScope;
 import com.vinabeef.security.User;
 import com.vinabeef.security.UserRepository;
 import lombok.Data;
@@ -26,7 +27,7 @@ public class AuthController {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtProvider jwtProvider;
-    private final RbacScopeService rbacScopeService;
+    private final CurrentScopeProvider currentScope;
 
     @Data
     public static class LoginRequest {
@@ -89,7 +90,7 @@ public class AuthController {
 
     @GetMapping("/me")
     public ResponseEntity<?> currentUserScope() {
-        var scope = rbacScopeService.getCurrentScope();
+        var scope = currentScope.getCurrentScope();
         String farmId = scope.farmId() != null ? scope.farmId() : "ALL";
         return ResponseEntity.ok(Map.of(
                 "username", scope.username(),

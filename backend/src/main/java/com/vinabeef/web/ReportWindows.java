@@ -29,16 +29,78 @@ final class ReportWindow {
         return preset(preset, zone, now);
     }
 
-    static Window preset(String preset, ZoneId zone, Instant now) {
-        String p = preset == null ? "today" : preset.trim().toLowerCase(Locale.ROOT);
-        Instant end = now.plusSeconds(1);
-        return switch (p) {
-            case "24h" -> new Window(now.minusSeconds(24 * 3600L), end, "Last 24 hours");
-            case "7d" -> new Window(startOfDay(now, zone).minusSeconds(6 * 24 * 3600L), end, "Last 7 days");
-            case "30d" -> new Window(startOfDay(now, zone).minusSeconds(29 * 24 * 3600L), end, "Last 30 days");
-            case "all" -> new Window(Instant.EPOCH, end, "All time");
-            default -> new Window(startOfDay(now, zone), end, "Today");
+    /**
+     * The named periods. Each one knows where it starts; the end is always "now" (plus the second that makes
+     * {@code toExclusive} cover it). Adding a period means adding a constant here.
+     */
+    enum Preset {
+        TODAY("today", "Today") {
+            @Override
+            Instant start(Instant now, ZoneId zone) {
+                return startOfDay(now, zone);
+            }
+        },
+        LAST_24_HOURS("24h", "Last 24 hours") {
+            @Override
+            Instant start(Instant now, ZoneId zone) {
+                return now.minusSeconds(24 * 3600L);
+            }
+        },
+        LAST_7_DAYS("7d", "Last 7 days") {
+            @Override
+            Instant start(Instant now, ZoneId zone) {
+                return startOfDay(now, zone).minusSeconds(6 * 24 * 3600L);
+            }
+        },
+        LAST_30_DAYS("30d", "Last 30 days") {
+            @Override
+            Instant start(Instant now, ZoneId zone) {
+                return startOfDay(now, zone).minusSeconds(29 * 24 * 3600L);
+            }
+        },
+        ALL_TIME("all", "All time") {
+            @Override
+            Instant start(Instant now, ZoneId zone) {
+                return Instant.EPOCH;
+            }
         };
+
+        private final String key;
+        private final String label;
+
+        Preset(String key, String label) {
+            this.key = key;
+            this.label = label;
+        }
+
+        abstract Instant start(Instant now, ZoneId zone);
+
+        String key() {
+            return key;
+        }
+
+        String label() {
+            return label;
+        }
+
+        Window window(ZoneId zone, Instant now) {
+            return new Window(start(now, zone), now.plusSeconds(1), label);
+        }
+
+        /** The period a typed or missing name stands for; a name nobody knows means today, as it always has. */
+        static Preset of(String name) {
+            String key = name == null ? TODAY.key : name.trim().toLowerCase(Locale.ROOT);
+            for (Preset preset : values()) {
+                if (preset.key.equals(key)) {
+                    return preset;
+                }
+            }
+            return TODAY;
+        }
+    }
+
+    static Window preset(String preset, ZoneId zone, Instant now) {
+        return Preset.of(preset).window(zone, now);
     }
 
     /** Local midnight of the day that contains {@code now}. */

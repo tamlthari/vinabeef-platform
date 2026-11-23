@@ -5,7 +5,8 @@ import com.vinabeef.facilities.Barn;
 import com.vinabeef.facilities.BarnRepository;
 import com.vinabeef.ingestion.SafetrustEventDto;
 import com.vinabeef.ingestion.TelemetryEventProcessor;
-import com.vinabeef.security.RbacScopeService;
+import com.vinabeef.security.BarnAccessPolicy;
+import com.vinabeef.security.CurrentScopeProvider;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -27,12 +28,13 @@ public class GateMonitorController {
     private final BarnRepository barnRepo;
     private final JdbcTemplate jdbcTemplate;
     private final TelemetryEventProcessor eventProcessor;
-    private final RbacScopeService rbacScopeService;
+    private final CurrentScopeProvider currentScope;
+    private final BarnAccessPolicy barnAccess;
     private final ReportClock clock;
 
     @GetMapping("/barns")
     public ResponseEntity<List<Barn>> getAllBarns() {
-        var scope = rbacScopeService.getCurrentScope();
+        var scope = currentScope.getCurrentScope();
         List<Barn> all = barnRepo.findAll();
         if (scope.isGlobal()) {
             return ResponseEntity.ok(all);
@@ -83,7 +85,7 @@ public class GateMonitorController {
     }
 
     private ReportQueries.Scope currentReportScope() {
-        var s = rbacScopeService.getCurrentScope();
+        var s = currentScope.getCurrentScope();
         if (s.isGlobal()) {
             return ReportQueries.Scope.ALL;
         }
@@ -117,8 +119,8 @@ public class GateMonitorController {
     @Audited(action = "VERIFY_BARN_RETURN_COUNT", targetType = "BARN")
     @Transactional
     public ResponseEntity<?> verifyBarnReturnCount(@PathVariable String barnId) {
-        var scope = rbacScopeService.getCurrentScope();
-        if (!rbacScopeService.canAccessBarnId(scope, barnId)) {
+        var scope = currentScope.getCurrentScope();
+        if (!barnAccess.canAccessBarnId(scope, barnId)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body(Map.of("error", "Access denied: Barn " + barnId + " is outside your assigned scope."));
         }
@@ -190,7 +192,7 @@ public class GateMonitorController {
 
     @GetMapping("/facilities/distribution")
     public ResponseEntity<?> getFacilityDistribution() {
-        var scope = rbacScopeService.getCurrentScope();
+        var scope = currentScope.getCurrentScope();
 
         var today = clock.today();
         String sql = """

@@ -1,7 +1,8 @@
 package com.vinabeef.web;
 
 import com.vinabeef.audit.Audited;
-import com.vinabeef.security.RbacScopeService;
+import com.vinabeef.security.CurrentScopeProvider;
+import com.vinabeef.security.UserScope;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -28,7 +29,7 @@ import java.util.*;
 public class SurveillanceReportController {
 
     private final JdbcTemplate jdbcTemplate;
-    private final RbacScopeService rbacScopeService;
+    private final CurrentScopeProvider currentScope;
     private final NadcsGateway nadcs;
 
     /** How much of a transmitted body the log keeps (characters). The size and SHA-256 always describe the whole body. */
@@ -50,7 +51,7 @@ public class SurveillanceReportController {
     @GetMapping("/overview")
     @PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'FARM_MANAGER', 'EXECUTIVE')")
     public ResponseEntity getSurveillanceOverview() {
-        var scope = rbacScopeService.getCurrentScope();
+        var scope = currentScope.getCurrentScope();
         String effectiveFarm = resolveEffectiveFarm(scope, "ALL");
         boolean allFarms = "ALL".equalsIgnoreCase(effectiveFarm);
 
@@ -135,7 +136,7 @@ public class SurveillanceReportController {
             @RequestParam(defaultValue = "ALL") String farmId,
             @RequestParam(defaultValue = "CSV") String format) {
 
-        var scope = rbacScopeService.getCurrentScope();
+        var scope = currentScope.getCurrentScope();
         String cleanType = reportType.trim().toUpperCase();
         String cleanFarm = resolveEffectiveFarm(scope, farmId.trim());
         String cleanFormat = format.trim().toUpperCase();
@@ -164,7 +165,7 @@ public class SurveillanceReportController {
     @PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'FARM_MANAGER', 'EXECUTIVE')")
     @Audited(action = "TRANSMIT_NADCS_SURVEILLANCE", targetType = "EXTERNAL_API")
     public ResponseEntity transmitToExternalApi(@RequestBody TransmitRequest req, Authentication auth) {
-        var scope = rbacScopeService.getCurrentScope();
+        var scope = currentScope.getCurrentScope();
         String targetSystem = (req.getTargetSystem() != null && !req.getTargetSystem().isBlank())
                 ? req.getTargetSystem().trim()
                 : "National Animal Disease Control System (NADCS)";
@@ -231,7 +232,7 @@ public class SurveillanceReportController {
     @PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'FARM_MANAGER', 'EXECUTIVE')")
     public ResponseEntity getTransmission(@PathVariable String transmissionId,
                                           @RequestParam(defaultValue = "120000") int maxChars) {
-        var scope = rbacScopeService.getCurrentScope();
+        var scope = currentScope.getCurrentScope();
         String farm = resolveEffectiveFarm(scope, "ALL");
         boolean allFarms = "ALL".equalsIgnoreCase(farm);
         int excerpt = Math.min(Math.max(maxChars, 0), 500_000);
@@ -277,7 +278,7 @@ public class SurveillanceReportController {
     @GetMapping("/transmissions/{transmissionId}/body")
     @PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'FARM_MANAGER', 'EXECUTIVE')")
     public ResponseEntity getTransmissionBody(@PathVariable String transmissionId) {
-        var scope = rbacScopeService.getCurrentScope();
+        var scope = currentScope.getCurrentScope();
         String farm = resolveEffectiveFarm(scope, "ALL");
         boolean allFarms = "ALL".equalsIgnoreCase(farm);
         var rows = jdbcTemplate.queryForList(SurveillanceQueries.TRANSMISSION_BODY, transmissionId, allFarms, farm);
@@ -298,7 +299,7 @@ public class SurveillanceReportController {
         return ok.body(text.getBytes(StandardCharsets.UTF_8));
     }
 
-    private String resolveEffectiveFarm(RbacScopeService.UserScope scope, String requestedFarm) {
+    private String resolveEffectiveFarm(UserScope scope, String requestedFarm) {
         if (scope.isFarmScoped() && scope.farmId() != null) {
             return scope.farmId();
         }

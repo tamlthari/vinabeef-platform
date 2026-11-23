@@ -36,6 +36,15 @@ vinabeef:
   # Calendar day used for "today" (IN/OUT today, reports, dashboard). Gate passes are stored in UTC.
   timezone: ${VINABEEF_TIMEZONE:Asia/Ho_Chi_Minh}
 
+# The same tap can reach the cloud twice: from the Safetrust reader, and from a USB reader on the barn gateway.
+# Two reads are the same tap when they are at the same reader, for the same card, on DIFFERENT routes, and their
+# TIMESTAMPs are closer than window-ms. The first copy to be processed counts; the second is kept as evidence.
+# Reads of the same route are never merged. Size window-ms from the gateway's /status (local.clockOffset).
+ingestion:
+  cross-source:
+    enabled: ${INGESTION_CROSS_SOURCE_ENABLED:true}
+    window-ms: ${INGESTION_CROSS_SOURCE_WINDOW_MS:10000}
+
 # National Animal Disease Control System (NADCS) delivery of surveillance reports.
 #   SIMULATION (default): nothing leaves the server; the log says SIMULATED.
 #   LIVE: the report is POSTed to `endpoint` with the key in the `api-key-header` header; the log shows what the agency answered.

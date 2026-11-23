@@ -24,3 +24,21 @@ MQTT_CLIENT_ID=Web_Edge_barn1
 # MQTT_QOS=1
 # MQTT_TLS_INSECURE=true               # the Safetrust demo broker needs this; use false with a real CA
 # EDGE_MAX_QUEUE_ROWS=200000
+
+# --- USB readers on this gateway (Safetrust USB IoT) -----------------------------------------------------------
+# The USB reader sends only a credential number ("38", "1005"), no time and no card UUID. The gateway stamps the time,
+# the cloud finds the card for that number. Leave LOCAL_INPUTS empty to run without USB readers.
+#   LOCAL_INPUTS=<kind>:<device>=<Safetrust reader it stands next to>, ...
+#     kbd:/dev/input/event5=DrC0F8          keyboard-style reader (the gateway grabs the device exclusively)
+#     serial:/dev/ttyACM0@9600=DrC1C4       serial / CDC reader (needs pyserial; @baud optional)
+#     stdin=DrC0F8                          demo: type a number and press Enter in the terminal
+#   Find the keyboard device with:  ls -l /dev/input/by-id/   (the *-event-kbd entry of the reader)
+# LOCAL_INPUTS=kbd:/dev/input/event5=DrC0F8,kbd:/dev/input/event6=DrC1C4
+# EDGE_GATEWAY_NO=1                    # 1..99, unique per gateway: keeps the negative EVENT_KEYs of USB swipes apart
+# LOCAL_READERS=DrC0F8,DrC1C4          # readers POST /local-swipe may name (the inputs above are added automatically)
+# LOCAL_HOLD_MS=6000                   # while MQTT is up, wait this long for the reader's own copy of the tap (0 = never wait)
+# LOCAL_MATCH_SKEW_MS=10000            # same tap = closer than this, on the reader's clock AND the gateway's
+# LOCAL_IDLE_FLUSH_MS=200              # a USB device that sends no Enter ends a swipe after this silence
+# LOCAL_LOG_RETENTION_S=86400          # how long the swipe log is kept
+# LOCAL_COMPANY_KEY=475                # optional COMPANY_KEY copied onto USB swipes
+# LOCAL_GRAB_KEYBOARD=true             # false only for testing: digits would ALSO be typed into the gateway's console

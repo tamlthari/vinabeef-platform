@@ -2,7 +2,8 @@ package com.vinabeef.web;
 
 import com.vinabeef.audit.Audited;
 import com.vinabeef.facilities.GateDirectionMode;
-import com.vinabeef.security.RbacScopeService;
+import com.vinabeef.security.BarnAccessPolicy;
+import com.vinabeef.security.CurrentScopeProvider;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -22,7 +23,8 @@ import java.util.*;
 public class GateReaderController {
 
     private final JdbcTemplate jdbcTemplate;
-    private final RbacScopeService rbacScopeService;
+    private final CurrentScopeProvider currentScope;
+    private final BarnAccessPolicy barnAccess;
     private final ReportClock clock;
 
     /**
@@ -50,7 +52,7 @@ public class GateReaderController {
     public ResponseEntity listReaders(@RequestParam(required = false, defaultValue = "") String q,
                                       @RequestParam(required = false, defaultValue = "") String sort,
                                       @RequestParam(required = false, defaultValue = "") String dir) {
-        var scope = rbacScopeService.getCurrentScope();
+        var scope = currentScope.getCurrentScope();
 
         ReportQueries.Scope visible;
         if (scope.isGlobal()) {
@@ -82,7 +84,7 @@ public class GateReaderController {
     @Audited(action = "REGISTER_GATE_READER", targetType = "GATE")
     @Transactional
     public ResponseEntity registerReader(@RequestBody GateReaderRequest req) {
-        var scope = rbacScopeService.getCurrentScope();
+        var scope = currentScope.getCurrentScope();
 
         if (req.getReaderName() == null || req.getReaderName().isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "Hardware Reader Name (e.g. DrEBE6) is required"));
@@ -95,7 +97,7 @@ public class GateReaderController {
         }
 
         String barnId = req.getBarnId().trim();
-        if (!rbacScopeService.canAccessBarnId(scope, barnId)) {
+        if (!barnAccess.canAccessBarnId(scope, barnId)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body(Map.of("error", "User '" + scope.username() + "' is not authorized to provision Gate Readers in Barn '" + barnId + "'."));
         }
@@ -143,7 +145,7 @@ public class GateReaderController {
 
     @GetMapping("/{gateId}")
     public ResponseEntity getReaderDetails(@PathVariable String gateId) {
-        var scope = rbacScopeService.getCurrentScope();
+        var scope = currentScope.getCurrentScope();
 
         var readers = jdbcTemplate.queryForList("""
             SELECT
@@ -232,7 +234,7 @@ public class GateReaderController {
     @Audited(action = "UPDATE_GATE_READER", targetType = "GATE")
     @Transactional
     public ResponseEntity updateReader(@PathVariable String gateId, @RequestBody GateReaderRequest req) {
-        var scope = rbacScopeService.getCurrentScope();
+        var scope = currentScope.getCurrentScope();
 
         var existing = jdbcTemplate.queryForList("""
             SELECT barn_id, label, reader_name, direction_mode, firmware_version,
@@ -248,7 +250,7 @@ public class GateReaderController {
         String currentOuter = (String) row.get("outer_reader_name");
 
         String newBarnId = req.getBarnId() != null && !req.getBarnId().isBlank() ? req.getBarnId().trim() : currentBarnId;
-        if (!rbacScopeService.canAccessBarnId(scope, currentBarnId) || !rbacScopeService.canAccessBarnId(scope, newBarnId)) {
+        if (!barnAccess.canAccessBarnId(scope, currentBarnId) || !barnAccess.canAccessBarnId(scope, newBarnId)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body(Map.of("error", "User '" + scope.username() + "' is not authorized to mutate Gate Reader '" + gateId + "'."));
         }
@@ -316,14 +318,14 @@ public class GateReaderController {
     @Audited(action = "DELETE_GATE_READER", targetType = "GATE")
     @Transactional
     public ResponseEntity deleteReader(@PathVariable String gateId) {
-        var scope = rbacScopeService.getCurrentScope();
+        var scope = currentScope.getCurrentScope();
 
         var existing = jdbcTemplate.queryForList("SELECT barn_id FROM gates WHERE gate_id = ? AND retired_at IS NULL", gateId);
         if (existing.isEmpty()) {
             return ResponseEntity.notFound().build();
         }
         String barnId = existing.get(0).get("barn_id") != null ? String.valueOf(existing.get(0).get("barn_id")) : null;
-        if (!rbacScopeService.canAccessBarnId(scope, barnId)) {
+        if (!barnAccess.canAccessBarnId(scope, barnId)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body(Map.of("error", "User '" + scope.username() + "' is not authorized to remove Gate Reader '" + gateId + "'."));
         }

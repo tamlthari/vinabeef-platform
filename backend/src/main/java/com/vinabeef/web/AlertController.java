@@ -1,7 +1,8 @@
 package com.vinabeef.web;
 
 import com.vinabeef.audit.Audited;
-import com.vinabeef.security.RbacScopeService;
+import com.vinabeef.security.BarnAccessPolicy;
+import com.vinabeef.security.CurrentScopeProvider;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -22,7 +23,8 @@ import java.util.*;
 public class AlertController {
 
     private final JdbcTemplate jdbcTemplate;
-    private final RbacScopeService rbacScopeService;
+    private final CurrentScopeProvider currentScope;
+    private final BarnAccessPolicy barnAccess;
 
     @Data
     public static class ReconcileRequest {
@@ -41,7 +43,7 @@ public class AlertController {
             @RequestParam(required = false, defaultValue = "ALL") String type,
             @RequestParam(required = false, defaultValue = "") String q) {
 
-        var scope = rbacScopeService.getCurrentScope();
+        var scope = currentScope.getCurrentScope();
         String stateFilter = state.trim().toUpperCase();
         String typeFilter = type.trim().toUpperCase();
         String searchPattern = "%" + q.trim().toLowerCase() + "%";
@@ -149,8 +151,8 @@ public class AlertController {
         }
 
         String barnId = req.getBarnId().trim();
-        var scope = rbacScopeService.getCurrentScope();
-        if (!rbacScopeService.canAccessBarnId(scope, barnId)) {
+        var scope = currentScope.getCurrentScope();
+        if (!barnAccess.canAccessBarnId(scope, barnId)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body(Map.of("error", "Access denied: Barn " + barnId + " is outside your assigned scope."));
         }
@@ -250,7 +252,7 @@ public class AlertController {
     }
 
     private boolean canAccessAlert(String alertId) {
-        var scope = rbacScopeService.getCurrentScope();
+        var scope = currentScope.getCurrentScope();
         if (scope.isGlobal()) return true;
         var rows = jdbcTemplate.queryForList("""
             SELECT al.barn_id, b.farm_id

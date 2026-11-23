@@ -1,152 +1,363 @@
 {% from "partials/macros.html" import sort_th %}
 <div class="space-y-5">
+  {% if error %}
+  <div
+    class="px-5 py-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold"
+  >
+    {{ error }}
+  </div>
+  {% else %}
 
-    {% if error %}
-    <div class="px-5 py-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold">{{ error }}</div>
-    {% else %}
+  <div
+    class="flex flex-wrap items-center justify-between gap-3 text-xs text-gray-500"
+  >
+    <span
+      >Period: <strong class="text-gray-800">{{ period_label }}</strong> (local
+      time, {{ tz }})</span
+    >
+    {% if export_url %}
+    <a
+      href="{{ export_url }}"
+      class="inline-flex items-center px-3.5 py-1.5 bg-white hover:bg-gray-50 border border-gray-300 rounded-md font-semibold text-gray-700"
+      >Download CSV</a
+    >
+    {% endif %}
+  </div>
 
-    <div class="flex flex-wrap items-center justify-between gap-3 text-xs text-gray-500">
-        <span>Period: <strong class="text-gray-800">{{ period_label }}</strong> (local time, {{ tz }})</span>
-        {% if export_url %}
-        <a href="{{ export_url }}" class="inline-flex items-center px-3.5 py-1.5 bg-white hover:bg-gray-50 border border-gray-300 rounded-md font-semibold text-gray-700">Download CSV</a>
-        {% endif %}
+  {% if report_type == 'herd' %}
+  <div class="grid grid-cols-2 md:grid-cols-6 gap-4">
+    {% for label, value, color in [('Herd', totals.herd, 'text-gray-900'), ('In
+    barn now', totals.inBarn, 'text-[#1976d2]'), ('At pasture now',
+    totals.atPasture, 'text-amber-600'), ('Not seen yet', totals.unseen,
+    'text-gray-500'), ('Passes IN', totals.passesIn, 'text-emerald-600'),
+    ('Passes OUT', totals.passesOut, 'text-amber-600')] %}
+    <div class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+      <span class="text-[10px] uppercase tracking-wider text-gray-400"
+        >{{ label }}</span
+      >
+      <div class="text-2xl font-extrabold font-mono {{ color }}">
+        {{ "{:,}".format(value) }}
+      </div>
     </div>
-
-    {% if report_type == 'herd' %}
-    <div class="grid grid-cols-2 md:grid-cols-6 gap-4">
-        {% for label, value, color in [('Herd', totals.herd, 'text-gray-900'), ('In barn now', totals.inBarn, 'text-[#1976d2]'), ('At pasture now', totals.atPasture, 'text-amber-600'), ('Not seen yet', totals.unseen, 'text-gray-500'), ('Passes IN', totals.passesIn, 'text-emerald-600'), ('Passes OUT', totals.passesOut, 'text-amber-600')] %}
-        <div class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
-            <span class="text-[10px] uppercase tracking-wider text-gray-400">{{ label }}</span>
-            <div class="text-2xl font-extrabold font-mono {{ color }}">{{ "{:,}".format(value) }}</div>
-        </div>
+    {% endfor %}
+  </div>
+  <div
+    class="bg-white border border-gray-200 rounded-lg shadow-sm overflow-x-auto"
+  >
+    <table class="w-full text-left text-xs text-gray-700">
+      <thead
+        class="bg-gray-50 border-b border-gray-200 text-gray-600 font-semibold"
+      >
+        <tr>
+          <th class="px-4 py-2.5">Facility</th>
+          <th class="px-4 py-2.5">Barn</th>
+          <th class="px-4 py-2.5 text-right">Capacity</th>
+          <th class="px-4 py-2.5 text-right">Herd</th>
+          <th class="px-4 py-2.5 text-right">In barn</th>
+          <th class="px-4 py-2.5 text-right">At pasture</th>
+          <th class="px-4 py-2.5 text-right">Not seen</th>
+          <th class="px-4 py-2.5 text-right">IN</th>
+          <th class="px-4 py-2.5 text-right">OUT</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-100 font-mono">
+        {% for r in rows %}
+        <tr>
+          <td class="px-4 py-2 font-sans text-gray-600">{{ r.farm_name }}</td>
+          <td class="px-4 py-2 font-sans font-bold text-gray-900">
+            {{ r.barn_code }}
+          </td>
+          <td class="px-4 py-2 text-right text-gray-500">{{ r.capacity }}</td>
+          <td class="px-4 py-2 text-right">{{ r.assigned_count }}</td>
+          <td class="px-4 py-2 text-right text-[#1976d2] font-bold">
+            {{ r.in_barn_count }}
+          </td>
+          <td class="px-4 py-2 text-right text-amber-600">
+            {{ r.out_pasture_count }}
+          </td>
+          <td class="px-4 py-2 text-right text-gray-400">
+            {{ r.unseen_count }}
+          </td>
+          <td class="px-4 py-2 text-right text-emerald-600 font-bold">
+            {{ r.in_count }}
+          </td>
+          <td class="px-4 py-2 text-right text-amber-600 font-bold">
+            {{ r.out_count }}
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="9" class="py-10 text-center text-gray-400 font-sans">
+            No barns in your scope.
+          </td>
+        </tr>
         {% endfor %}
-    </div>
-    <div class="bg-white border border-gray-200 rounded-lg shadow-sm overflow-x-auto">
-        <table class="w-full text-left text-xs text-gray-700">
-            <thead class="bg-gray-50 border-b border-gray-200 text-gray-600 font-semibold">
-                <tr>
-                    <th class="px-4 py-2.5">Facility</th>
-                    <th class="px-4 py-2.5">Barn</th>
-                    <th class="px-4 py-2.5 text-right">Capacity</th>
-                    <th class="px-4 py-2.5 text-right">Herd</th>
-                    <th class="px-4 py-2.5 text-right">In barn</th>
-                    <th class="px-4 py-2.5 text-right">At pasture</th>
-                    <th class="px-4 py-2.5 text-right">Not seen</th>
-                    <th class="px-4 py-2.5 text-right">IN</th>
-                    <th class="px-4 py-2.5 text-right">OUT</th>
-                </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-100 font-mono">
-                {% for r in rows %}
-                <tr>
-                    <td class="px-4 py-2 font-sans text-gray-600">{{ r.farm_name }}</td>
-                    <td class="px-4 py-2 font-sans font-bold text-gray-900">{{ r.barn_code }}</td>
-                    <td class="px-4 py-2 text-right text-gray-500">{{ r.capacity }}</td>
-                    <td class="px-4 py-2 text-right">{{ r.assigned_count }}</td>
-                    <td class="px-4 py-2 text-right text-[#1976d2] font-bold">{{ r.in_barn_count }}</td>
-                    <td class="px-4 py-2 text-right text-amber-600">{{ r.out_pasture_count }}</td>
-                    <td class="px-4 py-2 text-right text-gray-400">{{ r.unseen_count }}</td>
-                    <td class="px-4 py-2 text-right text-emerald-600 font-bold">{{ r.in_count }}</td>
-                    <td class="px-4 py-2 text-right text-amber-600 font-bold">{{ r.out_count }}</td>
-                </tr>
-                {% else %}
-                <tr><td colspan="9" class="py-10 text-center text-gray-400 font-sans">No barns in your scope.</td></tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-    <p class="text-[11px] text-gray-400">Herd = active animals assigned to the barn. In barn / at pasture = where each animal's last gate pass left it, as of now. IN / OUT = gate passes inside the period.</p>
+      </tbody>
+    </table>
+  </div>
+  <p class="text-[11px] text-gray-400">
+    Herd = active animals assigned to the barn. In barn / at pasture = where
+    each animal's last gate pass left it, as of now. IN / OUT = gate passes
+    inside the period.
+  </p>
 
-    {% elif report_type == 'passages' %}
-    <div class="grid grid-cols-3 gap-4 max-w-xl">
-        <div class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm"><span class="text-[10px] uppercase tracking-wider text-gray-400">Passes</span><div class="text-2xl font-extrabold font-mono text-gray-900">{{ "{:,}".format(total) }}</div></div>
-        <div class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm"><span class="text-[10px] uppercase tracking-wider text-gray-400">IN</span><div class="text-2xl font-extrabold font-mono text-emerald-600">{{ "{:,}".format(in_count) }}</div></div>
-        <div class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm"><span class="text-[10px] uppercase tracking-wider text-gray-400">OUT</span><div class="text-2xl font-extrabold font-mono text-amber-600">{{ "{:,}".format(out_count) }}</div></div>
+  {% elif report_type == 'passages' %}
+  <div class="grid grid-cols-3 gap-4 max-w-xl">
+    <div class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+      <span class="text-[10px] uppercase tracking-wider text-gray-400"
+        >Passes</span
+      >
+      <div class="text-2xl font-extrabold font-mono text-gray-900">
+        {{ "{:,}".format(total) }}
+      </div>
     </div>
-    <div class="bg-white border border-gray-200 rounded-lg shadow-sm overflow-x-auto">
-        <table class="w-full text-left text-xs text-gray-700">
-            <thead class="bg-gray-50 border-b border-gray-200 text-gray-600">
-                <tr>
-                    {{ sort_th('Time', 'time', sort, dir, '/htmx/report-data', '#report-data-container', '#report-form', 'desc', 'px-4 py-2.5') }}
-                    {{ sort_th('Animal', 'animal', sort, dir, '/htmx/report-data', '#report-data-container', '#report-form', 'asc', 'px-4 py-2.5') }}
-                    {{ sort_th('Direction', 'direction', sort, dir, '/htmx/report-data', '#report-data-container', '#report-form', 'asc', 'px-4 py-2.5') }}
-                    {{ sort_th('Reader', 'reader', sort, dir, '/htmx/report-data', '#report-data-container', '#report-form', 'asc', 'px-4 py-2.5') }}
-                    {{ sort_th('Barn', 'barn', sort, dir, '/htmx/report-data', '#report-data-container', '#report-form', 'asc', 'px-4 py-2.5') }}
-                    {{ sort_th('Facility', 'farm', sort, dir, '/htmx/report-data', '#report-data-container', '#report-form', 'asc', 'px-4 py-2.5') }}
-                    {{ sort_th('Detected by', 'method', sort, dir, '/htmx/report-data', '#report-data-container', '#report-form', 'asc', 'px-4 py-2.5') }}
-                </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-100">
-                {% for r in items %}
-                <tr>
-                    <td class="px-4 py-2 font-mono text-gray-500">{{ r.occurred_at | localtime }}</td>
-                    <td class="px-4 py-2 font-bold"><a class="text-blue-700 hover:underline" href="/herd/{{ r.animal_id | urlencode }}">{{ r.animal_id }}</a></td>
-                    <td class="px-4 py-2">{% if r.direction == 'IN' %}<span class="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold">IN</span>{% else %}<span class="px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 font-semibold">OUT</span>{% endif %}</td>
-                    <td class="px-4 py-2 font-mono"><a class="text-blue-700 hover:underline" href="/readers/{{ r.gate_id | urlencode }}">{{ r.gate_reader }}</a><div class="text-[10px] text-gray-400 font-sans">{{ r.gate_label }}</div></td>
-                    <td class="px-4 py-2 font-mono">{{ r.barn_code }}</td>
-                    <td class="px-4 py-2 text-gray-600">{{ r.farm_name }}</td>
-                    <td class="px-4 py-2 text-gray-500">{{ (r.detection_method or '') | replace('_', ' ') | lower }}</td>
-                </tr>
-                {% else %}
-                <tr><td colspan="7" class="py-10 text-center text-gray-400">No gate passes match these filters in this period.</td></tr>
-                {% endfor %}
-            </tbody>
-        </table>
+    <div class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+      <span class="text-[10px] uppercase tracking-wider text-gray-400">IN</span>
+      <div class="text-2xl font-extrabold font-mono text-emerald-600">
+        {{ "{:,}".format(in_count) }}
+      </div>
     </div>
+    <div class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+      <span class="text-[10px] uppercase tracking-wider text-gray-400"
+        >OUT</span
+      >
+      <div class="text-2xl font-extrabold font-mono text-amber-600">
+        {{ "{:,}".format(out_count) }}
+      </div>
+    </div>
+  </div>
+  <div
+    class="bg-white border border-gray-200 rounded-lg shadow-sm overflow-x-auto"
+  >
+    <table class="w-full text-left text-xs text-gray-700">
+      <thead class="bg-gray-50 border-b border-gray-200 text-gray-600">
+        <tr>
+          {{ sort_th('Time', 'time', sort, dir, '/htmx/report-data',
+          '#report-data-container', '#report-form', 'desc', 'px-4 py-2.5') }} {{
+          sort_th('Animal', 'animal', sort, dir, '/htmx/report-data',
+          '#report-data-container', '#report-form', 'asc', 'px-4 py-2.5') }} {{
+          sort_th('Direction', 'direction', sort, dir, '/htmx/report-data',
+          '#report-data-container', '#report-form', 'asc', 'px-4 py-2.5') }} {{
+          sort_th('Reader', 'reader', sort, dir, '/htmx/report-data',
+          '#report-data-container', '#report-form', 'asc', 'px-4 py-2.5') }} {{
+          sort_th('Barn', 'barn', sort, dir, '/htmx/report-data',
+          '#report-data-container', '#report-form', 'asc', 'px-4 py-2.5') }} {{
+          sort_th('Facility', 'farm', sort, dir, '/htmx/report-data',
+          '#report-data-container', '#report-form', 'asc', 'px-4 py-2.5') }} {{
+          sort_th('Detected by', 'method', sort, dir, '/htmx/report-data',
+          '#report-data-container', '#report-form', 'asc', 'px-4 py-2.5') }}
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-100">
+        {% for r in items %}
+        <tr>
+          <td class="px-4 py-2 font-mono text-gray-500">
+            {{ r.occurred_at | localtime }}
+          </td>
+          <td class="px-4 py-2 font-bold">
+            <a
+              class="text-blue-700 hover:underline"
+              href="/herd/{{ r.animal_id | urlencode }}"
+              >{{ r.animal_id }}</a
+            >
+          </td>
+          <td class="px-4 py-2">
+            {% if r.direction == 'IN' %}<span
+              class="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold"
+              >IN</span
+            >{% else %}<span
+              class="px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 font-semibold"
+              >OUT</span
+            >{% endif %}
+          </td>
+          <td class="px-4 py-2 font-mono">
+            <a
+              class="text-blue-700 hover:underline"
+              href="/readers/{{ r.gate_id | urlencode }}"
+              >{{ r.gate_reader }}</a
+            >
+            <div class="text-[10px] text-gray-400 font-sans">
+              {{ r.gate_label }}
+            </div>
+          </td>
+          <td class="px-4 py-2 font-mono">{{ r.barn_code }}</td>
+          <td class="px-4 py-2 text-gray-600">{{ r.farm_name }}</td>
+          <td class="px-4 py-2 text-gray-500">
+            {{ (r.detection_method or '') | replace('_', ' ') | lower }}
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="7" class="py-10 text-center text-gray-400">
+            No gate passes match these filters in this period.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 
-    {% elif report_type == 'reads' %}
-    <div class="grid grid-cols-2 gap-4 max-w-md">
-        <div class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm"><span class="text-[10px] uppercase tracking-wider text-gray-400">Reads</span><div class="text-2xl font-extrabold font-mono text-gray-900">{{ "{:,}".format(total) }}</div></div>
-        <div class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm"><span class="text-[10px] uppercase tracking-wider text-gray-400">Led to an IN / OUT pass</span><div class="text-2xl font-extrabold font-mono text-emerald-600">{{ "{:,}".format(with_movement) }}</div></div>
+  {% elif report_type == 'reads' %}
+  <div class="grid grid-cols-2 gap-4 max-w-md">
+    <div class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+      <span class="text-[10px] uppercase tracking-wider text-gray-400"
+        >Reads</span
+      >
+      <div class="text-2xl font-extrabold font-mono text-gray-900">
+        {{ "{:,}".format(total) }}
+      </div>
     </div>
-    <div class="bg-white border border-gray-200 rounded-lg shadow-sm overflow-x-auto">
-        <table class="w-full text-left text-xs text-gray-700">
-            <thead class="bg-gray-50 border-b border-gray-200 text-gray-600">
-                <tr>
-                    {{ sort_th('Time', 'time', sort, dir, '/htmx/report-data', '#report-data-container', '#report-form', 'desc', 'px-4 py-2.5') }}
-                    {{ sort_th('Reader', 'reader', sort, dir, '/htmx/report-data', '#report-data-container', '#report-form', 'asc', 'px-4 py-2.5') }}
-                    {{ sort_th('Animal / tag', 'animal', sort, dir, '/htmx/report-data', '#report-data-container', '#report-form', 'asc', 'px-4 py-2.5') }}
-                    {{ sort_th('Event', 'event', sort, dir, '/htmx/report-data', '#report-data-container', '#report-form', 'asc', 'px-4 py-2.5') }}
-                    {{ sort_th('Barn', 'barn', sort, dir, '/htmx/report-data', '#report-data-container', '#report-form', 'asc', 'px-4 py-2.5') }}
-                    <th class="px-4 py-2.5 font-semibold">Result</th>
-                </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-100">
-                {% for r in items %}
-                <tr>
-                    <td class="px-4 py-2 font-mono text-gray-500">{{ r.observed_at | localtime }}</td>
-                    <td class="px-4 py-2 font-mono font-bold">{{ r.reader_name }}<div class="text-[10px] text-gray-400 font-sans font-normal">{{ r.gate_label or 'not registered' }}</div></td>
-                    <td class="px-4 py-2 font-mono">{{ r.user_name or r.card_uuid or '' }}</td>
-                    <td class="px-4 py-2 text-gray-600">{{ r.gate_action or '' }}</td>
-                    <td class="px-4 py-2 font-mono">{{ r.barn_code or '' }}</td>
-                    <td class="px-4 py-2">{% if r.movement_direction %}<span class="px-2 py-0.5 rounded font-semibold {{ 'bg-emerald-50 text-emerald-700 border border-emerald-200' if r.movement_direction == 'IN' else 'bg-amber-50 text-amber-700 border border-amber-200' }}">{{ r.movement_direction }}</span>{% else %}<span class="text-gray-400">no pass</span>{% endif %}</td>
-                </tr>
-                {% else %}
-                <tr><td colspan="6" class="py-10 text-center text-gray-400">No reads match these filters in this period.</td></tr>
-                {% endfor %}
-            </tbody>
-        </table>
+    <div class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+      <span class="text-[10px] uppercase tracking-wider text-gray-400"
+        >Led to an IN / OUT pass</span
+      >
+      <div class="text-2xl font-extrabold font-mono text-emerald-600">
+        {{ "{:,}".format(with_movement) }}
+      </div>
     </div>
-    {% endif %}
-
-    {% if report_type in ('passages', 'reads') and total_pages > 1 %}
-    <div class="flex flex-wrap justify-between items-center gap-3 text-xs text-gray-500">
-        <span>Showing <strong class="font-mono text-gray-800">{{ "{:,}".format(start_item) }}</strong> to <strong class="font-mono text-gray-800">{{ "{:,}".format(end_item) }}</strong> of <strong class="font-mono text-gray-800">{{ "{:,}".format(total) }}</strong></span>
-        <div class="flex items-center space-x-1">
-            {% if page > 1 %}
-            <button type="button" hx-get="/htmx/report-data?page={{ page - 1 }}&sort={{ sort }}&dir={{ dir }}" hx-include="#report-form" hx-target="#report-data-container" class="px-2.5 py-1 rounded border border-gray-300 bg-white hover:bg-gray-50 font-semibold">&lt;</button>
+  </div>
+  <div
+    class="bg-white border border-gray-200 rounded-lg shadow-sm overflow-x-auto"
+  >
+    <table class="w-full text-left text-xs text-gray-700">
+      <thead class="bg-gray-50 border-b border-gray-200 text-gray-600">
+        <tr>
+          {{ sort_th('Time', 'time', sort, dir, '/htmx/report-data',
+          '#report-data-container', '#report-form', 'desc', 'px-4 py-2.5') }} {{
+          sort_th('Reader', 'reader', sort, dir, '/htmx/report-data',
+          '#report-data-container', '#report-form', 'asc', 'px-4 py-2.5') }} {{
+          sort_th('Animal / tag', 'animal', sort, dir, '/htmx/report-data',
+          '#report-data-container', '#report-form', 'asc', 'px-4 py-2.5') }} {{
+          sort_th('Event', 'event', sort, dir, '/htmx/report-data',
+          '#report-data-container', '#report-form', 'asc', 'px-4 py-2.5') }} {{
+          sort_th('Barn', 'barn', sort, dir, '/htmx/report-data',
+          '#report-data-container', '#report-form', 'asc', 'px-4 py-2.5') }}
+          <th class="px-4 py-2.5 font-semibold">Result</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-100">
+        {% for r in items %}
+        <tr>
+          <td class="px-4 py-2 font-mono text-gray-500">
+            {{ r.observed_at | localtime }}
+          </td>
+          <td class="px-4 py-2 font-mono font-bold">
+            {{ r.reader_name }}
+            <div class="text-[10px] text-gray-400 font-sans font-normal">
+              {{ r.gate_label or 'not registered' }}
+            </div>
+            {% if r.read_source == 'LOCAL_USB' %}
+            <div class="mt-0.5">
+              <span
+                class="px-1.5 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200 font-sans font-semibold text-[10px]"
+                title="Read by a USB reader on the barn gateway. The time is the gateway's clock."
+                >USB{% if r.source_device %} · {{ r.source_device }}{% endif
+                %}</span
+              >
+            </div>
             {% endif %}
-            {% for p in page_range %}
-                {% if p == '...' %}<span class="px-2 text-gray-400">...</span>
-                {% elif p == page %}<span class="px-3 py-1 rounded bg-[#2f80ed] text-white font-semibold">{{ p }}</span>
-                {% else %}<button type="button" hx-get="/htmx/report-data?page={{ p }}&sort={{ sort }}&dir={{ dir }}" hx-include="#report-form" hx-target="#report-data-container" class="px-3 py-1 rounded border border-gray-200 bg-white hover:bg-blue-50">{{ p }}</button>{% endif %}
-            {% endfor %}
-            {% if page < total_pages %}
-            <button type="button" hx-get="/htmx/report-data?page={{ page + 1 }}&sort={{ sort }}&dir={{ dir }}" hx-include="#report-form" hx-target="#report-data-container" class="px-2.5 py-1 rounded border border-gray-300 bg-white hover:bg-gray-50 font-semibold">&gt;</button>
-            {% endif %}
-        </div>
+          </td>
+          <td class="px-4 py-2 font-mono">
+            {% if r.event_class == 'LOCAL_UNMAPPED' %}<span
+              class="text-amber-700 font-sans font-semibold"
+              >Credential {{ r.credential_identifier }}</span
+            >
+            <div class="text-[10px] text-amber-600 font-sans font-normal">
+              matches no card yet
+            </div>
+            {% else %}{{ r.user_name or r.card_uuid or '' }}{% if r.read_source
+            == 'LOCAL_USB' and r.credential_identifier %}
+            <div class="text-[10px] text-gray-400 font-sans font-normal">
+              credential {{ r.credential_identifier }}{% if r.card_resolved_by
+              == 'TAG_REGISTER' %} · from the tag register{% elif
+              r.card_resolved_by == 'SAFETRUST_HISTORY' %} · seen with this card
+              by Safetrust{% endif %}
+            </div>
+            {% endif %}{% endif %}
+          </td>
+          <td class="px-4 py-2 text-gray-600">{{ r.gate_action or '' }}</td>
+          <td class="px-4 py-2 font-mono">{{ r.barn_code or '' }}</td>
+          <td class="px-4 py-2">
+            {% if r.movement_direction %}<span
+              class="px-2 py-0.5 rounded font-semibold {{ 'bg-emerald-50 text-emerald-700 border border-emerald-200' if r.movement_direction == 'IN' else 'bg-amber-50 text-amber-700 border border-amber-200' }}"
+              >{{ r.movement_direction }}</span
+            >{% elif r.duplicate_of %}<span
+              class="text-sky-700"
+              title="The same tap was already counted from the other route (Safetrust cloud or USB reader). Kept as evidence."
+              >second copy, not counted again</span
+            >{% elif r.event_class == 'LOCAL_UNMAPPED' %}<span
+              class="text-amber-700"
+              >waiting for a card</span
+            >{% else %}<span class="text-gray-400">no pass</span>{% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="6" class="py-10 text-center text-gray-400">
+            No reads match these filters in this period.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %} {% if report_type in ('passages', 'reads') and total_pages > 1 %}
+  <div
+    class="flex flex-wrap justify-between items-center gap-3 text-xs text-gray-500"
+  >
+    <span
+      >Showing
+      <strong class="font-mono text-gray-800"
+        >{{ "{:,}".format(start_item) }}</strong
+      >
+      to
+      <strong class="font-mono text-gray-800"
+        >{{ "{:,}".format(end_item) }}</strong
+      >
+      of
+      <strong class="font-mono text-gray-800"
+        >{{ "{:,}".format(total) }}</strong
+      ></span
+    >
+    <div class="flex items-center space-x-1">
+      {% if page > 1 %}
+      <button
+        type="button"
+        hx-get="/htmx/report-data?page={{ page - 1 }}&sort={{ sort }}&dir={{ dir }}"
+        hx-include="#report-form"
+        hx-target="#report-data-container"
+        class="px-2.5 py-1 rounded border border-gray-300 bg-white hover:bg-gray-50 font-semibold"
+      >
+        &lt;
+      </button>
+      {% endif %} {% for p in page_range %} {% if p == '...' %}<span
+        class="px-2 text-gray-400"
+        >...</span
+      >
+      {% elif p == page %}<span
+        class="px-3 py-1 rounded bg-[#2f80ed] text-white font-semibold"
+        >{{ p }}</span
+      >
+      {% else %}<button
+        type="button"
+        hx-get="/htmx/report-data?page={{ p }}&sort={{ sort }}&dir={{ dir }}"
+        hx-include="#report-form"
+        hx-target="#report-data-container"
+        class="px-3 py-1 rounded border border-gray-200 bg-white hover:bg-blue-50"
+      >
+        {{ p }}</button
+      >{% endif %} {% endfor %} {% if page < total_pages %}
+      <button
+        type="button"
+        hx-get="/htmx/report-data?page={{ page + 1 }}&sort={{ sort }}&dir={{ dir }}"
+        hx-include="#report-form"
+        hx-target="#report-data-container"
+        class="px-2.5 py-1 rounded border border-gray-300 bg-white hover:bg-gray-50 font-semibold"
+      >
+        &gt;
+      </button>
+      {% endif %}
     </div>
-    {% endif %}
-
-    {% endif %}
+  </div>
+  {% endif %} {% endif %}
 </div>

@@ -2,10 +2,14 @@
 """
 Barn edge gateway (store-and-forward) for VinaBeef.
 
-Reader events reach the gateway two ways and land in ONE durable queue (SQLite, WAL, synchronous=FULL):
+Reader events reach the gateway three ways and land in ONE durable queue (SQLite, WAL, synchronous=FULL):
 
   1. MQTT   - subscribes to the reader events (Safetrust cloud broker, or a broker on the barn LAN).
-  2. HTTP   - POST /  with one event or a list (LAN devices, test tools, the USB reader bridge).
+  2. HTTP   - POST /  with one event or a list (LAN devices, test tools).
+  3. USB    - Safetrust USB IoT readers on this machine (keyboard, serial) or POST /local-swipe. They send only a
+              credential number, no time: the gateway stamps the time, gives the swipe a negative EVENT_KEY and,
+              while MQTT is up, holds it briefly to see whether the reader's own copy of the tap shows up.
+              See local_swipes.py and usb_input.py.
 
 A background worker forwards the queue to the VinaBeef backend in hardware-time order and deletes an event
 ONLY when the backend confirms it (HTTP 200, or an OK entry in the 207 result list). If the backend or the WAN
@@ -32,6 +36,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 import httpx
+
+from local_swipes import LocalSwipes
+from usb_input import build_source, parse_credential, parse_inputs
 
 log = logging.getLogger("edge")
 
@@ -69,6 +76,16 @@ class Config:
     mqtt_qos: int = 1
     mqtt_tls_insecure: bool = True    # the Safetrust demo broker needs it; set false with a real CA
     mqtt_ca_certs: str = ""
+    # Local USB readers (leave local_inputs empty to run without them; POST /local-swipe still works for readers in local_readers)
+    gateway_no: int = 1               # 1..99, unique per gateway: namespaces the negative EVENT_KEYs of its USB swipes
+    local_inputs: str = ""            # kbd:/dev/input/event5=DrC0F8,serial:/dev/ttyACM0@9600=DrC1C4,stdin=DrC0F8
+    local_readers: str = ""           # extra Safetrust reader names POST /local-swipe may use (inputs add their own)
+    local_hold_ms: int = 6000         # how long a swipe waits for the reader's own copy while MQTT is up (0 = never wait)
+    local_match_skew_ms: int = 10_000  # two reads are the same tap when closer than this
+    local_idle_flush_ms: int = 200    # a USB device that sends no Enter ends a swipe after this silence
+    local_retention_s: int = 86_400   # how long the swipe log is kept
+    local_company_key: int = 0        # optional COMPANY_KEY copied onto USB swipes (0 = none)
+    local_grab_keyboard: bool = True  # take the keyboard device exclusively so digits do not reach a console
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -93,6 +110,15 @@ class Config:
             mqtt_qos=int(g("MQTT_QOS", cls.mqtt_qos)),
             mqtt_tls_insecure=_env_bool("MQTT_TLS_INSECURE", True),
             mqtt_ca_certs=g("MQTT_CA_CERTS", ""),
+            gateway_no=int(g("EDGE_GATEWAY_NO", cls.gateway_no)),
+            local_inputs=g("LOCAL_INPUTS", ""),
+            local_readers=g("LOCAL_READERS", ""),
+            local_hold_ms=int(g("LOCAL_HOLD_MS", cls.local_hold_ms)),
+            local_match_skew_ms=int(g("LOCAL_MATCH_SKEW_MS", cls.local_match_skew_ms)),
+            local_idle_flush_ms=int(g("LOCAL_IDLE_FLUSH_MS", cls.local_idle_flush_ms)),
+            local_retention_s=int(g("LOCAL_LOG_RETENTION_S", cls.local_retention_s)),
+            local_company_key=int(g("LOCAL_COMPANY_KEY", cls.local_company_key)),
+            local_grab_keyboard=_env_bool("LOCAL_GRAB_KEYBOARD", True),
         )
 
 
@@ -168,7 +194,8 @@ class Outbox:
             cur = self.db.execute(
                 "INSERT OR IGNORE INTO edge_queue (event_key, hardware_ts, payload_json, status, is_card, created_at) "
                 "VALUES (?, ?, ?, 'PENDING', ?, ?)",
-                (event["EVENT_KEY"], event["TIMESTAMP"], json.dumps(event), 1 if event.get("CARD_UUID") else 0,
+                (event["EVENT_KEY"], event["TIMESTAMP"], json.dumps(event),
+                 1 if (event.get("CARD_UUID") or event.get("CREDENTIAL_IDENTIFIER")) else 0,
                  int(time.time() * 1000)))
             self.db.commit()
             self._inserts += 1
@@ -218,7 +245,7 @@ class Outbox:
             rows = dict(self.db.execute("SELECT status, COUNT(*) FROM edge_queue GROUP BY status").fetchall())
             oldest = self.db.execute("SELECT MIN(hardware_ts) FROM edge_queue WHERE status = 'PENDING'").fetchone()[0]
         return {
-            "pending": rows.get("PENDING", 0), "dead": rows.get("DEAD", 0),
+            "pending": rows.get("PENDING", 0), "dead": rows.get("DEAD", 0), "held": rows.get("HELD", 0),
             "oldestPendingAgeSeconds": int(time.time() - oldest / 1000) if oldest else 0,
         }
 
@@ -234,14 +261,75 @@ class Gateway:
         self.wan_state = "UNKNOWN"          # ONLINE | DEGRADED (backend answered but cannot write) | OFFLINE
         self.last_success_at = None
         self.mqtt_connected = False
-        self.counters = {"received": 0, "duplicates": 0, "ignored": 0, "forwarded": 0, "dead": 0}
+        self.counters = {"received": 0, "duplicates": 0, "ignored": 0, "forwarded": 0, "dead": 0,
+                         "localReceived": 0, "localHeld": 0, "localShadow": 0, "localQueued": 0, "localRejected": 0}
+        self.local = LocalSwipes(self.outbox, cfg.gateway_no, cfg.local_hold_ms, cfg.local_match_skew_ms,
+                                 cfg.local_retention_s, cfg.local_company_key)
+        self.local_specs = parse_inputs(cfg.local_inputs)
+        self.local_readers = {r.strip() for r in cfg.local_readers.split(",") if r.strip()} | {s.reader for s in self.local_specs}
+        self.local_sources = []
 
     # ---- intake -------------------------------------------------------------------------------------
     def accept_event(self, event: dict, raw_json: str) -> bool:
+        # EDGE_* fields are written by this gateway for its own USB swipes and nowhere else: a reader event or a LAN
+        # POST must not be able to pose as one.
+        event = {k: v for k, v in event.items() if not str(k).startswith("EDGE_")}
         ev = normalise(event, raw_json)
         is_new = self.outbox.add(ev)
         self.counters["received" if is_new else "duplicates"] += 1
+        if is_new:
+            try:                                   # matching is an optimisation: it must never lose the event
+                self.local.record_safetrust(ev)
+            except Exception:
+                log.exception("Could not record read %s for USB matching", ev.get("EVENT_KEY"))
         return is_new
+
+    # ---- local USB swipes ---------------------------------------------------------------------------
+    def accept_local(self, reader: str, device: str, text, t_ms: int = None):
+        """One swipe of a USB reader. Raises ValueError (and counts it) when the text is not a credential number or the
+        reader is not one this gateway serves. Returns a LocalResult: HELD, QUEUED or SHADOW."""
+        credential = parse_credential(text)
+        if credential is None:
+            self.counters["localRejected"] += 1
+            raise ValueError(f"'{str(text)[:40]}' is not a credential number (1 to 12 digits)")
+        if reader not in self.local_readers:
+            self.counters["localRejected"] += 1
+            raise ValueError(f"reader '{reader}' is not served by this gateway (LOCAL_INPUTS / LOCAL_READERS)")
+        t_ms = int(time.time() * 1000) if t_ms is None else t_ms
+        # Wait for the reader's own copy only while MQTT is connected: with MQTT down no copy can reach this gateway.
+        hold = self.mqtt_connected and self.cfg.local_hold_ms > 0
+        result = self.local.submit(reader, device, credential, str(text), t_ms, hold)
+        self.counters["localReceived"] += 1
+        self.counters[{"HELD": "localHeld", "SHADOW": "localShadow", "QUEUED": "localQueued"}[result.state]] += 1
+        log.info("USB swipe: credential %s at reader %s from %s -> %s", credential, reader, device, result.state)
+        return result
+
+    def _local_sink(self, reader: str, device: str, text: str, t_ms: int):
+        try:
+            self.accept_local(reader, device, text, t_ms)
+        except ValueError as ex:
+            log.warning("USB input from %s rejected: %s", device, ex)
+
+    def start_local_inputs(self):
+        for spec in self.local_specs:
+            src = build_source(spec, self._local_sink, self.cfg.local_idle_flush_ms, self.cfg.local_grab_keyboard)
+            src.start()
+            self.local_sources.append(src)
+        if self.local_specs:
+            log.info("USB inputs: %s", ", ".join(f"{s.device}->{s.reader}" for s in self.local_specs))
+
+    def local_loop(self):
+        """Ends holds that ran out, and trims the swipe log."""
+        last_prune = 0.0
+        while not self.stop.wait(0.25):
+            try:
+                if self.local.release_due():
+                    log.info("USB swipes with no reader copy within %d ms were queued.", self.cfg.local_hold_ms)
+                if time.time() - last_prune > 60:
+                    self.local.prune()
+                    last_prune = time.time()
+            except Exception:
+                log.exception("USB hold loop error")
 
     def handle_mqtt_message(self, topic: str, payload: bytes):
         decoded = decode_payload(payload)
@@ -347,6 +435,11 @@ class Gateway:
             "wan": self.wan_state, "mqttConnected": self.mqtt_connected, "queue": self.outbox.stats(),
             "lastForwardedAgeSeconds": int(time.time() - self.last_success_at) if self.last_success_at else None,
             "counters": dict(self.counters),
+            "local": {
+                **self.local.stats(),
+                "inputs": [{"device": s.device, "reader": s.reader, "connected": s.connected} for s in self.local_sources],
+                "holdMs": self.cfg.local_hold_ms, "matchSkewMs": self.cfg.local_match_skew_ms,
+            },
         }
 
     # ---- MQTT source --------------------------------------------------------------------------------
@@ -398,6 +491,10 @@ class Gateway:
         def on_disconnect(c, userdata, rc):
             self.mqtt_connected = False
             log.warning("MQTT disconnected (rc=%s); the client reconnects on its own.", rc)
+            try:                                       # no reader copy can arrive now: stop waiting for one
+                self.local.release_all_held()
+            except Exception:
+                log.exception("Could not release held USB swipes")
 
         def on_message(c, userdata, msg):
             try:
@@ -436,6 +533,8 @@ class Gateway:
             def do_POST(self):
                 if gw.cfg.ingest_token and self.headers.get("X-Edge-Token") != gw.cfg.ingest_token:
                     return self._json(401, {"error": "bad token"})
+                if self.path.startswith("/local-swipe"):
+                    return self._local_swipe()
                 try:
                     raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
                     body = json.loads(raw)
@@ -447,6 +546,17 @@ class Gateway:
                     return self._json(400, {"error": str(ex)})
                 self._json(202, {"status": "BUFFERED_IN_EDGE_WAL", "queued": queued, "duplicates": len(events) - queued})
 
+            def _local_swipe(self):
+                """{"reader": "DrC0F8", "credential": "38", "device": "optional label"}. The gateway stamps the time."""
+                try:
+                    body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
+                    if not isinstance(body, dict) or "reader" not in body or "credential" not in body:
+                        raise ValueError('expected {"reader": "...", "credential": "..."}')
+                    result = gw.accept_local(str(body["reader"]), str(body.get("device") or "http"), body["credential"])
+                except ValueError as ex:
+                    return self._json(400, {"error": str(ex)})
+                self._json(202, {"state": result.state, "eventKey": result.event_key})
+
             def log_message(self, fmt, *args):
                 return
 
@@ -457,6 +567,8 @@ def main():
     logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
     gw = Gateway(Config.from_env())
     threading.Thread(target=gw.forward_loop, name="forwarder", daemon=True).start()
+    threading.Thread(target=gw.local_loop, name="usb-hold", daemon=True).start()
+    gw.start_local_inputs()
     mqtt_client = gw.start_mqtt()
     server = gw.http_server()
     signal.signal(signal.SIGTERM, lambda *_: threading.Thread(target=server.shutdown).start())
@@ -468,6 +580,8 @@ def main():
         pass
     finally:
         gw.stop.set()
+        for src in gw.local_sources:
+            src.close()
         if mqtt_client:
             mqtt_client.loop_stop()
             mqtt_client.disconnect()

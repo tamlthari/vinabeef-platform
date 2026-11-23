@@ -26,8 +26,14 @@ data class RejectedRecord(
     val reason: String
 )
 
+/**
+ * The records of one signed-in user: the ones they saved, plus any saved before the phone knew a user.
+ * One bind argument: the username. The comparison ignores upper and lower case.
+ */
+private const val MINE = "(recorded_by IS NULL OR recorded_by = '' OR recorded_by = ? COLLATE NOCASE)"
+
 class OfflineFieldDbHelper(context: Context) :
-    SQLiteOpenHelper(context, "vinabeef_field_offline.db", null, 2) {
+    SQLiteOpenHelper(context, "vinabeef_field_offline.db", null, 3), OutboxStore {
 
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
@@ -59,7 +65,8 @@ class OfflineFieldDbHelper(context: Context) :
                 title TEXT,
                 animal_id TEXT,
                 record_type TEXT,
-                recorded_at TEXT
+                recorded_at TEXT,
+                recorded_by TEXT
             )
         """)
         createProtocolTables(db)
@@ -75,6 +82,10 @@ class OfflineFieldDbHelper(context: Context) :
                 db.execSQL("ALTER TABLE health_outbox ADD COLUMN $column")
             }
             createProtocolTables(db)
+        }
+        if (oldVersion < 3) {
+            // Records already waiting have no author; they are sent by whoever signs in (as before).
+            db.execSQL("ALTER TABLE health_outbox ADD COLUMN recorded_by TEXT")
         }
     }
 
@@ -283,6 +294,7 @@ class OfflineFieldDbHelper(context: Context) :
             put("animal_id", payloadJson.optString("animalId"))
             put("record_type", recordType)
             put("recorded_at", payloadJson.optString("recordedAt"))
+            put("recorded_by", payloadJson.optString("recordedBy"))
         }
         writableDatabase.insertWithOnConflict("health_outbox", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
 
@@ -295,27 +307,38 @@ class OfflineFieldDbHelper(context: Context) :
         }
     }
 
-    /** Records waiting to be sent, oldest first. Rejected records are not sent again until retried. */
-    fun getPendingOutbox(limit: Int = 100): JSONArray {
-        val arr = JSONArray()
+    /**
+     * The signed-in user's records waiting to be sent, oldest first. A record saved by someone else stays
+     * on the phone until that person signs in, so it is never sent under another name.
+     * Rejected records are not sent again until retried.
+     */
+    override fun pendingPayloads(user: String, limit: Int): List<String> {
+        val payloads = ArrayList<String>()
         readableDatabase.rawQuery(
-            "SELECT payload_json FROM health_outbox WHERE status = 'PENDING' ORDER BY created_at ASC LIMIT ?",
-            arrayOf(limit.toString())
+            "SELECT payload_json FROM health_outbox WHERE status = 'PENDING' AND $MINE ORDER BY created_at ASC LIMIT ?",
+            arrayOf(user.trim(), limit.toString())
         ).use {
-            while (it.moveToNext()) arr.put(JSONObject(it.getString(0)))
+            while (it.moveToNext()) payloads.add(it.getString(0))
         }
-        return arr
+        return payloads
     }
 
+    /** Every record waiting to be sent, whoever saved it. */
     fun getPendingCount(): Int = count("SELECT COUNT(*) FROM health_outbox WHERE status = 'PENDING'")
 
-    fun getRejectedCount(): Int = count("SELECT COUNT(*) FROM health_outbox WHERE status = 'REJECTED'")
+    /** Waiting records that belong to someone else: they go out when that person signs in. */
+    fun getPendingOfOthersCount(user: String): Int =
+        count("SELECT COUNT(*) FROM health_outbox WHERE status = 'PENDING' AND NOT $MINE", arrayOf(user.trim()))
 
-    fun getRejected(): List<RejectedRecord> {
+    fun getRejectedCount(user: String): Int =
+        count("SELECT COUNT(*) FROM health_outbox WHERE status = 'REJECTED' AND $MINE", arrayOf(user.trim()))
+
+    fun getRejected(user: String): List<RejectedRecord> {
         val list = ArrayList<RejectedRecord>()
         readableDatabase.rawQuery(
-            "SELECT client_event_id, label, title, last_error FROM health_outbox WHERE status = 'REJECTED' ORDER BY created_at ASC",
-            null
+            "SELECT client_event_id, label, title, last_error FROM health_outbox " +
+                    "WHERE status = 'REJECTED' AND $MINE ORDER BY created_at ASC",
+            arrayOf(user.trim())
         ).use {
             while (it.moveToNext()) {
                 list.add(RejectedRecord(it.getString(0), it.getString(1) ?: "", it.getString(2) ?: "", it.getString(3) ?: ""))
@@ -324,12 +347,12 @@ class OfflineFieldDbHelper(context: Context) :
         return list
     }
 
-    fun deleteAcknowledgedIds(ids: JSONArray) {
+    override fun deleteAcknowledged(ids: List<String>) {
         val db = writableDatabase
         db.beginTransaction()
         try {
-            for (i in 0 until ids.length()) {
-                db.delete("health_outbox", "client_event_id = ?", arrayOf(ids.getString(i)))
+            for (id in ids) {
+                db.delete("health_outbox", "client_event_id = ?", arrayOf(id))
             }
             db.setTransactionSuccessful()
         } finally {
@@ -337,7 +360,7 @@ class OfflineFieldDbHelper(context: Context) :
         }
     }
 
-    fun markRejected(clientEventId: String, reason: String) {
+    override fun markRejected(clientEventId: String, reason: String) {
         val cv = ContentValues().apply {
             put("status", "REJECTED")
             put("last_error", reason)
@@ -346,18 +369,18 @@ class OfflineFieldDbHelper(context: Context) :
     }
 
     /** Puts rejected records back in the queue, for example after the animal was registered in the web app. */
-    fun retryRejected() {
+    fun retryRejected(user: String) {
         val cv = ContentValues().apply {
             put("status", "PENDING")
             putNull("last_error")
         }
-        writableDatabase.update("health_outbox", cv, "status = 'REJECTED'", null)
+        writableDatabase.update("health_outbox", cv, "status = 'REJECTED' AND $MINE", arrayOf(user.trim()))
     }
 
-    fun discardRejected() {
-        writableDatabase.delete("health_outbox", "status = 'REJECTED'", null)
+    fun discardRejected(user: String) {
+        writableDatabase.delete("health_outbox", "status = 'REJECTED' AND $MINE", arrayOf(user.trim()))
     }
 
-    private fun count(sql: String): Int =
-        readableDatabase.rawQuery(sql, null).use { if (it.moveToFirst()) it.getInt(0) else 0 }
+    private fun count(sql: String, args: Array<String>? = null): Int =
+        readableDatabase.rawQuery(sql, args).use { if (it.moveToFirst()) it.getInt(0) else 0 }
 }

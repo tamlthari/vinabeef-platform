@@ -4,7 +4,8 @@ package com.vinabeef.web;
 import tools.jackson.databind.ObjectMapper;
 
 import com.vinabeef.audit.Audited;
-import com.vinabeef.security.RbacScopeService;
+import com.vinabeef.security.BarnAccessPolicy;
+import com.vinabeef.security.CurrentScopeProvider;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
@@ -28,7 +29,8 @@ import java.util.*;
 public class CattleManagementController {
 
     private final JdbcTemplate jdbcTemplate;
-    private final RbacScopeService rbacScopeService;
+    private final CurrentScopeProvider currentScope;
+    private final BarnAccessPolicy barnAccess;
     private final ReportClock clock;
 
     @Data
@@ -84,7 +86,7 @@ public class CattleManagementController {
             @RequestParam(required = false, defaultValue = "") String sort,
             @RequestParam(required = false, defaultValue = "") String dir) {
         try {
-            var scope = rbacScopeService.getCurrentScope();
+            var scope = currentScope.getCurrentScope();
             int safePage = Math.max(1, page);
             int safeSize = Math.min(Math.max(1, size), 100);
             int offset = (safePage - 1) * safeSize;
@@ -138,8 +140,8 @@ public class CattleManagementController {
             return ResponseEntity.badRequest().body(Map.of("error", "Animal ID is required"));
         }
 
-        var scope = rbacScopeService.getCurrentScope();
-        if (!rbacScopeService.canAccessBarnId(scope, req.getBarnId())) {
+        var scope = currentScope.getCurrentScope();
+        if (!barnAccess.canAccessBarnId(scope, req.getBarnId())) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body(Map.of("error", "Access denied: Target barn is outside your assigned scope."));
         }
@@ -192,7 +194,7 @@ public class CattleManagementController {
             return ResponseEntity.notFound().build();
         }
 
-        var scope = rbacScopeService.getCurrentScope();
+        var scope = currentScope.getCurrentScope();
         String animalBarnId = (String) profiles.get(0).get("assigned_barn_id");
         String animalFarmId = (String) profiles.get(0).get("farm_id");
         if (!scope.canAccessBarn(animalBarnId, animalFarmId)) {
@@ -423,8 +425,8 @@ public class CattleManagementController {
         }
         String toFarmId = (String) destRows.get(0).get("farm_id");
 
-        var scope = rbacScopeService.getCurrentScope();
-        if (scope.isBarnScoped() && !rbacScopeService.canAccessBarnId(scope, toBarnId)) {
+        var scope = currentScope.getCurrentScope();
+        if (scope.isBarnScoped() && !barnAccess.canAccessBarnId(scope, toBarnId)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body(Map.of("error", "Barn Supervisors can only transfer cattle between their own assigned barns."));
         }
@@ -532,8 +534,8 @@ public class CattleManagementController {
             return ResponseEntity.ok(Map.of("status", "DELETED", "animalId", animalId));
         }
 
-        String actor = rbacScopeService.getCurrentScope().username() != null
-                ? rbacScopeService.getCurrentScope().username() : "unknown";
+        String actor = currentScope.getCurrentScope().username() != null
+                ? currentScope.getCurrentScope().username() : "unknown";
         String note = reason != null && !reason.isBlank() ? reason.trim() : "Removed from the herd";
         if (note.length() > 200) {
             note = note.substring(0, 200);
@@ -586,7 +588,7 @@ public class CattleManagementController {
     }
 
     private boolean canAccessAnimal(String animalId) {
-        var scope = rbacScopeService.getCurrentScope();
+        var scope = currentScope.getCurrentScope();
         if (scope.isGlobal()) return true;
         var rows = jdbcTemplate.queryForList("""
             SELECT a.assigned_barn_id, b.farm_id

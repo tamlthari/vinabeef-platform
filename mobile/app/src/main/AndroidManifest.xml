@@ -16,12 +16,12 @@
     <uses-permission android:name="android.permission.NFC" />
 
     <!-- The phone's own data (herd, sign-in token, unsent records) must not be copied to cloud backups.
-         Plain-HTTP is not allowed in release builds; the debug build allows it (src/debug/AndroidManifest.xml). -->
+         Plain HTTP is not allowed in release builds (usesCleartextTraffic is off by default for this target SDK);
+         the debug build allows it (src/debug/AndroidManifest.xml). -->
 
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:label="VinaBeef Field RFID"
-        android:usesCleartextTraffic="true"
         android:theme="@style/Theme.MaterialComponents.DayNight.DarkActionBar">
 
         <activity

@@ -56,20 +56,20 @@
 32-->[androidx.core:core:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/491caade41e8059f1701c9c6b2691b8e/transformed/core-1.13.1/AndroidManifest.xml:26:5-97
 32-->[androidx.core:core:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/491caade41e8059f1701c9c6b2691b8e/transformed/core-1.13.1/AndroidManifest.xml:26:22-94
 33    <application
-33-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:21:5-36:19
-34        android:allowBackup="true"
-34-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:22:9-35
+33-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:22:5-36:19
+34        android:allowBackup="false"
+34-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:23:9-36
 35        android:appComponentFactory="androidx.core.app.CoreComponentFactory"
 35-->[androidx.core:core:1.13.1] /Applications/Android Studio.app/Contents/jbr/Contents/Home/caches/8.11.1/transforms/491caade41e8059f1701c9c6b2691b8e/transformed/core-1.13.1/AndroidManifest.xml:28:18-86
 36        android:debuggable="true"
 37        android:extractNativeLibs="false"
 38        android:label="VinaBeef Field RFID"
-38-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:23:9-44
+38-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:24:9-44
 39        android:testOnly="true"
 40        android:theme="@style/Theme.MaterialComponents.DayNight.DarkActionBar"
 40-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:25:9-79
 41        android:usesCleartextTraffic="true" >
-41-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:24:9-44
+41-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/debug/AndroidManifest.xml:4:18-53
 42        <activity
 42-->/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/AndroidManifest.xml:27:9-35:20
 43            android:name="com.vinabeef.field.MainActivity"

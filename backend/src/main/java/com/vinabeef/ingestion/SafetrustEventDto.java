@@ -1,5 +1,6 @@
 package com.vinabeef.ingestion;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
@@ -76,6 +77,43 @@ public class SafetrustEventDto {
     @JsonProperty("rawPayload")
     private String rawPayload;
 
+    /**
+     * Only a barn edge gateway sets these three, for a read from a USB reader attached to the gateway (the route that
+     * works without Internet). The names carry the {@code EDGE_} prefix so a Safetrust event can never be mistaken for one.
+     * {@code EDGE_SOURCE} is {@code LOCAL_USB}; {@code EDGE_DEVICE} names the USB device; {@code EDGE_TIME_SOURCE} says
+     * where {@code TIMESTAMP} came from ({@code GATEWAY_CLOCK}: the gateway, because the USB reader sends no time).
+     */
+    @JsonProperty("EDGE_SOURCE")
+    private String edgeSource;
+
+    @JsonProperty("EDGE_DEVICE")
+    private String edgeDevice;
+
+    @JsonProperty("EDGE_TIME_SOURCE")
+    private String edgeTimeSource;
+
+    public static final String SOURCE_SAFETRUST = "SAFETRUST";
+    public static final String SOURCE_LOCAL_USB = "LOCAL_USB";
+    public static final String CLASS_LOCAL_UNMAPPED = "LOCAL_UNMAPPED";
+
+    /** True for a read that a barn edge gateway took from its own USB reader. */
+    @JsonIgnore
+    public boolean isLocalUsb() {
+        return SOURCE_LOCAL_USB.equals(edgeSource);
+    }
+
+    /** SAFETRUST or LOCAL_USB: the route this read came by. */
+    @JsonIgnore
+    public String getReadSource() {
+        return isLocalUsb() ? SOURCE_LOCAL_USB : SOURCE_SAFETRUST;
+    }
+
+    /** The credential number without blanks, or null. */
+    @JsonIgnore
+    public String getCredentialNumber() {
+        return credentialIdentifier == null || credentialIdentifier.isBlank() ? null : credentialIdentifier.trim();
+    }
+
     /** The card UID is kept upper case and trimmed, the way Safetrust sends CARD_UUID. */
     public void setCardUuid(String value) {
         this.cardUuid = value == null ? null : value.trim().toUpperCase();
@@ -132,12 +170,15 @@ public class SafetrustEventDto {
     }
 
     /**
-     * CARD_READ when a card is present, READER_STATUS for reader connect/disconnect, READER_TELEMETRY for LiDAR,
-     * RF info and temperature reports, otherwise OTHER.
+     * CARD_READ when a card is present, LOCAL_UNMAPPED for a USB read whose credential number maps to no card, READER_STATUS
+     * for reader connect/disconnect, READER_TELEMETRY for LiDAR, RF info and temperature reports, otherwise OTHER.
      */
     public String getEventClass() {
         if (getCardUuid() != null) {
             return "CARD_READ";
+        }
+        if (isLocalUsb() && getCredentialNumber() != null) {
+            return CLASS_LOCAL_UNMAPPED;      // a USB read whose credential number maps to no card (yet)
         }
         String action = getRawAction();
         if ("READER_CONNECT_MQTT".equals(action) || "READER_DISCONNECT_MQTT".equals(action)) {

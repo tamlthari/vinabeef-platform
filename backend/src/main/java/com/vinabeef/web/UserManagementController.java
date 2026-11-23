@@ -1,7 +1,9 @@
 package com.vinabeef.web;
 
 import com.vinabeef.audit.Audited;
-import com.vinabeef.security.RbacScopeService;
+import com.vinabeef.security.BarnAccessPolicy;
+import com.vinabeef.security.CurrentScopeProvider;
+import com.vinabeef.security.UserScope;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -23,7 +25,8 @@ public class UserManagementController {
 
     private final JdbcTemplate jdbcTemplate;
     private final PasswordEncoder passwordEncoder;
-    private final RbacScopeService rbacScopeService;
+    private final CurrentScopeProvider currentScope;
+    private final BarnAccessPolicy barnAccess;
 
     private static final Set VALID_ROLES = Set.of(
             "SYSTEM_ADMIN", "FARM_MANAGER", "BARN_SUPERVISOR", "EXECUTIVE"
@@ -61,7 +64,7 @@ public class UserManagementController {
     @GetMapping
     @PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'FARM_MANAGER')")
     public ResponseEntity listUsers() {
-        var scope = rbacScopeService.getCurrentScope();
+        var scope = currentScope.getCurrentScope();
 
         List users;
         if (scope.isGlobal()) {
@@ -122,7 +125,7 @@ public class UserManagementController {
     @Audited(action = "CREATE_USER", targetType = "USER")
     @Transactional
     public ResponseEntity createUser(@RequestBody CreateUserRequest req) {
-        var scope = rbacScopeService.getCurrentScope();
+        var scope = currentScope.getCurrentScope();
 
         if (req.getUsername() == null || req.getUsername().isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "Username is required"));
@@ -206,7 +209,7 @@ public class UserManagementController {
     @Transactional
     public ResponseEntity updateUserRoleAndScope(@PathVariable String targetUsername,
                                                  @RequestBody UpdateUserRoleRequest req) {
-        var scope = rbacScopeService.getCurrentScope();
+        var scope = currentScope.getCurrentScope();
         String cleanTarget = targetUsername.trim();
 
         var existingRows = jdbcTemplate.queryForList(
@@ -293,7 +296,7 @@ public class UserManagementController {
     @Audited(action = "UPDATE_USER", targetType = "USER")
     @Transactional
     public ResponseEntity updateUser(@PathVariable String targetUsername, @RequestBody UpdateUserRequest req) {
-        var scope = rbacScopeService.getCurrentScope();
+        var scope = currentScope.getCurrentScope();
         String cleanTarget = targetUsername.trim();
 
         var rows = jdbcTemplate.queryForList(
@@ -392,7 +395,7 @@ public class UserManagementController {
     @Audited(action = "DELETE_USER", targetType = "USER")
     @Transactional
     public ResponseEntity deleteUser(@PathVariable String targetUsername) {
-        var scope = rbacScopeService.getCurrentScope();
+        var scope = currentScope.getCurrentScope();
         String cleanTarget = targetUsername.trim();
 
         var rows = jdbcTemplate.queryForList(
@@ -436,7 +439,7 @@ public class UserManagementController {
         }
     }
 
-    private List sanitizeAndValidateBarns(RbacScopeService.UserScope scope,
+    private List sanitizeAndValidateBarns(UserScope scope,
                                           String targetRole,
                                           String effectiveFarmId,
                                           List rawBarnIds) {
@@ -458,7 +461,7 @@ public class UserManagementController {
             if (effectiveFarmId != null && !effectiveFarmId.equals(barnFarmId)) {
                 throw new IllegalArgumentException("Barn " + bid + " does not belong to farm " + effectiveFarmId);
             }
-            if (!rbacScopeService.canAccessBarnId(scope, bid)) {
+            if (!barnAccess.canAccessBarnId(scope, bid)) {
                 throw new IllegalArgumentException("Barn " + bid + " is outside your authorized scope.");
             }
             if (!valid.contains(bid)) {

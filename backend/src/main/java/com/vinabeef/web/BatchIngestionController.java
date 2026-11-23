@@ -3,7 +3,7 @@ package com.vinabeef.web;
 import com.vinabeef.audit.Audited;
 import com.vinabeef.ingestion.SafetrustEventDto;
 // import com.vinabeef.movement.SafetrustProcessingService;
-import com.vinabeef.ingestion.TelemetryEventProcessor;
+import com.vinabeef.ingestion.EdgeBatchReplay;
 import com.vinabeef.ingestion.DeadLetterService;
 import com.vinabeef.ingestion.SafetrustEventDto;
 import lombok.RequiredArgsConstructor;
@@ -23,7 +23,7 @@ import java.util.*;
 @CrossOrigin(origins = "*")
 public class BatchIngestionController {
 
-    private final TelemetryEventProcessor eventProcessor;
+    private final EdgeBatchReplay edgeBatchReplay;
     private final DeadLetterService deadLetterService;
     private final JdbcTemplate jdbcTemplate;
 
@@ -75,40 +75,25 @@ public class BatchIngestionController {
             return ResponseEntity.ok(Map.of("status", "BATCH_COMPLETED", "processed", 0, "failed", 0, "results", List.of()));
         }
 
-        // Strictly chronological by hardware timestamp so the inner/outer order of a crossing is preserved
-        List<SafetrustEventDto> ordered = new ArrayList<>(events);
-        ordered.sort(Comparator.comparingLong(e -> e.getTimestamp() != null ? e.getTimestamp() : 0L));
+        EdgeBatchReplay.Outcome outcome = edgeBatchReplay.replay(events, "EDGE_BATCH");
 
-        int processed = 0;
-        int failed = 0;
         List<Map<String, Object>> results = new ArrayList<>();
-        long tStart = System.nanoTime();
-
-        for (SafetrustEventDto dto : ordered) {
+        for (EdgeBatchReplay.EventResult r : outcome.results()) {
             Map<String, Object> result = new LinkedHashMap<>();
-            result.put("eventKey", dto.getEventKey());
-            try {
-                eventProcessor.processSafetrustRead(dto, "EDGE_BATCH", System.nanoTime());
-                result.put("status", "OK");
-                processed++;
-            } catch (Exception ex) {
-                failed++;
-                result.put("status", "FAILED");
-                result.put("error", String.valueOf(ex.getMessage()));
-                log.error("[EDGE_BATCH] Failed replaying eventKey={}: {}", dto.getEventKey(), ex.getMessage());
+            result.put("eventKey", r.eventKey());
+            result.put("status", r.ok() ? "OK" : "FAILED");
+            if (!r.ok()) {
+                result.put("error", r.error());
             }
             results.add(result);
         }
 
-        double totalMs = Math.round((System.nanoTime() - tStart) / 10000.0) / 100.0;
-        log.info("[EDGE_BATCH] Replayed {} events ({} failed) in {} ms", processed, failed, totalMs);
-
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("status", failed == 0 ? "BATCH_COMPLETED" : "BATCH_PARTIAL");
-        body.put("processed", processed);
-        body.put("failed", failed);
-        body.put("elapsedMs", totalMs);
+        body.put("status", outcome.allOk() ? "BATCH_COMPLETED" : "BATCH_PARTIAL");
+        body.put("processed", outcome.processed());
+        body.put("failed", outcome.failed());
+        body.put("elapsedMs", outcome.elapsedMs());
         body.put("results", results);
-        return ResponseEntity.status(failed == 0 ? HttpStatus.OK : HttpStatus.MULTI_STATUS).body(body);
+        return ResponseEntity.status(outcome.allOk() ? HttpStatus.OK : HttpStatus.MULTI_STATUS).body(body);
     }
 }

@@ -1,132 +1,219 @@
-{% extends "base.html" %}
-{% from "partials/macros.html" import sort_th %}
-{% block header_title %}Reporting{% endblock %}
-
-{% block content %}
+{% extends "base.html" %} {% from "partials/macros.html" import sort_th %} {%
+block header_title %}Reporting{% endblock %} {% block content %}
 <div class="space-y-5">
-
-    <!-- Filter box: every field refreshes the report below. Totals and rows come from the recorded gate passes and reads. -->
-    <form id="report-form"
-          hx-get="/htmx/report-data"
-          hx-target="#report-data-container"
-          hx-swap="innerHTML"
-          hx-trigger="submit, change, keyup delay:600ms"
-          hx-indicator="#report-busy"
-          class="bg-white border border-gray-200 rounded-lg shadow-sm">
-        <div class="px-5 py-3 border-b border-gray-100 flex flex-wrap items-center justify-between gap-3">
-            <div class="flex items-center gap-2 text-xs">
-                <label for="report-type" class="font-semibold text-gray-700">Report</label>
-                <select id="report-type" name="type" class="border border-gray-300 rounded px-3 py-1.5 text-xs font-semibold bg-white focus:outline-none focus:border-blue-500">
-                    <option value="herd" selected>Herd balance (per barn)</option>
-                    <option value="passages">Gate passages (IN / OUT)</option>
-                    <option value="reads">RFID reads (every read, with its result)</option>
-                </select>
-            </div>
-            <span id="report-busy" class="htmx-indicator text-[11px] text-gray-400">Updating...</span>
-        </div>
-
-        <div class="p-5 grid grid-cols-1 md:grid-cols-4 gap-4 text-xs">
-            <div>
-                <label class="block font-semibold text-gray-700 mb-1">Facility</label>
-                <select name="farm_id" class="w-full border border-gray-300 rounded px-3 py-2 bg-white focus:outline-none focus:border-blue-500">
-                    <option value="">{% if user.role in ['EXECUTIVE', 'SYSTEM_ADMIN'] %}All facilities{% else %}My facility{% endif %}</option>
-                    {% for f in farms %}<option value="{{ f.farmId }}">{{ f.farmName }}</option>{% endfor %}
-                </select>
-            </div>
-            <div>
-                <label class="block font-semibold text-gray-700 mb-1">Barn</label>
-                <select name="barn_id" class="w-full border border-gray-300 rounded px-3 py-2 bg-white focus:outline-none focus:border-blue-500">
-                    <option value="">All barns</option>
-                    {% for f in farms %}
-                    <optgroup label="{{ f.farmName }}">
-                        {% for b in f.barns %}<option value="{{ b.barnId }}">{{ b.code }}</option>{% endfor %}
-                    </optgroup>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="report-only report-passages report-reads">
-                <label class="block font-semibold text-gray-700 mb-1">Reader / gate</label>
-                <input type="text" name="reader" placeholder="reader name, label or gate id"
-                       class="w-full border border-gray-300 rounded px-3 py-2 focus:outline-none focus:border-blue-500">
-            </div>
-            <div class="report-only report-passages report-reads">
-                <label class="block font-semibold text-gray-700 mb-1">Animal / tag</label>
-                <input type="text" name="animal" placeholder="animal id or card uuid"
-                       class="w-full border border-gray-300 rounded px-3 py-2 focus:outline-none focus:border-blue-500">
-            </div>
-            <div class="report-only report-passages">
-                <label class="block font-semibold text-gray-700 mb-1">Direction</label>
-                <select name="direction" class="w-full border border-gray-300 rounded px-3 py-2 bg-white focus:outline-none focus:border-blue-500">
-                    <option value="">IN and OUT</option>
-                    <option value="IN">IN only (returning)</option>
-                    <option value="OUT">OUT only (to pasture)</option>
-                </select>
-            </div>
-            <div class="report-only report-passages">
-                <label class="block font-semibold text-gray-700 mb-1">Detected by</label>
-                <select name="method" class="w-full border border-gray-300 rounded px-3 py-2 bg-white focus:outline-none focus:border-blue-500">
-                    <option value="">Any method</option>
-                    <option value="PAIRED_READERS">Paired readers (delta time)</option>
-                    <option value="GATE_MODE">Single reader (presence toggle)</option>
-                    <option value="ONE_WAY_GATE">One-way gate</option>
-                </select>
-            </div>
-            <div class="report-only report-reads">
-                <label class="block font-semibold text-gray-700 mb-1">Result</label>
-                <select name="result" class="w-full border border-gray-300 rounded px-3 py-2 bg-white focus:outline-none focus:border-blue-500">
-                    <option value="">Any</option>
-                    <option value="movement">Led to an IN / OUT pass</option>
-                    <option value="none">No pass (repeat read, unknown tag, telemetry)</option>
-                </select>
-            </div>
-            <div class="report-only report-reads">
-                <label class="block font-semibold text-gray-700 mb-1">Event</label>
-                <input type="text" name="event" placeholder="e.g. OPEN_DOOR, LIDAR"
-                       class="w-full border border-gray-300 rounded px-3 py-2 focus:outline-none focus:border-blue-500">
-            </div>
-            <div>
-                <label class="block font-semibold text-gray-700 mb-1">Period</label>
-                <select name="preset" class="w-full border border-gray-300 rounded px-3 py-2 bg-white focus:outline-none focus:border-blue-500">
-                    <option value="today" selected>Today</option>
-                    <option value="24h">Last 24 hours</option>
-                    <option value="7d">Last 7 days</option>
-                    <option value="30d">Last 30 days</option>
-                    <option value="all">All time</option>
-                </select>
-            </div>
-            <div>
-                <label class="block font-semibold text-gray-700 mb-1">From <span class="font-normal text-gray-400">(custom, replaces Period)</span></label>
-                <input type="date" name="from" class="w-full border border-gray-300 rounded px-3 py-2 focus:outline-none focus:border-blue-500">
-            </div>
-            <div>
-                <label class="block font-semibold text-gray-700 mb-1">To <span class="font-normal text-gray-400">(inclusive)</span></label>
-                <input type="date" name="to" class="w-full border border-gray-300 rounded px-3 py-2 focus:outline-none focus:border-blue-500">
-            </div>
-            <div class="flex items-end">
-                <button type="submit" class="w-full bg-[#2f80ed] hover:bg-blue-600 text-white font-medium py-2 px-4 rounded text-xs transition shadow-sm">Run report</button>
-            </div>
-        </div>
-    </form>
-
-    <div id="report-data-container"
-         hx-get="/htmx/report-data"
-         hx-include="#report-form"
-         hx-trigger="load"
-         hx-swap="innerHTML">
-        <div class="py-12 text-center text-gray-400 text-xs">Querying report data...</div>
+  <!-- Filter box: every field refreshes the report below. Totals and rows come from the recorded gate passes and reads. -->
+  <form
+    id="report-form"
+    hx-get="/htmx/report-data"
+    hx-target="#report-data-container"
+    hx-swap="innerHTML"
+    hx-trigger="submit, change, keyup delay:600ms"
+    hx-indicator="#report-busy"
+    class="bg-white border border-gray-200 rounded-lg shadow-sm"
+  >
+    <div
+      class="px-5 py-3 border-b border-gray-100 flex flex-wrap items-center justify-between gap-3"
+    >
+      <div class="flex items-center gap-2 text-xs">
+        <label for="report-type" class="font-semibold text-gray-700"
+          >Report</label
+        >
+        <select
+          id="report-type"
+          name="type"
+          class="border border-gray-300 rounded px-3 py-1.5 text-xs font-semibold bg-white focus:outline-none focus:border-blue-500"
+        >
+          <option value="herd" selected>Herd balance (per barn)</option>
+          <option value="passages">Gate passages (IN / OUT)</option>
+          <option value="reads">
+            RFID reads (every read, with its result)
+          </option>
+        </select>
+      </div>
+      <span id="report-busy" class="htmx-indicator text-[11px] text-gray-400"
+        >Updating...</span
+      >
     </div>
 
+    <div class="p-5 grid grid-cols-1 md:grid-cols-4 gap-4 text-xs">
+      <div>
+        <label class="block font-semibold text-gray-700 mb-1">Facility</label>
+        <select
+          name="farm_id"
+          class="w-full border border-gray-300 rounded px-3 py-2 bg-white focus:outline-none focus:border-blue-500"
+        >
+          <option value="">
+            {% if user.role in ['EXECUTIVE', 'SYSTEM_ADMIN'] %}All facilities{%
+            else %}My facility{% endif %}
+          </option>
+          {% for f in farms %}
+          <option value="{{ f.farmId }}">{{ f.farmName }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label class="block font-semibold text-gray-700 mb-1">Barn</label>
+        <select
+          name="barn_id"
+          class="w-full border border-gray-300 rounded px-3 py-2 bg-white focus:outline-none focus:border-blue-500"
+        >
+          <option value="">All barns</option>
+          {% for f in farms %}
+          <optgroup label="{{ f.farmName }}">
+            {% for b in f.barns %}
+            <option value="{{ b.barnId }}">{{ b.code }}</option>
+            {% endfor %}
+          </optgroup>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="report-only report-passages report-reads">
+        <label class="block font-semibold text-gray-700 mb-1"
+          >Reader / gate</label
+        >
+        <input
+          type="text"
+          name="reader"
+          placeholder="reader name, label or gate id"
+          class="w-full border border-gray-300 rounded px-3 py-2 focus:outline-none focus:border-blue-500"
+        />
+      </div>
+      <div class="report-only report-passages report-reads">
+        <label class="block font-semibold text-gray-700 mb-1"
+          >Animal / tag</label
+        >
+        <input
+          type="text"
+          name="animal"
+          placeholder="animal id or card uuid"
+          class="w-full border border-gray-300 rounded px-3 py-2 focus:outline-none focus:border-blue-500"
+        />
+      </div>
+      <div class="report-only report-passages">
+        <label class="block font-semibold text-gray-700 mb-1">Direction</label>
+        <select
+          name="direction"
+          class="w-full border border-gray-300 rounded px-3 py-2 bg-white focus:outline-none focus:border-blue-500"
+        >
+          <option value="">IN and OUT</option>
+          <option value="IN">IN only (returning)</option>
+          <option value="OUT">OUT only (to pasture)</option>
+        </select>
+      </div>
+      <div class="report-only report-passages">
+        <label class="block font-semibold text-gray-700 mb-1"
+          >Detected by</label
+        >
+        <select
+          name="method"
+          class="w-full border border-gray-300 rounded px-3 py-2 bg-white focus:outline-none focus:border-blue-500"
+        >
+          <option value="">Any method</option>
+          <option value="PAIRED_READERS">Paired readers (delta time)</option>
+          <option value="GATE_MODE">Single reader (presence toggle)</option>
+          <option value="ONE_WAY_GATE">One-way gate</option>
+        </select>
+      </div>
+      <div class="report-only report-reads">
+        <label class="block font-semibold text-gray-700 mb-1">Result</label>
+        <select
+          name="result"
+          class="w-full border border-gray-300 rounded px-3 py-2 bg-white focus:outline-none focus:border-blue-500"
+        >
+          <option value="">Any</option>
+          <option value="movement">Led to an IN / OUT pass</option>
+          <option value="none">
+            No pass (repeat read, unknown tag, telemetry)
+          </option>
+          <option value="duplicate">
+            Second copy of a tap that came by both routes
+          </option>
+          <option value="unmapped">
+            USB read with an unknown credential number
+          </option>
+          <option value="usb">Read by a gateway USB reader</option>
+        </select>
+      </div>
+      <div class="report-only report-reads">
+        <label class="block font-semibold text-gray-700 mb-1">Event</label>
+        <input
+          type="text"
+          name="event"
+          placeholder="e.g. OPEN_DOOR, LIDAR"
+          class="w-full border border-gray-300 rounded px-3 py-2 focus:outline-none focus:border-blue-500"
+        />
+      </div>
+      <div>
+        <label class="block font-semibold text-gray-700 mb-1">Period</label>
+        <select
+          name="preset"
+          class="w-full border border-gray-300 rounded px-3 py-2 bg-white focus:outline-none focus:border-blue-500"
+        >
+          <option value="today" selected>Today</option>
+          <option value="24h">Last 24 hours</option>
+          <option value="7d">Last 7 days</option>
+          <option value="30d">Last 30 days</option>
+          <option value="all">All time</option>
+        </select>
+      </div>
+      <div>
+        <label class="block font-semibold text-gray-700 mb-1"
+          >From
+          <span class="font-normal text-gray-400"
+            >(custom, replaces Period)</span
+          ></label
+        >
+        <input
+          type="date"
+          name="from"
+          class="w-full border border-gray-300 rounded px-3 py-2 focus:outline-none focus:border-blue-500"
+        />
+      </div>
+      <div>
+        <label class="block font-semibold text-gray-700 mb-1"
+          >To <span class="font-normal text-gray-400">(inclusive)</span></label
+        >
+        <input
+          type="date"
+          name="to"
+          class="w-full border border-gray-300 rounded px-3 py-2 focus:outline-none focus:border-blue-500"
+        />
+      </div>
+      <div class="flex items-end">
+        <button
+          type="submit"
+          class="w-full bg-[#2f80ed] hover:bg-blue-600 text-white font-medium py-2 px-4 rounded text-xs transition shadow-sm"
+        >
+          Run report
+        </button>
+      </div>
+    </div>
+  </form>
+
+  <div
+    id="report-data-container"
+    hx-get="/htmx/report-data"
+    hx-include="#report-form"
+    hx-trigger="load"
+    hx-swap="innerHTML"
+  >
+    <div class="py-12 text-center text-gray-400 text-xs">
+      Querying report data...
+    </div>
+  </div>
 </div>
 
 <script>
-// Show only the filters that belong to the chosen report.
-function syncReportFilters() {
-    const type = document.getElementById('report-type').value;
-    document.querySelectorAll('.report-only').forEach(el => {
-        el.classList.toggle('hidden', !el.classList.contains('report-' + type));
+  // Show only the filters that belong to the chosen report.
+  function syncReportFilters() {
+    const type = document.getElementById("report-type").value;
+    document.querySelectorAll(".report-only").forEach((el) => {
+      el.classList.toggle("hidden", !el.classList.contains("report-" + type));
     });
-}
-document.getElementById('report-type').addEventListener('change', syncReportFilters);
-syncReportFilters();
+  }
+  document
+    .getElementById("report-type")
+    .addEventListener("change", syncReportFilters);
+  syncReportFilters();
 </script>
 {% endblock %}

@@ -1,7 +1,7 @@
 package com.vinabeef.web;
 
 import com.vinabeef.audit.Audited;
-import com.vinabeef.security.RbacScopeService;
+import com.vinabeef.security.CurrentScopeProvider;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -33,7 +33,7 @@ public class ReportController {
     private static final int EXPORT_LIMIT = 50_000;
 
     private final JdbcTemplate jdbcTemplate;
-    private final RbacScopeService rbacScopeService;
+    private final CurrentScopeProvider currentScope;
     private final ReportClock clock;
 
     /** Per barn: herd, in barn now, at pasture now, never seen, and IN / OUT passes in the period. */
@@ -210,7 +210,7 @@ public class ReportController {
     }
 
     private ReportQueries.Scope scope() {
-        var s = rbacScopeService.getCurrentScope();
+        var s = currentScope.getCurrentScope();
         if (s.isGlobal()) {
             return ReportQueries.Scope.ALL;
         }

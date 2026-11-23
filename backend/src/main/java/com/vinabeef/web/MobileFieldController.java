@@ -1,7 +1,8 @@
 package com.vinabeef.web;
 
 import com.vinabeef.audit.Audited;
-import com.vinabeef.security.RbacScopeService;
+import com.vinabeef.security.BarnAccessPolicy;
+import com.vinabeef.security.CurrentScopeProvider;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
@@ -37,7 +38,8 @@ public class MobileFieldController {
     private static final int MAX_CATTLE = 1500;
 
     private final JdbcTemplate jdbcTemplate;
-    private final RbacScopeService rbacScopeService;
+    private final CurrentScopeProvider currentScope;
+    private final BarnAccessPolicy barnAccess;
     private final ObjectMapper objectMapper;
 
     @Data
@@ -62,6 +64,7 @@ public class MobileFieldController {
         private String scanMethod;    // BLE_RFID, NFC, MANUAL, DEMO
         private String scannedAt;     // ISO-8601, when the tag was read
         private String appVersion;
+        private String recordedBy;    // username signed in on the phone when the record was saved
     }
 
     /**
@@ -71,7 +74,7 @@ public class MobileFieldController {
     @GetMapping("/sync-bundle")
     @PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'FARM_MANAGER', 'BARN_SUPERVISOR')")
     public ResponseEntity<?> downloadSyncBundle(@RequestParam(required = false, defaultValue = "") String barnId) {
-        var scope = rbacScopeService.getCurrentScope();
+        var scope = currentScope.getCurrentScope();
 
         List<Map<String, Object>> barns = new ArrayList<>();
         for (Map<String, Object> b : jdbcTemplate.queryForList("""
@@ -185,7 +188,7 @@ public class MobileFieldController {
                     "acknowledgedClientIds", List.of(), "rejected", List.of()));
         }
 
-        var scope = rbacScopeService.getCurrentScope();
+        var scope = currentScope.getCurrentScope();
         String actor = auth != null ? auth.getName() : "mobile_supervisor";
         int synced = 0;
         int duplicates = 0;
@@ -205,6 +208,15 @@ public class MobileFieldController {
             if (existing != null && existing > 0) {
                 duplicates++;
                 ackIds.add(clientId);
+                continue;
+            }
+
+            // 1b. A record saved under one account is accepted only from that account, so a phone that is
+            //     signed in as someone else the next day cannot put its own name on it.
+            if (!fromRightAccount(ev.getRecordedBy(), actor)) {
+                String author = ev.getRecordedBy().trim();
+                rejected.add(reject(clientId, "WRONG_USER",
+                        "This record was saved by '" + author + "'. Sign in as " + author + " to send it."));
                 continue;
             }
 
@@ -263,7 +275,7 @@ public class MobileFieldController {
                 continue;
             }
             String barnId = barns.get(0);
-            if (!rbacScopeService.canAccessBarnId(scope, barnId)) {
+            if (!barnAccess.canAccessBarnId(scope, barnId)) {
                 rejected.add(reject(clientId, "OUT_OF_SCOPE", "Animal '" + animalId + "' is in a barn you cannot record for."));
                 continue;
             }
@@ -336,6 +348,14 @@ public class MobileFieldController {
         response.put("acknowledgedClientIds", ackIds);
         response.put("rejected", rejected);
         return ResponseEntity.ok(response);
+    }
+
+    /**
+     * True when the record may be accepted from this account. A record with no author (older app versions,
+     * or saved before anyone had signed in) is accepted from any account; otherwise the account must be the author.
+     */
+    static boolean fromRightAccount(String recordedBy, String actor) {
+        return recordedBy == null || recordedBy.isBlank() || recordedBy.trim().equalsIgnoreCase(actor);
     }
 
     private static Map<String, String> reject(String clientId, String code, String message) {

@@ -201,7 +201,8 @@ final class ListQueries {
                 f.name AS farm_name,
                 (SELECT gr.reader_name FROM gate_readers gr WHERE gr.gate_id = g.gate_id AND gr.side = 'OUTER') AS outer_reader_name,
                 (SELECT MAX(re.observed_at) FROM rfid_read_events re
-                  WHERE re.reader_name IN (SELECT g.reader_name
+                  WHERE re.read_source = 'SAFETRUST'   -- a USB read on the barn gateway says nothing about the wall reader
+                    AND re.reader_name IN (SELECT g.reader_name
                                            UNION SELECT gr.reader_name FROM gate_readers gr WHERE gr.gate_id = g.gate_id)) AS last_seen,
                 (SELECT gr.gate_id FROM gate_readers gr WHERE gr.reader_name = g.reader_name AND gr.gate_id <> g.gate_id) AS linked_to_gate_id,
                 (SELECT gr.side FROM gate_readers gr WHERE gr.reader_name = g.reader_name AND gr.gate_id <> g.gate_id) AS linked_side,

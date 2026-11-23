@@ -50,79 +50,17 @@ final class SurveillanceQueries {
         """;
 
     static boolean isKnownType(String reportType) {
-        return List.of("OUTBREAK_SURVEILLANCE", "MOVEMENT_TRANSFERS", "HEALTH_TREATMENTS", "VACCINATION_COVERAGE").contains(reportType);
+        return SurveillanceReportType.tryParse(reportType).isPresent();
     }
 
     /** Parameter count of {@link #report(String)}: 2 for every type except transfers (3). */
     static int farmParams(String reportType) {
-        return "MOVEMENT_TRANSFERS".equals(reportType) ? 3 : 2;
+        return SurveillanceReportType.tryParse(reportType).orElse(SurveillanceReportType.DEFAULT).farmParams();
     }
 
+    /** The statement of a report. An unknown name gives the summary, as it always has; callers check {@link #isKnownType} first. */
     static String report(String reportType) {
-        String limit = " LIMIT " + (MAX_ROWS + 1);
-        switch (reportType) {
-            case "MOVEMENT_TRANSFERS":
-                return """
-                    SELECT t.transfer_id, t.animal_id, t.transfer_type,
-                           COALESCE(ff.name, t.from_farm_id) AS origin_farm,
-                           COALESCE(fb.code, t.from_barn_id) AS origin_barn,
-                           COALESCE(tf.name, t.to_farm_id) AS destination_farm,
-                           COALESCE(tb.code, t.to_barn_id) AS destination_barn,
-                           t.reason, t.approved_by, t.transferred_at::text AS timestamp
-                    FROM animal_transfers t
-                    LEFT JOIN barns fb ON t.from_barn_id = fb.barn_id
-                    LEFT JOIN farms ff ON t.from_farm_id = ff.farm_id
-                    LEFT JOIN barns tb ON t.to_barn_id = tb.barn_id
-                    LEFT JOIN farms tf ON t.to_farm_id = tf.farm_id
-                    WHERE (? = TRUE OR t.from_farm_id = ? OR t.to_farm_id = ?)
-                    ORDER BY t.transferred_at DESC, t.transfer_id""" + limit;
-            case "HEALTH_TREATMENTS":
-                return """
-                    SELECT hr.health_id, hr.animal_id, a.health_status AS current_clinical_status,
-                           f.name AS farm_name, b.code AS barn_code,
-                           hr.record_type, hr.administered_by, hr.payload::text AS clinical_payload,
-                           hr.event_at::text AS recorded_at
-                    FROM health_records hr
-                    JOIN animals a ON hr.animal_id = a.animal_id AND a.lifecycle_status = 'ACTIVE'
-                    LEFT JOIN barns b ON a.assigned_barn_id = b.barn_id
-                    LEFT JOIN farms f ON b.farm_id = f.farm_id
-                    WHERE (? = TRUE OR f.farm_id = ?)
-                    ORDER BY hr.event_at DESC, hr.health_id""" + limit;
-            case "VACCINATION_COVERAGE":
-                return """
-                    SELECT f.farm_id, f.name AS farm_name, b.barn_id, b.code AS barn_code,
-                           COUNT(a.animal_id) AS total_cattle,
-                           COUNT(v.animal_id) AS vaccinated_cattle,
-                           ROUND(CASE WHEN COUNT(a.animal_id) > 0 THEN (COUNT(v.animal_id) * 100.0) / COUNT(a.animal_id) ELSE 0 END, 2) AS coverage_pct
-                    FROM farms f
-                    JOIN barns b ON f.farm_id = b.farm_id
-                    LEFT JOIN animals a ON b.barn_id = a.assigned_barn_id AND a.lifecycle_status = 'ACTIVE'
-                    LEFT JOIN (SELECT DISTINCT animal_id FROM health_records WHERE record_type = 'VACCINATION') v ON a.animal_id = v.animal_id
-                    WHERE (? = TRUE OR f.farm_id = ?)
-                    GROUP BY f.farm_id, f.name, b.barn_id, b.code
-                    ORDER BY f.farm_id, b.code""" + limit;
-            default:
-                String vaccinated = "SELECT hr.animal_id, BOOL_OR(" + FMD + ") AS is_fmd, BOOL_OR(" + LSD + ") AS is_lsd "
-                        + "FROM health_records hr WHERE hr.record_type = 'VACCINATION' GROUP BY hr.animal_id";
-                return """
-                    SELECT f.farm_id, f.name AS farm_name, f.location,
-                           COUNT(DISTINCT b.barn_id) AS barn_count,
-                           COUNT(DISTINCT a.animal_id) AS active_herd_count,
-                           COUNT(DISTINCT CASE WHEN a.health_status = 'HEALTHY' THEN a.animal_id END) AS healthy_count,
-                           COUNT(DISTINCT CASE WHEN a.health_status = 'UNDER_TREATMENT' THEN a.animal_id END) AS under_treatment_count,
-                           COUNT(DISTINCT CASE WHEN a.health_status = 'QUARANTINE' THEN a.animal_id END) AS quarantined_count,
-                           COUNT(DISTINCT v.animal_id) AS vaccinated_any_count,
-                           COUNT(DISTINCT v.animal_id) FILTER (WHERE v.is_fmd) AS fmd_vaccinated_count,
-                           COUNT(DISTINCT v.animal_id) FILTER (WHERE v.is_lsd) AS lsd_vaccinated_count
-                    FROM farms f
-                    LEFT JOIN barns b ON f.farm_id = b.farm_id
-                    LEFT JOIN animals a ON b.barn_id = a.assigned_barn_id AND a.lifecycle_status = 'ACTIVE'
-                    LEFT JOIN (""" + vaccinated + """
-                    ) v ON a.animal_id = v.animal_id
-                    WHERE (? = TRUE OR f.farm_id = ?)
-                    GROUP BY f.farm_id, f.name, f.location
-                    ORDER BY f.farm_id""" + limit;
-        }
+        return SurveillanceReportType.tryParse(reportType).orElse(SurveillanceReportType.DEFAULT).sql();
     }
 
     /** One consistency check: a short code, what it means, how serious it is, and the counting statement. */

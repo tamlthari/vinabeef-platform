@@ -115,15 +115,20 @@
                     </thead>
                     <tbody id="tx-tbody" class="divide-y divide-gray-100">
                         {% for tx in transactions %}
-                        <tr class="tx-row hover:bg-gray-50 transition" data-type="{{ 'PASSAGE' if tx.movement_id else ('ANOMALY' if tx.card_uuid else 'SYSTEM') }}">
+                        <tr class="tx-row hover:bg-gray-50 transition" data-type="{{ 'PASSAGE' if tx.movement_id else ('SYSTEM' if tx.duplicate_of else ('ANOMALY' if (tx.card_uuid or tx.event_class == 'LOCAL_UNMAPPED') else 'SYSTEM')) }}">
                             <td class="py-3.5 px-3 font-medium text-gray-900">
                                 {% if tx.movement_id %}
                                     Passage {{ tx.direction }}
+                                {% elif tx.duplicate_of %}
+                                    Second copy of a tap already counted
+                                {% elif tx.event_class == 'LOCAL_UNMAPPED' %}
+                                    USB read, credential {{ tx.credential_identifier }} matches no card
                                 {% elif tx.card_uuid %}
                                     Unregistered Tag Read
                                 {% else %}
                                     {{ tx.gate_action or 'READER_HEARTBEAT' }}
                                 {% endif %}
+                                {% if tx.read_source == 'LOCAL_USB' %}<span class="ml-1 px-1.5 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200 text-[10px] font-semibold" title="Read by a USB reader on the barn gateway. The time is the gateway's clock.">USB{% if tx.source_device %} · {{ tx.source_device }}{% endif %}</span>{% endif %}
                             </td>
                             <td class="py-3.5 px-3">
                                 {% if tx.animal_id %}
@@ -139,7 +144,12 @@
                             </td>
                             <td class="py-3.5 px-3 font-mono text-[11px] text-gray-500">{{ tx.observed_at }}</td>
                             <td class="py-3.5 px-3 text-right">
-                                {% if tx.movement_id or not tx.card_uuid %}
+                                {% if tx.duplicate_of %}
+                                <span class="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-sky-50 text-sky-700 border border-sky-200" title="The same tap was already counted from the other route. Kept as evidence.">
+                                    <span>=</span>
+                                    <span>Copy, not counted</span>
+                                </span>
+                                {% elif tx.movement_id or (not tx.card_uuid and tx.event_class != 'LOCAL_UNMAPPED') %}
                                 <span class="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
                                     <span>&#10003;</span>
                                     <span>Success</span>

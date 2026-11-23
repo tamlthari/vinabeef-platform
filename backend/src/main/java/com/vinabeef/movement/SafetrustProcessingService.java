@@ -20,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -39,29 +40,121 @@ public class SafetrustProcessingService implements TelemetryEventProcessor {
     private final IngestionBenchmarkService benchmarkService;
     private final JdbcTemplate jdbcTemplate;
     private final GateCrossingStore crossingStore;
+    private final CredentialCardResolver credentialResolver;
+    private final CrossSourceMatcher crossSourceMatcher;
 
     @Override
     @Transactional
     public void processSafetrustRead(SafetrustEventDto dto, String ingressMode, long tIngressNano) {
         long metricKey = dto.getEventKey() != null ? dto.getEventKey() : 0L;
         long hardwareMs = dto.getTimestamp() != null ? dto.getTimestamp() : System.currentTimeMillis();
-        String eventClass = dto.getEventClass();
         String eventId = UUID.randomUUID().toString();
+
+        // 0. A USB reader on the barn gateway sends the credential number (for example 38), not the card UID.
+        //    Find the card first; a number that maps to no card is kept and shown, never dropped, never guessed.
+        String resolvedBy = null;
+        if (dto.isLocalUsb() && dto.getCardUuid() == null && dto.getCredentialNumber() != null) {
+            Optional<CredentialCardResolver.Resolution> found = credentialResolver.resolve(dto.getCredentialNumber());
+            if (found.isPresent()) {
+                dto.setCardUuid(found.get().cardUuid());
+                resolvedBy = found.get().resolvedBy();
+            }
+        }
+        String eventClass = dto.getEventClass();
 
         // 1. Keep every event exactly once. EVENT_KEY is the idempotency key, so a replay of the same event
         //    (edge outbox, second subscriber, Safetrust redelivery) is a no-op instead of an error.
-        if (!storeRawEvent(eventId, dto, eventClass, hardwareMs, ingressMode)) {
+        if (!storeRawEvent(eventId, dto, eventClass, hardwareMs, ingressMode, resolvedBy)) {
             log.info("[{}] Idempotent duplicate EVENT_KEY {} skipped.", ingressMode, metricKey);
+            return;
+        }
+
+        if (SafetrustEventDto.CLASS_LOCAL_UNMAPPED.equals(eventClass)) {
+            handleUnmappedLocalRead(dto, ingressMode, metricKey);
             return;
         }
 
         // 2. Reader connect/disconnect, LiDAR, RF info and temperature reports: stored above, no movement.
         if (!"CARD_READ".equals(eventClass)) {
-            recordReaderEvent(dto, hardwareMs, ingressMode);
+            if (!dto.isLocalUsb()) {
+                recordReaderEvent(dto, hardwareMs, ingressMode);
+            }
             return;
         }
 
         processCardRead(dto, ingressMode, tIngressNano, metricKey, hardwareMs, eventId);
+    }
+
+    /**
+     * Retries one stored USB read whose credential number mapped to no card. When the number is known now, the read becomes an
+     * ordinary card read and is processed from the time it was taken (the gate logic copes with late reads).
+     *
+     * @return true when the read was resolved and processed
+     */
+    @Override
+    @Transactional
+    public boolean reprocessUnmappedLocalRead(String eventId) {
+        LocalReadSql.Query load = LocalReadSql.unmappedRow(eventId);
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(load.sql(), load.params().toArray());
+        if (rows.isEmpty()) {
+            return false;
+        }
+        Map<String, Object> row = rows.get(0);
+        String credential = row.get("credential_identifier") == null ? null : String.valueOf(row.get("credential_identifier"));
+        Optional<CredentialCardResolver.Resolution> found = credentialResolver.resolve(credential);
+        if (found.isEmpty()) {
+            return false;
+        }
+        LocalReadSql.Query resolve = LocalReadSql.resolveRow(eventId, found.get().cardUuid(), found.get().resolvedBy());
+        jdbcTemplate.update(resolve.sql(), resolve.params().toArray());
+
+        SafetrustEventDto dto = new SafetrustEventDto();
+        dto.setEventKey(row.get("event_key") == null ? null : ((Number) row.get("event_key")).longValue());
+        dto.setReaderName(String.valueOf(row.get("reader_name")));
+        dto.setCredentialIdentifier(credential);
+        dto.setCardUuid(found.get().cardUuid());
+        long hardwareMs = ((Number) row.get("hardware_timestamp")).longValue();
+        dto.setTimestamp(hardwareMs);
+        dto.setEdgeSource(SafetrustEventDto.SOURCE_LOCAL_USB);
+        dto.setEdgeDevice(row.get("source_device") == null ? null : String.valueOf(row.get("source_device")));
+        processCardRead(dto, "REPROCESS", System.nanoTime(), dto.getEventKey() != null ? dto.getEventKey() : 0L, hardwareMs, eventId);
+        return true;
+    }
+
+    @Override
+    public List<String> unmappedLocalReadIds(int limit) {
+        LocalReadSql.Query q = LocalReadSql.unmappedIds(limit);
+        return jdbcTemplate.queryForList(q.sql(), String.class, q.params().toArray());
+    }
+
+    @Override
+    public int countUnmappedLocalReads() {
+        Integer n = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM rfid_read_events WHERE event_class = 'LOCAL_UNMAPPED'", Integer.class);
+        return n == null ? 0 : n;
+    }
+
+    /** A USB read whose credential number is not known: stored (already), shown on the Raw reads page, and one alert for the barn. */
+    private void handleUnmappedLocalRead(SafetrustEventDto dto, String ingressMode, long metricKey) {
+        String readerName = dto.getReaderName();
+        Optional<Gate> gate = gateForReader(readerName);
+        log.warn("[{}] ANOMALY: credential {} from USB reader '{}' maps to no card yet; the read is kept as LOCAL_UNMAPPED.",
+                ingressMode, dto.getCredentialNumber(), readerName);
+        if (gate.isPresent()) {
+            raiseUnmappedCredentialAlert(gate.get().getBarnId(), dto.getCredentialNumber(), readerName,
+                    gate.get().getGateId(), metricKey);
+        } else {
+            log.warn("[{}] No gate is registered for reader '{}': no alert raised for the unmapped credential.", ingressMode, readerName);
+        }
+    }
+
+    private Optional<Gate> gateForReader(String readerName) {
+        if (readerName == null) {
+            return Optional.empty();
+        }
+        Optional<Gate> viaPair = crossingStore.findReader(readerName).flatMap(b -> gateRepo.findById(b.gateId()));
+        Optional<Gate> gate = viaPair.isPresent() ? viaPair : gateRepo.findByReaderNameAndRetiredAtIsNull(readerName);
+        return gate.filter(g -> g.getRetiredAt() == null);
     }
 
     private void processCardRead(SafetrustEventDto dto, String ingressMode, long tIngressNano,
@@ -73,7 +166,17 @@ public class SafetrustProcessingService implements TelemetryEventProcessor {
         // 3. Gate resolution: a reader listed in gate_readers is one side of a paired gate; a reader that is
         //    only named on the gate is a single-reader gate that uses the gate's direction_mode.
         Optional<ReaderBinding> binding = crossingStore.findReader(readerName);
-        crossingStore.touchReader(readerName, hardwareMs);
+        // "last seen" belongs to the reader's own events: a USB read on the gateway says nothing about the wall reader
+        if (!dto.isLocalUsb()) {
+            crossingStore.touchReader(readerName, hardwareMs);
+        }
+
+        // 2b. The same tap may arrive by both routes (Safetrust cloud and the gateway's USB reader). The first copy counts.
+        Optional<String> firstCopy = crossSourceMatcher.claimFirstCopy(eventId, readerName, card, dto.getReadSource(), hardwareMs);
+        if (firstCopy.isPresent()) {
+            benchmarkService.recordMetric(ingressMode, metricKey, tIngressNano, System.nanoTime(), System.nanoTime(), hardwareMs);
+            return;
+        }
 
         Gate found = binding
                 .flatMap(b -> gateRepo.findById(b.gateId()))
@@ -261,7 +364,7 @@ public class SafetrustProcessingService implements TelemetryEventProcessor {
 
     /** Inserts the raw event. Returns false when an event with the same EVENT_KEY is already stored. */
     private boolean storeRawEvent(String eventId, SafetrustEventDto dto, String eventClass,
-                                  long hardwareMs, String ingressMode) {
+                                  long hardwareMs, String ingressMode, String cardResolvedBy) {
         String payload = dto.getRawPayload() != null && !dto.getRawPayload().isBlank() ? dto.getRawPayload() : "{}";
         String readerName = dto.getReaderName() != null ? dto.getReaderName() : "UNKNOWN";
         int rows = jdbcTemplate.update("""
@@ -269,15 +372,16 @@ public class SafetrustProcessingService implements TelemetryEventProcessor {
                     event_id, event_key, transaction_id, device_key, company_key, reader_name, card_uuid,
                     credential_identifier, user_name, gate_action, hardware_timestamp, observed_at, raw_payload,
                     ingress_source, event_class, reader_key, user_key, building_access_key, credential_type,
-                    sensor_type, cloud_modified_ms)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?)
+                    sensor_type, cloud_modified_ms, read_source, source_device, time_source, card_resolved_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (event_key) DO NOTHING
                 """,
                 eventId, dto.getEventKey(), dto.getTransactionId(), dto.getDeviceKey(), dto.getCompanyKey(),
                 readerName, dto.getCardUuid(), dto.getCredentialIdentifier(), dto.getUserName(),
                 dto.getGateAction(), hardwareMs, Timestamp.from(Instant.ofEpochMilli(hardwareMs)), payload,
                 ingressMode, eventClass, dto.getReaderKey(), dto.getUserKey(), dto.getBuildingAccessKey(),
-                dto.getCredentialType(), dto.getSensorType(), dto.getModified());
+                dto.getCredentialType(), dto.getSensorType(), dto.getModified(),
+                dto.getReadSource(), dto.getEdgeDevice(), dto.getEdgeTimeSource(), cardResolvedBy);
         return rows == 1;
     }
 
@@ -289,6 +393,17 @@ public class SafetrustProcessingService implements TelemetryEventProcessor {
                     CURRENT_TIMESTAMP)
         """, "ALT-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase(),
                 barnId, tagEpc, userName, readerName, gateId, eventKey);
+    }
+
+    private void raiseUnmappedCredentialAlert(String barnId, String credential, String readerName, String gateId, long eventKey) {
+        jdbcTemplate.update("""
+            INSERT INTO alerts (alert_id, type, severity, animal_id, barn_id, state, evidence, raised_at)
+            VALUES (?, 'UNEXPECTED_TAG', 'MEDIUM', NULL, ?, 'OPEN',
+                    jsonb_build_object('credential', ?, 'readerName', ?, 'gateId', ?, 'eventKey', ?,
+                                       'reason', 'Credential number from a USB reader that matches no known card'),
+                    CURRENT_TIMESTAMP)
+        """, "ALT-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase(),
+                barnId, credential, readerName, gateId, eventKey);
     }
 
     private void raiseWrongBarnAlert(String animalId, String assignedBarn, String detectedBarn, String readerName, String direction) {

@@ -106,6 +106,22 @@ class FieldRulesTest {
     }
 
     @Test
+    fun thePayloadNamesWhoSavedTheRecord() {
+        val p = FieldRules.buildPayload(
+            "MOB-3", "CI 1", "AA", form(), "", null, "MANUAL", null, "2026-11-20T10:00:00Z", "d", "1.1", " supervisor_barn1 "
+        )
+        assertEquals("supervisor_barn1", p["recordedBy"])
+    }
+
+    @Test
+    fun aRecordSavedBeforeAnyoneSignedInHasNoAuthor() {
+        val p = FieldRules.buildPayload(
+            "MOB-4", "CI 1", "AA", form(), "", null, "MANUAL", null, "2026-11-20T10:00:00Z", "d", "1.1"
+        )
+        assertNull(p["recordedBy"])
+    }
+
+    @Test
     fun aTagIsTheSameWithColonsSpacesAndLowerCase() {
         assertEquals("044E6602AD1490", TagCodes.normalise(" 04:4e:66:02:ad:14:90 "))
     }

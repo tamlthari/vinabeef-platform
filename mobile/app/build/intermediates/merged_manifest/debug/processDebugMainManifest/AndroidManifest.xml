@@ -31,7 +31,7 @@
 
     <uses-permission android:name="com.vinabeef.field.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" /> <!-- Debug builds only: lets the app talk to http://10.0.2.2:8080 (emulator) or a laptop on the Wi-Fi. -->
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:appComponentFactory="androidx.core.app.CoreComponentFactory"
         android:debuggable="true"
         android:extractNativeLibs="false"

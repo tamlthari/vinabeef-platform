@@ -382,7 +382,7 @@ class MainActivity : AppCompatActivity() {
 
         val fields = FieldRules.buildPayload(
             clientEventId, animalId, tag, form, protocol?.protocolId ?: "", due,
-            activeScanMethod, activeScannedAt, now.toString(), deviceId, APP_VERSION
+            activeScanMethod, activeScannedAt, now.toString(), deviceId, APP_VERSION, session.username
         )
         val json = JSONObject()
         for ((key, value) in fields) {
@@ -414,6 +414,12 @@ class MainActivity : AppCompatActivity() {
             toast("Enter the server address, username and password.")
             return
         }
+        // Release builds do not allow plain HTTP; say so instead of a vague "cannot reach the server".
+        val debuggable = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+        if (!debuggable && !url.startsWith("https://", ignoreCase = true)) {
+            toast("This app connects only over HTTPS. Enter the address as https://...", true)
+            return
+        }
         btnSignIn.isEnabled = false
         worker.execute {
             try {
@@ -425,7 +431,8 @@ class MainActivity : AppCompatActivity() {
                         runOnUiThread { toast("The server did not return a sign-in token.", true) }
                     } else {
                         session.serverUrl = url
-                        session.username = user
+                        // The server's spelling of the name is what the records are matched against.
+                        session.username = json.optString("username", "").ifBlank { user }
                         session.token = token
                         val assigned = json.optJSONArray("assignedBarns")
                         if (session.barnId.isEmpty() && assigned != null && assigned.length() > 0) {
@@ -542,8 +549,16 @@ class MainActivity : AppCompatActivity() {
             if (userInitiated) toast("Sign in to send the waiting records.")
             return
         }
-        if (db.getPendingCount() == 0) {
-            if (userInitiated) toast("Nothing is waiting to be sent.")
+        val user = session.username
+        val ofOthers = db.getPendingOfOthersCount(user)
+        if (db.getPendingCount() - ofOthers == 0) {
+            if (userInitiated) {
+                toast(
+                    if (ofOthers == 0) "Nothing is waiting to be sent."
+                    else "The $ofOthers waiting record(s) were saved by another user. They are sent when that user signs in.",
+                    ofOthers > 0
+                )
+            }
             return
         }
         if (!syncRunning.compareAndSet(false, true)) return
@@ -555,7 +570,7 @@ class MainActivity : AppCompatActivity() {
             var note = ""
             try {
                 while (true) {
-                    val batch = db.getPendingOutbox(BATCH_SIZE)
+                    val batch = db.getPendingOutbox(user, BATCH_SIZE)
                     if (batch.length() == 0) break
                     val resp = ApiClient.syncRecords(baseUrl, token, batch)
                     if (resp.code == 401 || resp.code == 403) {
@@ -597,7 +612,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showRejected() {
-        val items = db.getRejected()
+        val items = db.getRejected(session.username)
         if (items.isEmpty()) {
             refreshStatus()
             return
@@ -607,7 +622,7 @@ class MainActivity : AppCompatActivity() {
             .setTitle("Records the server did not accept")
             .setMessage(text)
             .setPositiveButton("Try again") { _, _ ->
-                db.retryRejected()
+                db.retryRejected(session.username)
                 refreshStatus()
                 syncPending(true)
             }
@@ -621,7 +636,7 @@ class MainActivity : AppCompatActivity() {
             .setTitle("Discard $count record(s)?")
             .setMessage("They are deleted from this phone and never reach the server.")
             .setPositiveButton("Discard") { _, _ ->
-                db.discardRejected()
+                db.discardRejected(session.username)
                 refreshStatus()
             }
             .setNegativeButton("Keep", null)
@@ -631,10 +646,12 @@ class MainActivity : AppCompatActivity() {
     // ------------------------------------------------------------------ status
 
     private fun refreshStatus() {
-        val rejected = db.getRejectedCount()
+        val rejected = db.getRejectedCount(session.username)
+        val ofOthers = db.getPendingOfOthersCount(session.username)
         val sb = StringBuilder()
         sb.append("Herd on phone: ").append(db.getCachedCount()).append(" cattle\n")
         sb.append("Waiting to send: ").append(db.getPendingCount()).append(" | Need attention: ").append(rejected)
+        if (ofOthers > 0) sb.append("\n").append(ofOthers).append(" of them were saved by another user and go out when that user signs in.")
         if (syncNote.isNotEmpty()) sb.append("\n").append(syncNote)
         tvSyncStatus.text = sb.toString()
         btnReviewRejected.visibility = if (rejected > 0) View.VISIBLE else View.GONE

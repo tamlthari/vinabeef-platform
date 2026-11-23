@@ -37,7 +37,7 @@ class SessionStore(context: Context) {
 }
 
 /** The three calls the field app makes. Blocking: call them from a background thread. */
-object ApiClient {
+object ApiClient : RecordUploader {
 
     data class Response(val code: Int, val body: String)
 
@@ -49,8 +49,22 @@ object ApiClient {
     fun downloadBundle(baseUrl: String, token: String, barnId: String): Response =
         request("GET", "$baseUrl/mobile/sync-bundle?barnId=${java.net.URLEncoder.encode(barnId, "UTF-8")}", token, null, 5000, 15000)
 
-    fun syncRecords(baseUrl: String, token: String, records: JSONArray): Response =
-        request("POST", "$baseUrl/mobile/health-sync", token, records.toString(), 5000, 15000)
+    /** Sends a batch of saved records and reads the answer into [UploadReply]. */
+    override fun upload(baseUrl: String, token: String, payloads: List<String>): UploadReply {
+        val resp = request("POST", "$baseUrl/mobile/health-sync", token, payloads.joinToString(",", "[", "]"), 5000, 15000)
+        if (resp.code == 401 || resp.code == 403) return UploadReply.SessionEnded
+        if (resp.code !in 200..299) return UploadReply.ServerError(resp.code)
+        val json = JSONObject(resp.body)
+        val acknowledged = json.optJSONArray("acknowledgedClientIds") ?: JSONArray()
+        val rejected = json.optJSONArray("rejected") ?: JSONArray()
+        return UploadReply.Accepted(
+            (0 until acknowledged.length()).map { acknowledged.getString(it) },
+            (0 until rejected.length()).map {
+                val r = rejected.getJSONObject(it)
+                Rejection(r.optString("clientEventId"), r.optString("code"), r.optString("message"))
+            }
+        )
+    }
 
     private fun request(
         method: String,

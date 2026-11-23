@@ -22,7 +22,39 @@ final class ReportQueries {
 
     /** What the signed-in person may see. */
     record Scope(Kind kind, String farmId, List<String> barnIds) {
-        enum Kind { ALL, FARM, BARNS, NONE }
+        /** How each kind of person is kept to the rows they may see. Adding a kind means adding a constant. */
+        enum Kind {
+            ALL {
+                @Override
+                void restrict(StringBuilder sql, List<Object> params, Scope scope, String barnAlias) {
+                    // sees everything: no condition
+                }
+            },
+            FARM {
+                @Override
+                void restrict(StringBuilder sql, List<Object> params, Scope scope, String barnAlias) {
+                    sql.append(" AND ").append(barnAlias).append(".farm_id = ? ");
+                    params.add(scope.farmId());
+                }
+            },
+            BARNS {
+                @Override
+                void restrict(StringBuilder sql, List<Object> params, Scope scope, String barnAlias) {
+                    sql.append(" AND ").append(barnAlias).append(".barn_id IN (")
+                            .append(String.join(",", Collections.nCopies(scope.barnIds().size(), "?"))).append(") ");
+                    params.addAll(scope.barnIds());
+                }
+            },
+            /** No scope at all: a condition that is never true. */
+            NONE {
+                @Override
+                void restrict(StringBuilder sql, List<Object> params, Scope scope, String barnAlias) {
+                    sql.append(" AND 1 = 0 ");
+                }
+            };
+
+            abstract void restrict(StringBuilder sql, List<Object> params, Scope scope, String barnAlias);
+        }
 
         static final Scope ALL = new Scope(Kind.ALL, null, List.of());
         static final Scope NONE = new Scope(Kind.NONE, null, List.of());
@@ -255,20 +287,7 @@ final class ReportQueries {
 
     /** Adds the restriction for the alias of the barns table. A person with no scope gets a condition that is never true. */
     static void scope(StringBuilder sql, List<Object> params, Scope scope, String barnAlias) {
-        switch (scope.kind()) {
-            case ALL -> {
-            }
-            case FARM -> {
-                sql.append(" AND ").append(barnAlias).append(".farm_id = ? ");
-                params.add(scope.farmId());
-            }
-            case BARNS -> {
-                sql.append(" AND ").append(barnAlias).append(".barn_id IN (")
-                        .append(String.join(",", Collections.nCopies(scope.barnIds().size(), "?"))).append(") ");
-                params.addAll(scope.barnIds());
-            }
-            default -> sql.append(" AND 1 = 0 ");
-        }
+        scope.kind().restrict(sql, params, scope, barnAlias);
     }
 
     static String csvCell(Object value) {

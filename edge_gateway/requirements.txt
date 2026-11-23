@@ -1,2 +1,3 @@
 httpx>=0.27
 paho-mqtt>=1.6,<3
+pyserial>=3.5   # only used for serial (CDC) USB readers; the gateway runs without it

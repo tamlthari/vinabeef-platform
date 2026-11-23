@@ -14,21 +14,23 @@ import java.util.Optional;
  * </ul>
  */
 public enum GateDirectionMode {
-    BIDIRECTIONAL,
-    IN_ONLY,
-    OUT_ONLY;
+    BIDIRECTIONAL(null),
+    IN_ONLY("IN"),
+    OUT_ONLY("OUT");
+
+    private final String fixedDirection;
+
+    GateDirectionMode(String fixedDirection) {
+        this.fixedDirection = fixedDirection;
+    }
 
     public boolean isOneWay() {
-        return this != BIDIRECTIONAL;
+        return fixedDirection != null;
     }
 
     /** "IN" for an IN_ONLY gate, "OUT" for an OUT_ONLY gate, null when the direction is not fixed by the gate. */
     public String fixedDirection() {
-        return switch (this) {
-            case IN_ONLY -> "IN";
-            case OUT_ONLY -> "OUT";
-            case BIDIRECTIONAL -> null;
-        };
+        return fixedDirection;
     }
 
     /** Strict parsing for user input. Accepts any case and "-" or space instead of "_". */
