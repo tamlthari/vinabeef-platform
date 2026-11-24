@@ -115,22 +115,9 @@ Open **`http://localhost:3000/login`** (FastAPI portal) or query **`http://local
 | Username | Role | Facility / Barn Scope |
 | --- | --- | --- |
 | **`admin`** | `SYSTEM_ADMIN` | Global access across all 3 farms, 120 barns, 125 readers, and 25,000 cattle[cite: 3, 8] |
-| **`manager_daklak`** | `FARM_MANAGER` | Dak Lak Cattle Station (`FARM-DAK-LAK` — 40 barns)
-
- |
-| **`manager_gialai`** | `FARM_MANAGER` | Gia Lai Grazing Facility (`FARM-GIA-LAI` — 40 barns)
-
- |
-| **`manager_dongnai`** | `FARM_MANAGER` | Dong Nai Feedlot (`FARM-DONG-NAI` — 40 barns)
-
- |
-| **`supervisor_daklak`** | `BARN_SUPERVISOR` | Scoped to 3 assigned barns in `FARM-DAK-LAK`
-
- |
-| **`supervisor_gialai_2barns`** | `BARN_SUPERVISOR` | Scoped to 2 assigned barns in `FARM-GIA-LAI`
-
- |
-| **`executive`** | `EXECUTIVE` | Global read-only analytics and regulatory reporting
-
- |
-
+| **`manager_daklak`** | `FARM_MANAGER` | Dak Lak Cattle Station (`FARM-DAK-LAK` — 40 barns) |
+| **`manager_gialai`** | `FARM_MANAGER` | Gia Lai Grazing Facility (`FARM-GIA-LAI` — 40 barns) |
+| **`manager_dongnai`** | `FARM_MANAGER` | Dong Nai Feedlot (`FARM-DONG-NAI` — 40 barns) |
+| **`supervisor_daklak`** | `BARN_SUPERVISOR` | Scoped to 3 assigned barns in `FARM-DAK-LAK` |
+| **`supervisor_gialai_2barns`** | `BARN_SUPERVISOR` | Scoped to 2 assigned barns in `FARM-GIA-LAI` |
+| **`executive`** | `EXECUTIVE` | Global read-only analytics and regulatory reporting |

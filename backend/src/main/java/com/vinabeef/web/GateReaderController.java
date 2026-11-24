@@ -46,6 +46,13 @@ public class GateReaderController {
         /** BIDIRECTIONAL, IN_ONLY (every read is an animal returning) or OUT_ONLY (every read is an animal leaving). */
         private String directionMode;
         private String firmwareVersion;
+        /**
+         * Edit only. Longest gap, in milliseconds, between the inner and the outer reader that still counts as one
+         * crossing; omitted keeps the current value (the default is 15000). See {@link GatePairingSettings}.
+         */
+        private Integer pairWindowMs;
+        /** Edit only. Reads at the same reader closer than this many milliseconds are one tap; omitted keeps the current value. */
+        private Integer repeatDebounceMs;
     }
 
     @GetMapping
@@ -154,6 +161,8 @@ public class GateReaderController {
                 g.label,
                 g.reader_name,
                 g.direction_mode,
+                g.pair_window_ms,
+                g.repeat_debounce_ms,
                 COALESCE(g.firmware_version, '1.58.1998') AS firmware_version,
                 COALESCE(g.status, 'ONLINE') AS status,
                 b.code AS barn_code,
@@ -199,25 +208,8 @@ public class GateReaderController {
                     .body(Map.of("error", "User '" + scope.username() + "' is not authorized to access Gate Reader '" + gateId + "'."));
         }
 
-        var transactions = jdbcTemplate.queryForList("""
-            SELECT
-                re.event_id,
-                re.event_key,
-                re.reader_name,
-                re.card_uuid,
-                re.user_name,
-                re.gate_action,
-                re.observed_at,
-                m.movement_id,
-                m.animal_id,
-                m.direction
-            FROM rfid_read_events re
-            LEFT JOIN movements m ON re.event_id = m.source_event_id
-            WHERE re.reader_name IN (SELECT g.reader_name FROM gates g WHERE g.gate_id = ?
-                                     UNION SELECT gr.reader_name FROM gate_readers gr WHERE gr.gate_id = ?)
-            ORDER BY re.observed_at DESC
-            LIMIT 50
-        """, gateId, gateId);
+        // every read with what became of it (passage, first read of a crossing, half crossing, ...): see ReaderReadFeed
+        var transactions = jdbcTemplate.queryForList(ReaderReadFeed.SQL, gateId, gateId);
 
         return ResponseEntity.ok(Map.of(
                 "reader", reader,
@@ -237,7 +229,7 @@ public class GateReaderController {
         var scope = currentScope.getCurrentScope();
 
         var existing = jdbcTemplate.queryForList("""
-            SELECT barn_id, label, reader_name, direction_mode, firmware_version,
+            SELECT barn_id, label, reader_name, direction_mode, firmware_version, pair_window_ms, repeat_debounce_ms,
                    (SELECT gr.reader_name FROM gate_readers gr WHERE gr.gate_id = gates.gate_id AND gr.side = 'OUTER') AS outer_reader_name
             FROM gates WHERE gate_id = ? AND retired_at IS NULL
         """, gateId);
@@ -275,11 +267,22 @@ public class GateReaderController {
         String newFirmware = req.getFirmwareVersion() != null && !req.getFirmwareVersion().isBlank()
                 ? req.getFirmwareVersion().trim() : (String) row.get("firmware_version");
 
+        // how far apart the two readers of a pair may see a tag and still count as one crossing
+        var timing = GatePairingSettings.resolve(
+                row.get("pair_window_ms") instanceof Number w ? w.intValue() : GatePairingSettings.DEFAULT_PAIR_WINDOW_MS,
+                row.get("repeat_debounce_ms") instanceof Number d ? d.intValue() : GatePairingSettings.DEFAULT_REPEAT_DEBOUNCE_MS,
+                req.getPairWindowMs(), req.getRepeatDebounceMs());
+        if (!timing.ok()) {
+            return ResponseEntity.badRequest().body(Map.of("error", timing.error()));
+        }
+
         jdbcTemplate.update("""
             UPDATE gates
-            SET barn_id = ?, label = ?, reader_name = ?, direction_mode = ?, firmware_version = ?
+            SET barn_id = ?, label = ?, reader_name = ?, direction_mode = ?, firmware_version = ?,
+                pair_window_ms = ?, repeat_debounce_ms = ?
             WHERE gate_id = ? AND retired_at IS NULL
-        """, newBarnId, newLabel, target.primary(), target.mode().name(), newFirmware, gateId);
+        """, newBarnId, newLabel, target.primary(), target.mode().name(), newFirmware,
+                timing.pairWindowMs(), timing.repeatDebounceMs(), gateId);
 
         if (target.pairChanged()) {
             // Readers that stay on the same side keep their Safetrust details; the rest are replaced.

@@ -1,0 +1,831 @@
+diff --git a/backend/src/main/java/com/vinabeef/web/GatePairingSettings.java b/backend/src/main/java/com/vinabeef/web/GatePairingSettings.java
+new file mode 100644
+index 0000000..1d5d161
+--- /dev/null
++++ b/backend/src/main/java/com/vinabeef/web/GatePairingSettings.java
+@@ -0,0 +1,66 @@
++package com.vinabeef.web;
++
++/**
++ * Checks the two timing settings of a gate before they are written: how long the two readers of a pair may be apart
++ * and still count as ONE crossing, and how close two reads at the same reader must be to count as ONE tap. Pure
++ * logic, no database, so the rules can be unit tested.
++ *
++ * <p>The window has to be set to how the animals really move through the gate. A cow that pauses between the inner
++ * and the outer reader (or a test where a person walks a card from one reader to the other) can take much longer
++ * than the 15 s default. A read that finds no partner inside the window stays an unpaired "half crossing" and no
++ * movement is recorded.
++ */
++final class GatePairingSettings {
++
++    /** Gate defaults, the same as the column defaults in {@code gates}. */
++    static final int DEFAULT_PAIR_WINDOW_MS = 15_000;
++    static final int DEFAULT_REPEAT_DEBOUNCE_MS = 3_000;
++
++    static final int MIN_PAIR_WINDOW_MS = 1_000;
++    static final int MAX_PAIR_WINDOW_MS = 300_000;
++    static final int MIN_REPEAT_DEBOUNCE_MS = 500;
++    static final int MAX_REPEAT_DEBOUNCE_MS = 60_000;
++
++    /** The values to store, or an {@code error} message for an HTTP 400. */
++    record Result(int pairWindowMs, int repeatDebounceMs, String error) {
++        boolean ok() {
++            return error == null;
++        }
++    }
++
++    private GatePairingSettings() { }
++
++    /**
++     * @param currentWindowMs   the gate's stored pair window
++     * @param currentDebounceMs the gate's stored repeat debounce
++     * @param reqWindowMs       requested pair window in milliseconds; null keeps the current value
++     * @param reqDebounceMs     requested repeat debounce in milliseconds; null keeps the current value
++     */
++    static Result resolve(int currentWindowMs, int currentDebounceMs, Integer reqWindowMs, Integer reqDebounceMs) {
++        int window = reqWindowMs != null ? reqWindowMs : currentWindowMs;
++        int debounce = reqDebounceMs != null ? reqDebounceMs : currentDebounceMs;
++
++        if (window < MIN_PAIR_WINDOW_MS || window > MAX_PAIR_WINDOW_MS) {
++            return fail("The pairing window must be between " + seconds(MIN_PAIR_WINDOW_MS) + " and "
++                    + seconds(MAX_PAIR_WINDOW_MS) + " (it was " + seconds(window) + ").");
++        }
++        if (debounce < MIN_REPEAT_DEBOUNCE_MS || debounce > MAX_REPEAT_DEBOUNCE_MS) {
++            return fail("The repeat-read time must be between " + seconds(MIN_REPEAT_DEBOUNCE_MS) + " and "
++                    + seconds(MAX_REPEAT_DEBOUNCE_MS) + " (it was " + seconds(debounce) + ").");
++        }
++        if (window < debounce) {
++            return fail("The pairing window (" + seconds(window) + ") cannot be shorter than the repeat-read time ("
++                    + seconds(debounce) + ").");
++        }
++        return new Result(window, debounce, null);
++    }
++
++    private static Result fail(String message) {
++        return new Result(0, 0, message);
++    }
++
++    /** {@code 31693} becomes {@code "31.693 s"}, {@code 15000} becomes {@code "15 s"}, {@code 500} becomes {@code "0.5 s"}. */
++    static String seconds(long ms) {
++        return java.math.BigDecimal.valueOf(ms).movePointLeft(3).stripTrailingZeros().toPlainString() + " s";
++    }
++}
+diff --git a/backend/src/main/java/com/vinabeef/web/GateReaderController.java b/backend/src/main/java/com/vinabeef/web/GateReaderController.java
+index 6f96f32..881cb1a 100644
+--- a/backend/src/main/java/com/vinabeef/web/GateReaderController.java
++++ b/backend/src/main/java/com/vinabeef/web/GateReaderController.java
+@@ -46,6 +46,13 @@ public class GateReaderController {
+         /** BIDIRECTIONAL, IN_ONLY (every read is an animal returning) or OUT_ONLY (every read is an animal leaving). */
+         private String directionMode;
+         private String firmwareVersion;
++        /**
++         * Edit only. Longest gap, in milliseconds, between the inner and the outer reader that still counts as one
++         * crossing; omitted keeps the current value (the default is 15000). See {@link GatePairingSettings}.
++         */
++        private Integer pairWindowMs;
++        /** Edit only. Reads at the same reader closer than this many milliseconds are one tap; omitted keeps the current value. */
++        private Integer repeatDebounceMs;
+     }
+ 
+     @GetMapping
+@@ -154,6 +161,8 @@ public class GateReaderController {
+                 g.label,
+                 g.reader_name,
+                 g.direction_mode,
++                g.pair_window_ms,
++                g.repeat_debounce_ms,
+                 COALESCE(g.firmware_version, '1.58.1998') AS firmware_version,
+                 COALESCE(g.status, 'ONLINE') AS status,
+                 b.code AS barn_code,
+@@ -199,25 +208,8 @@ public class GateReaderController {
+                     .body(Map.of("error", "User '" + scope.username() + "' is not authorized to access Gate Reader '" + gateId + "'."));
+         }
+ 
+-        var transactions = jdbcTemplate.queryForList("""
+-            SELECT
+-                re.event_id,
+-                re.event_key,
+-                re.reader_name,
+-                re.card_uuid,
+-                re.user_name,
+-                re.gate_action,
+-                re.observed_at,
+-                m.movement_id,
+-                m.animal_id,
+-                m.direction
+-            FROM rfid_read_events re
+-            LEFT JOIN movements m ON re.event_id = m.source_event_id
+-            WHERE re.reader_name IN (SELECT g.reader_name FROM gates g WHERE g.gate_id = ?
+-                                     UNION SELECT gr.reader_name FROM gate_readers gr WHERE gr.gate_id = ?)
+-            ORDER BY re.observed_at DESC
+-            LIMIT 50
+-        """, gateId, gateId);
++        // every read with what became of it (passage, first read of a crossing, half crossing, ...): see ReaderReadFeed
++        var transactions = jdbcTemplate.queryForList(ReaderReadFeed.SQL, gateId, gateId);
+ 
+         return ResponseEntity.ok(Map.of(
+                 "reader", reader,
+@@ -237,7 +229,7 @@ public class GateReaderController {
+         var scope = currentScope.getCurrentScope();
+ 
+         var existing = jdbcTemplate.queryForList("""
+-            SELECT barn_id, label, reader_name, direction_mode, firmware_version,
++            SELECT barn_id, label, reader_name, direction_mode, firmware_version, pair_window_ms, repeat_debounce_ms,
+                    (SELECT gr.reader_name FROM gate_readers gr WHERE gr.gate_id = gates.gate_id AND gr.side = 'OUTER') AS outer_reader_name
+             FROM gates WHERE gate_id = ? AND retired_at IS NULL
+         """, gateId);
+@@ -275,11 +267,22 @@ public class GateReaderController {
+         String newFirmware = req.getFirmwareVersion() != null && !req.getFirmwareVersion().isBlank()
+                 ? req.getFirmwareVersion().trim() : (String) row.get("firmware_version");
+ 
++        // how far apart the two readers of a pair may see a tag and still count as one crossing
++        var timing = GatePairingSettings.resolve(
++                row.get("pair_window_ms") instanceof Number w ? w.intValue() : GatePairingSettings.DEFAULT_PAIR_WINDOW_MS,
++                row.get("repeat_debounce_ms") instanceof Number d ? d.intValue() : GatePairingSettings.DEFAULT_REPEAT_DEBOUNCE_MS,
++                req.getPairWindowMs(), req.getRepeatDebounceMs());
++        if (!timing.ok()) {
++            return ResponseEntity.badRequest().body(Map.of("error", timing.error()));
++        }
++
+         jdbcTemplate.update("""
+             UPDATE gates
+-            SET barn_id = ?, label = ?, reader_name = ?, direction_mode = ?, firmware_version = ?
++            SET barn_id = ?, label = ?, reader_name = ?, direction_mode = ?, firmware_version = ?,
++                pair_window_ms = ?, repeat_debounce_ms = ?
+             WHERE gate_id = ? AND retired_at IS NULL
+-        """, newBarnId, newLabel, target.primary(), target.mode().name(), newFirmware, gateId);
++        """, newBarnId, newLabel, target.primary(), target.mode().name(), newFirmware,
++                timing.pairWindowMs(), timing.repeatDebounceMs(), gateId);
+ 
+         if (target.pairChanged()) {
+             // Readers that stay on the same side keep their Safetrust details; the rest are replaced.
+diff --git a/backend/src/main/java/com/vinabeef/web/ReaderReadFeed.java b/backend/src/main/java/com/vinabeef/web/ReaderReadFeed.java
+new file mode 100644
+index 0000000..3b11830
+--- /dev/null
++++ b/backend/src/main/java/com/vinabeef/web/ReaderReadFeed.java
+@@ -0,0 +1,85 @@
++package com.vinabeef.web;
++
++/**
++ * The recent reads of one gate's readers for the reader page, each with what became of it.
++ *
++ * <p>A read is not simply "a passage or an alert". The reads of a gate with an inner and an outer reader end in one of:
++ * <ul>
++ *   <li>{@code PASSAGE}: the read that completed a crossing (it is the movement's source event)</li>
++ *   <li>{@code CROSSING_FIRST}: the earlier read of a crossing that completed; it is counted with the passage</li>
++ *   <li>{@code HALF_CROSSING}: the tag is registered, but the other reader has not seen it (yet). It waits as an
++ *       unpaired sighting. {@code half_side} says which reader saw it and {@code other_delta_ms} how far away the
++ *       nearest sighting of the other reader is (positive: later), so a slow crossing is visible as such</li>
++ *   <li>{@code NO_MOVEMENT}: the tag is registered but the read made no movement, for example a repeat read while the
++ *       animal walks away from the reader, or an unpaired sighting that is older than the retention time</li>
++ *   <li>{@code UNREGISTERED_TAG}: no animal is bound to the tag (an alert was raised)</li>
++ *   <li>{@code COPY}: the second copy of a tap that came by both routes (Safetrust and the USB reader)</li>
++ *   <li>{@code USB_UNMAPPED}: a USB read whose credential number matches no card</li>
++ *   <li>{@code SYSTEM}: heartbeat, status or telemetry event of the reader</li>
++ * </ul>
++ *
++ * <p>The animal is found the way the processing service finds it: the tag's assignment that was active when the read
++ * was handled, else the event's user name when that is a live animal.
++ *
++ * <p>The newest {@value #LIMIT} reads are taken first and only those are joined, so the page stays cheap on a reader
++ * with a long history. Parameters: the gate id, twice.
++ */
++final class ReaderReadFeed {
++
++    static final int LIMIT = 50;
++
++    static final String SQL = """
++        WITH recent AS (
++            SELECT re.event_id, re.event_key, re.reader_name, re.card_uuid, re.user_name, re.gate_action,
++                   re.observed_at, COALESCE(re.received_at, re.observed_at) AS handled_at,
++                   re.event_class, re.read_source, re.source_device, re.credential_identifier, re.duplicate_of
++            FROM rfid_read_events re
++            WHERE re.reader_name IN (SELECT g.reader_name FROM gates g WHERE g.gate_id = ?
++                                     UNION SELECT gr.reader_name FROM gate_readers gr WHERE gr.gate_id = ?)
++            ORDER BY re.observed_at DESC, re.event_id
++            LIMIT 50
++        )
++        SELECT r.event_id, r.event_key, r.reader_name, r.card_uuid, r.user_name, r.gate_action, r.observed_at,
++               r.event_class, r.read_source, r.source_device, r.credential_identifier, r.duplicate_of,
++               m.movement_id,
++               COALESCE(m.animal_id, fm.animal_id, ra.animal_id) AS animal_id,
++               COALESCE(m.direction, fm.direction)               AS direction,
++               CASE
++                   WHEN r.duplicate_of IS NOT NULL          THEN 'COPY'
++                   WHEN r.event_class = 'LOCAL_UNMAPPED'    THEN 'USB_UNMAPPED'
++                   WHEN m.movement_id  IS NOT NULL          THEN 'PASSAGE'
++                   WHEN fm.movement_id IS NOT NULL          THEN 'CROSSING_FIRST'
++                   WHEN cand.event_id  IS NOT NULL          THEN 'HALF_CROSSING'
++                   WHEN r.card_uuid IS NULL                 THEN 'SYSTEM'
++                   WHEN ra.animal_id IS NULL                THEN 'UNREGISTERED_TAG'
++                   ELSE 'NO_MOVEMENT'
++               END AS outcome,
++               cand.side AS half_side,
++               (SELECT c2.seen_ms - cand.seen_ms
++                  FROM gate_crossing_candidates c2
++                 WHERE c2.gate_id = cand.gate_id AND c2.tag_epc = cand.tag_epc AND c2.side <> cand.side
++                 ORDER BY ABS(c2.seen_ms - cand.seen_ms), c2.event_id
++                 LIMIT 1) AS other_delta_ms
++        FROM recent r
++        LEFT JOIN movements m  ON m.source_event_id = r.event_id
++        LEFT JOIN movements fm ON fm.first_event_id = r.event_id
++        LEFT JOIN gate_crossing_candidates cand ON cand.event_id = r.event_id
++        LEFT JOIN LATERAL (
++            SELECT COALESCE(
++                (SELECT ta.animal_id
++                   FROM tag_assignments ta
++                   JOIN rfid_tags t ON t.tag_id = ta.tag_id
++                  WHERE t.epc_value = r.card_uuid
++                    AND ta.valid_from <= r.handled_at
++                    AND (ta.valid_to IS NULL OR ta.valid_to > r.handled_at)
++                  ORDER BY ta.valid_from DESC
++                  LIMIT 1),
++                (SELECT a.animal_id FROM animals a
++                  WHERE a.animal_id = r.user_name AND a.lifecycle_status <> 'ARCHIVED')
++            ) AS animal_id
++        ) ra ON TRUE
++        ORDER BY r.observed_at DESC, r.event_id
++        """;
++
++    private ReaderReadFeed() { }
++}
+diff --git a/backend/src/test/java/com/vinabeef/web/GatePairingSettingsTest.java b/backend/src/test/java/com/vinabeef/web/GatePairingSettingsTest.java
+new file mode 100644
+index 0000000..7f693be
+--- /dev/null
++++ b/backend/src/test/java/com/vinabeef/web/GatePairingSettingsTest.java
+@@ -0,0 +1,84 @@
++package com.vinabeef.web;
++
++import com.vinabeef.web.GatePairingSettings.Result;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertNull;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++/** The limits on a gate's pairing window and repeat-read time. */
++class GatePairingSettingsTest {
++
++    @Test
++    void leftOutValuesKeepTheCurrentSettings() {
++        Result r = GatePairingSettings.resolve(15_000, 3_000, null, null);
++        assertTrue(r.ok());
++        assertEquals(15_000, r.pairWindowMs());
++        assertEquals(3_000, r.repeatDebounceMs());
++        assertNull(r.error());
++    }
++
++    @Test
++    void aWindowLongEnoughForTheSlowCrossingInTheReportIsAccepted() {
++        // inner 11:50:10.130, outer 11:50:41.823: 31.7 s apart, more than the 15 s default
++        Result r = GatePairingSettings.resolve(15_000, 3_000, 60_000, null);
++        assertTrue(r.ok());
++        assertEquals(60_000, r.pairWindowMs());
++        assertEquals(3_000, r.repeatDebounceMs());
++    }
++
++    @Test
++    void onlyTheRepeatTimeCanBeChangedToo() {
++        Result r = GatePairingSettings.resolve(15_000, 3_000, null, 5_000);
++        assertTrue(r.ok());
++        assertEquals(15_000, r.pairWindowMs());
++        assertEquals(5_000, r.repeatDebounceMs());
++    }
++
++    @Test
++    void theLimitsThemselvesAreAllowed() {
++        assertTrue(GatePairingSettings.resolve(15_000, 3_000, 1_000, 500).ok());
++        assertTrue(GatePairingSettings.resolve(15_000, 3_000, 300_000, 60_000).ok());
++    }
++
++    @Test
++    void aWindowBelowOneSecondOrAboveFiveMinutesIsRejected() {
++        Result tooShort = GatePairingSettings.resolve(15_000, 500, 999, null);
++        assertFalse(tooShort.ok());
++        assertTrue(tooShort.error().contains("between 1 s and 300 s"), tooShort.error());
++        assertTrue(tooShort.error().contains("it was 0.999 s"), tooShort.error());
++
++        Result tooLong = GatePairingSettings.resolve(15_000, 3_000, 300_001, null);
++        assertFalse(tooLong.ok());
++        assertTrue(tooLong.error().contains("pairing window"), tooLong.error());
++    }
++
++    @Test
++    void aRepeatTimeOutsideItsLimitsIsRejected() {
++        assertFalse(GatePairingSettings.resolve(15_000, 3_000, null, 499).ok());
++        Result tooLong = GatePairingSettings.resolve(300_000, 3_000, null, 60_001);
++        assertFalse(tooLong.ok());
++        assertTrue(tooLong.error().contains("repeat-read time"), tooLong.error());
++    }
++
++    @Test
++    void theWindowCannotBeShorterThanTheRepeatTime() {
++        Result r = GatePairingSettings.resolve(15_000, 3_000, 2_000, null);
++        assertFalse(r.ok());
++        assertTrue(r.error().contains("cannot be shorter"), r.error());
++        // a stored repeat time that is longer than a requested window is caught the same way
++        assertFalse(GatePairingSettings.resolve(15_000, 10_000, 5_000, null).ok());
++        // and raising the repeat time above the stored window is too
++        assertFalse(GatePairingSettings.resolve(15_000, 3_000, null, 20_000).ok());
++    }
++
++    @Test
++    void secondsAreWrittenTheWayAPersonReadsThem() {
++        assertEquals("15 s", GatePairingSettings.seconds(15_000));
++        assertEquals("31.693 s", GatePairingSettings.seconds(31_693));
++        assertEquals("0.5 s", GatePairingSettings.seconds(500));
++        assertEquals("300 s", GatePairingSettings.seconds(300_000));
++    }
++}
+diff --git a/backend/src/test/java/com/vinabeef/web/ReaderReadFeedTest.java b/backend/src/test/java/com/vinabeef/web/ReaderReadFeedTest.java
+new file mode 100644
+index 0000000..27677ce
+--- /dev/null
++++ b/backend/src/test/java/com/vinabeef/web/ReaderReadFeedTest.java
+@@ -0,0 +1,71 @@
++package com.vinabeef.web;
++
++import org.junit.jupiter.api.Test;
++
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++/**
++ * Text-level checks of the reader page's read feed. The statement was also run against a PostgreSQL 16 database built
++ * from the real migrations, with the cases in the class comment of {@link ReaderReadFeed}.
++ */
++class ReaderReadFeedTest {
++
++    private static final String SQL = ReaderReadFeed.SQL;
++
++    @Test
++    void theGateIdIsBoundTwice() {
++        long placeholders = SQL.chars().filter(c -> c == '?').count();
++        assertEquals(2L, placeholders, "gates.reader_name and gate_readers.gate_id each take the gate id");
++    }
++
++    @Test
++    void theFeedStaysAtTheNewestFiftyReads() {
++        assertEquals(50, ReaderReadFeed.LIMIT);
++        assertTrue(SQL.contains("LIMIT " + ReaderReadFeed.LIMIT), "the limit in the statement must match the constant");
++        // the limit is applied before the joins, so a reader with a long history stays cheap
++        assertTrue(SQL.indexOf("LIMIT 50") < SQL.indexOf("FROM recent r"));
++    }
++
++    @Test
++    void theFirstReadOfACompletedCrossingIsFoundThroughFirstEventId() {
++        // movements.source_event_id is only the LATER read of a pair; the earlier one is movements.first_event_id.
++        // Joining only on source_event_id made that read look like a tag that is not registered.
++        assertTrue(SQL.contains("LEFT JOIN movements m  ON m.source_event_id = r.event_id"));
++        assertTrue(SQL.contains("LEFT JOIN movements fm ON fm.first_event_id = r.event_id"));
++    }
++
++    @Test
++    void anUnpairedReadIsAHalfCrossingNotAnUnregisteredTag() {
++        assertTrue(SQL.contains("LEFT JOIN gate_crossing_candidates cand ON cand.event_id = r.event_id"));
++        assertTrue(SQL.indexOf("THEN 'HALF_CROSSING'") < SQL.indexOf("THEN 'UNREGISTERED_TAG'"),
++                "a read waiting for its partner must be classified before the registered-tag test");
++    }
++
++    @Test
++    void everyOutcomeThePageKnowsIsProduced() {
++        List<String> outcomes = List.of("COPY", "USB_UNMAPPED", "PASSAGE", "CROSSING_FIRST", "HALF_CROSSING",
++                "SYSTEM", "UNREGISTERED_TAG", "NO_MOVEMENT");
++        for (String outcome : outcomes) {
++            assertTrue(SQL.contains("'" + outcome + "'"), outcome);
++        }
++    }
++
++    @Test
++    void theAnimalIsResolvedTheWayTheProcessingServiceDoes() {
++        // the tag's assignment that was active when the read was handled, else the event's user name if a live animal
++        assertTrue(SQL.contains("ta.valid_from <= r.handled_at"));
++        assertTrue(SQL.contains("ta.valid_to IS NULL OR ta.valid_to > r.handled_at"));
++        assertTrue(SQL.contains("a.lifecycle_status <> 'ARCHIVED'"));
++    }
++
++    @Test
++    void theColumnsTheTemplateRendersAreAllReturned() {
++        for (String column : List.of("event_class", "read_source", "source_device", "credential_identifier",
++                "duplicate_of", "movement_id", "animal_id", "direction", "outcome", "half_side", "other_delta_ms")) {
++            assertTrue(SQL.contains(column), column);
++        }
++    }
++}
+diff --git a/frontend/main.py b/frontend/main.py
+index 663260d..5357c72 100644
+--- a/frontend/main.py
++++ b/frontend/main.py
+@@ -265,6 +265,23 @@ def flash_header(message: str, kind: str = "ok") -> dict:
+     return {"HX-Trigger": json.dumps({"flash": {"message": message, "kind": kind}})}
+ 
+ 
++def seconds_to_ms(text, label: str):
++    """A form field in seconds ("31.7", "60") becomes whole milliseconds. Empty or missing means "not sent" (None).
++
++    Anything that is not a finite number raises ValueError with a message that can be shown to the person. The
++    backend checks the allowed range and says what it is.
++    """
++    if text is None or not str(text).strip():
++        return None
++    try:
++        value = float(str(text).strip().replace(",", "."))
++    except ValueError:
++        raise ValueError(f"{label} must be a number of seconds (you entered '{str(text).strip()[:20]}').")
++    if not math.isfinite(value):
++        raise ValueError(f"{label} must be a number of seconds.")
++    return int(round(value * 1000))
++
++
+ def redirect_with(path: str, notice: str = "", problem: str = "") -> RedirectResponse:
+     """Redirect after a form post; base.html shows `notice` (green) or `problem` (red) above the page."""
+     params = []
+@@ -1325,12 +1342,23 @@ async def reader_update_action(
+     form = await request.form()
+     outer_reader_name = form.get("outer_reader_name")
+ 
++    # the pairing window and the repeat-read time are typed in seconds; the backend stores milliseconds
++    try:
++        pair_window_ms = seconds_to_ms(form.get("pair_window_s"), "The pairing window")
++        repeat_debounce_ms = seconds_to_ms(form.get("repeat_debounce_s"), "The repeat-read time")
++    except ValueError as exc:
++        return redirect_with(f"/readers/{gate_id}", problem=str(exc))
++
+     payload = {
+         "barnId": barn_id,
+         "label": label,
+         "directionMode": direction_mode,
+         "firmwareVersion": firmware_version
+     }
++    if pair_window_ms is not None:
++        payload["pairWindowMs"] = pair_window_ms
++    if repeat_debounce_ms is not None:
++        payload["repeatDebounceMs"] = repeat_debounce_ms
+     if reader_name.strip():
+         payload["readerName"] = reader_name.strip()
+     if outer_reader_name is not None:
+diff --git a/frontend/templates/reader_detail.html b/frontend/templates/reader_detail.html
+index 58d39ec..160318c 100644
+--- a/frontend/templates/reader_detail.html
++++ b/frontend/templates/reader_detail.html
+@@ -51,7 +51,7 @@
+                     which decides the direction. It applies again if that pair is removed.
+                     {% elif reader.direction_mode == 'IN_ONLY' %}every read = animal returning
+                     {% elif reader.direction_mode == 'OUT_ONLY' %}every read = animal out to pasture
+-                    {% elif reader.outer_reader_name %}delta time: inner {{ reader.reader_name }} / outer {{ reader.outer_reader_name }}
++                    {% elif reader.outer_reader_name %}delta time: inner {{ reader.reader_name }} / outer {{ reader.outer_reader_name }}, pairs reads within {{ '%g' | format((reader.pair_window_ms | default(15000, true)) / 1000) }} s
+                     {% else %}presence toggle (single reader){% endif %}
+                 </div>
+             </div>
+@@ -114,21 +114,47 @@
+                         </tr>
+                     </thead>
+                     <tbody id="tx-tbody" class="divide-y divide-gray-100">
++                        {% set window_ms = reader.pair_window_ms | default(15000, true) %}
+                         {% for tx in transactions %}
+-                        <tr class="tx-row hover:bg-gray-50 transition" data-type="{{ 'PASSAGE' if tx.movement_id else ('SYSTEM' if tx.duplicate_of else ('ANOMALY' if (tx.card_uuid or tx.event_class == 'LOCAL_UNMAPPED') else 'SYSTEM')) }}">
++                        {# what became of this read: the backend sends "outcome"; an older backend only sends movement_id #}
++                        {% set outcome = tx.outcome or ('PASSAGE' if tx.movement_id else ('READ' if tx.card_uuid else 'SYSTEM')) %}
++                        {% set other_side = 'outer' if tx.half_side == 'INNER' else 'inner' %}
++                        <tr class="tx-row hover:bg-gray-50 transition" data-outcome="{{ outcome }}"
++                            data-type="{{ 'SYSTEM' if outcome in ('SYSTEM', 'COPY') else ('ANOMALY' if outcome in ('UNREGISTERED_TAG', 'USB_UNMAPPED') else 'PASSAGE') }}">
+                             <td class="py-3.5 px-3 font-medium text-gray-900">
+-                                {% if tx.movement_id %}
++                                {% if outcome == 'PASSAGE' %}
+                                     Passage {{ tx.direction }}
+-                                {% elif tx.duplicate_of %}
++                                {% elif outcome == 'CROSSING_FIRST' %}
++                                    First read of a crossing ({{ tx.direction }})
++                                {% elif outcome == 'HALF_CROSSING' %}
++                                    Half crossing, waiting for the {{ other_side }} reader
++                                {% elif outcome == 'COPY' %}
+                                     Second copy of a tap already counted
+-                                {% elif tx.event_class == 'LOCAL_UNMAPPED' %}
++                                {% elif outcome == 'USB_UNMAPPED' %}
+                                     USB read, credential {{ tx.credential_identifier }} matches no card
+-                                {% elif tx.card_uuid %}
++                                {% elif outcome == 'UNREGISTERED_TAG' %}
+                                     Unregistered Tag Read
++                                {% elif outcome == 'NO_MOVEMENT' %}
++                                    Repeat read, no new movement
++                                {% elif outcome == 'READ' %}
++                                    Tag read
+                                 {% else %}
+                                     {{ tx.gate_action or 'READER_HEARTBEAT' }}
+                                 {% endif %}
+-                                {% if tx.read_source == 'LOCAL_USB' %}<span class="ml-1 px-1.5 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200 text-[10px] font-semibold" title="Read by a USB reader on the barn gateway. The time is the gateway's clock.">USB{% if tx.source_device %} · {{ tx.source_device }}{% endif %}</span>{% endif %}
++                                {% if tx.read_source == 'LOCAL_USB' %}<span class="ml-1 px-1.5 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200 text-[10px] font-semibold" title="Read by a USB reader on the barn gateway. The time is the gateway's clock.">USB{% if tx.source_device %} &middot; {{ tx.source_device }}{% endif %}</span>{% endif %}
++                                {% if outcome == 'HALF_CROSSING' %}
++                                <div class="half-crossing-note mt-1 max-w-md font-normal text-[11px] text-gray-500">
++                                    {% if tx.other_delta_ms is number %}
++                                        The {{ other_side }} reader saw this tag {{ '%.1f' | format((tx.other_delta_ms | abs) / 1000) }} s {{ 'later' if tx.other_delta_ms > 0 else 'earlier' }}.
++                                        {% if (tx.other_delta_ms | abs) > window_ms %}
++                                            That is longer than the {{ '%g' | format(window_ms / 1000) }} s pairing window, so the two reads were not paired and no movement was recorded.
++                                            {% if can_manage %}For a normal crossing, raise the window under <a href="#" onclick="switchReaderTab('config'); return false;" class="text-blue-600 hover:underline">Reader Management</a>.{% endif %}
++                                        {% endif %}
++                                    {% else %}
++                                        The {{ other_side }} reader has not seen this tag within the {{ '%g' | format(window_ms / 1000) }} s pairing window.
++                                    {% endif %}
++                                </div>
++                                {% endif %}
+                             </td>
+                             <td class="py-3.5 px-3">
+                                 {% if tx.animal_id %}
+@@ -136,6 +162,7 @@
+                                     <span class="w-4 h-4 rounded-full bg-gray-100 text-gray-500 inline-flex items-center justify-center text-[10px] font-serif">i</span>
+                                     <span>{{ tx.animal_id }}</span>
+                                 </a>
++                                {% if tx.card_uuid %}<div class="mt-0.5 font-mono text-[10px] text-gray-400">Tag: {{ tx.card_uuid }}</div>{% endif %}
+                                 {% elif tx.card_uuid %}
+                                 <span class="font-mono text-amber-700 text-[11px]">Tag: {{ tx.card_uuid }}</span>
+                                 {% else %}
+@@ -144,16 +171,31 @@
+                             </td>
+                             <td class="py-3.5 px-3 font-mono text-[11px] text-gray-500">{{ tx.observed_at }}</td>
+                             <td class="py-3.5 px-3 text-right">
+-                                {% if tx.duplicate_of %}
++                                {% if outcome == 'COPY' %}
+                                 <span class="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-sky-50 text-sky-700 border border-sky-200" title="The same tap was already counted from the other route. Kept as evidence.">
+                                     <span>=</span>
+                                     <span>Copy, not counted</span>
+                                 </span>
+-                                {% elif tx.movement_id or (not tx.card_uuid and tx.event_class != 'LOCAL_UNMAPPED') %}
++                                {% elif outcome in ('PASSAGE', 'SYSTEM') %}
+                                 <span class="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                     <span>&#10003;</span>
+                                     <span>Success</span>
+                                 </span>
++                                {% elif outcome == 'CROSSING_FIRST' %}
++                                <span class="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200" title="This read started a crossing that the other reader completed. It is counted once, with that passage.">
++                                    <span>&#10003;</span>
++                                    <span>Counted with the passage</span>
++                                </span>
++                                {% elif outcome == 'HALF_CROSSING' %}
++                                <span class="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200" title="The tag is registered. A movement is recorded when the other reader sees it too.">
++                                    <span>&hellip;</span>
++                                    <span>Waiting for the other reader</span>
++                                </span>
++                                {% elif outcome in ('NO_MOVEMENT', 'READ') %}
++                                <span class="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-gray-50 text-gray-600 border border-gray-200" title="The tag is registered. This read made no movement: it repeats a read that was already counted, or the other reader never saw the tag.">
++                                    <span>&ndash;</span>
++                                    <span>Not counted</span>
++                                </span>
+                                 {% else %}
+                                 <span class="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                                     <span>!</span>
+@@ -218,6 +260,22 @@
+                     <p class="text-[11px] text-gray-400 mt-1">Bidirectional gates only. Empty = single reader.</p>
+                 </div>
+             </div>
++            <div class="grid grid-cols-2 gap-4">
++                <div>
++                    <label class="block font-semibold text-gray-700 mb-1">Pairing window (seconds)</label>
++                    <input type="number" name="pair_window_s" id="edit-pair-window" min="1" max="300" step="any"
++                           value="{{ '%g' | format((reader.pair_window_ms | default(15000, true)) / 1000) }}"
++                           class="w-full border border-gray-300 rounded px-3 py-2 font-mono focus:outline-none focus:border-blue-500">
++                    <p class="text-[11px] text-gray-400 mt-1">Longest time between the inner and the outer read that still counts as one crossing (1 to 300, default 15). Only used by a gate with two readers. An animal that stops between the readers needs a longer window.</p>
++                </div>
++                <div>
++                    <label class="block font-semibold text-gray-700 mb-1">Repeat-read time (seconds)</label>
++                    <input type="number" name="repeat_debounce_s" id="edit-repeat-time" min="0.5" max="60" step="any"
++                           value="{{ '%g' | format((reader.repeat_debounce_ms | default(3000, true)) / 1000) }}"
++                           class="w-full border border-gray-300 rounded px-3 py-2 font-mono focus:outline-none focus:border-blue-500">
++                    <p class="text-[11px] text-gray-400 mt-1">Reads of one tag at one reader closer together than this count as one tap (0.5 to 60, default 3). The pairing window cannot be shorter.</p>
++                </div>
++            </div>
+             <div>
+                 <label class="block font-semibold text-gray-700 mb-1">Firmware Version</label>
+                 <input type="text" name="firmware_version" value="{{ reader.firmware_version }}" class="w-full border border-gray-300 rounded px-3 py-2 font-mono">
+diff --git a/frontend/test_frontend.py b/frontend/test_frontend.py
+index eae96b3..ff8dc84 100644
+--- a/frontend/test_frontend.py
++++ b/frontend/test_frontend.py
+@@ -200,3 +200,223 @@ def test_the_page_you_are_on_is_the_one_highlighted(path, entry):
+ def test_the_alerts_badge_is_still_polled_from_the_menu():
+     _, nav = sidebar("BARN_SUPERVISOR", "/herd")
+     assert 'hx-get="/htmx/alerts/badge"' in nav
++
++
++# ---- the reader page: what became of each read ---------------------------------------------------------------------
++# A cow was bound to tag 042FAC02AD1490 and walked through a gate with an inner reader (0ED4) and an outer reader
++# (C1C4). The two reads were 31.7 s apart, the gate pairs reads within 15 s, and both rows said "Unregistered Tag Read".
++READER = {"gate_id": "GATE-T-1", "barn_id": "BARN-DL-01", "farm_id": "FARM-1", "label": "Test pair", "reader_name": "0ED4",
++          "outer_reader_name": "C1C4", "direction_mode": "BIDIRECTIONAL", "status": "ONLINE", "firmware_version": "1.0",
++          "barn_code": "DL-01", "farm_name": "Dak Lak", "pair_window_ms": 15000, "repeat_debounce_ms": 3000,
++          "in_count": 0, "out_count": 1, "today_in": 0, "today_out": 1, "passage_count": 1, "last_seen": "2026-11-24T11:50:41Z"}
++
++
++def read(event_id, outcome, **kw):
++    row = {"event_id": event_id, "event_key": None, "reader_name": "0ED4", "card_uuid": "042FAC02AD1490", "user_name": None,
++           "gate_action": "ACCESS_GRANTED", "observed_at": "2026-11-24T11:50:10.130Z", "event_class": "CARD_READ",
++           "read_source": "SAFETRUST", "source_device": None, "credential_identifier": None, "duplicate_of": None,
++           "movement_id": None, "animal_id": "COW-T-1", "direction": None, "outcome": outcome, "half_side": None,
++           "other_delta_ms": None}
++    row.update(kw)
++    return row
++
++
++def reader_page(transactions, role="SYSTEM_ADMIN", **reader):
++    return main.templates.env.get_template("reader_detail.html").render(
++        request=_Req("/readers/GATE-T-1"), user={"username": "u", "role": role, "token": "t"}, error="",
++        reader=dict(READER, **reader), transactions=transactions, barns=[{"barnId": "BARN-DL-01", "code": "DL-01", "farmId": "FARM-1"}])
++
++
++def rows(html):
++    """The transaction rows of the page as {event data-outcome: row text}, in page order."""
++    body = html[html.index('id="tx-tbody"'):html.index("</tbody>")]
++    return [(m.group(1), re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", m.group(2))).strip())
++            for m in re.finditer(r'<tr class="tx-row[^"]*" data-outcome="([A-Z_]+)".*?>(.*?)</tr>', body, re.S)]
++
++
++def test_a_bound_tag_whose_two_reads_did_not_pair_is_a_half_crossing_not_an_unregistered_tag():
++    html = reader_page([
++        read("A-out", "HALF_CROSSING", reader_name="C1C4", observed_at="2026-11-24T11:50:41.823Z", half_side="OUTER", other_delta_ms=-31693),
++        read("A-in", "HALF_CROSSING", half_side="INNER", other_delta_ms=31693)])
++    found = rows(html)
++    assert [o for o, _ in found] == ["HALF_CROSSING", "HALF_CROSSING"]
++    assert "Unregistered Tag Read" not in html and "Alert Raised" not in html
++    inner_text, outer_text = found[1][1], found[0][1]
++    assert "Half crossing, waiting for the outer reader" in inner_text and "The outer reader saw this tag 31.7 s later" in inner_text
++    assert "Half crossing, waiting for the inner reader" in outer_text and "The inner reader saw this tag 31.7 s earlier" in outer_text
++    assert "longer than the 15 s pairing window" in inner_text and "no movement was recorded" in inner_text
++    assert "COW-T-1" in inner_text and "Tag: 042FAC02AD1490" in inner_text          # the cow is named, so the binding is visible
++    assert "Waiting for the other reader" in inner_text
++
++
++def test_the_hint_to_raise_the_window_is_only_for_people_who_may_change_it():
++    half = [read("A-in", "HALF_CROSSING", half_side="INNER", other_delta_ms=31693)]
++    assert "raise the window under" in reader_page(half, role="FARM_MANAGER")
++    assert "raise the window under" in reader_page(half, role="SYSTEM_ADMIN")
++    assert "raise the window under" not in reader_page(half, role="VETERINARIAN")
++
++
++def test_a_gap_inside_the_window_is_not_blamed_on_the_window():
++    # window widened after the reads: they are still unpaired, but "longer than the window" would be wrong now
++    html = reader_page([read("A-in", "HALF_CROSSING", half_side="INNER", other_delta_ms=31693)], pair_window_ms=60000)
++    assert "The outer reader saw this tag 31.7 s later" in html and "longer than" not in html
++
++
++def test_a_read_that_is_still_waiting_says_which_reader_and_for_how_long():
++    html = reader_page([read("A-in", "HALF_CROSSING", half_side="OUTER", other_delta_ms=None)], pair_window_ms=45000)
++    assert "waiting for the inner reader" in html
++    assert "has not seen this tag within the 45 s pairing window" in html
++
++
++def test_both_reads_of_a_completed_crossing_are_counted_and_neither_is_flagged():
++    # the earlier read is movements.first_event_id, the later one movements.source_event_id
++    html = reader_page([
++        read("B-out", "PASSAGE", reader_name="C1C4", movement_id="M-1", direction="OUT"),
++        read("B-in", "CROSSING_FIRST", direction="OUT")])
++    found = dict(rows(html))
++    assert "Passage OUT" in found["PASSAGE"] and "Success" in found["PASSAGE"]
++    assert "First read of a crossing (OUT)" in found["CROSSING_FIRST"] and "Counted with the passage" in found["CROSSING_FIRST"]
++    assert "Unregistered" not in html and "Alert Raised" not in html
++
++
++def test_a_tag_that_is_bound_to_no_animal_is_still_reported_as_unregistered():
++    html = reader_page([read("D", "UNREGISTERED_TAG", animal_id=None, card_uuid="04FFFFFFFFFFFF")])
++    text = dict(rows(html))["UNREGISTERED_TAG"]
++    assert "Unregistered Tag Read" in text and "Tag: 04FFFFFFFFFFFF" in text and "Alert Raised" in text
++
++
++def test_repeat_reads_copies_usb_reads_and_heartbeats_each_get_their_own_label():
++    html = reader_page([
++        read("C", "NO_MOVEMENT"),
++        read("E", "COPY", duplicate_of="B-in", read_source="LOCAL_USB", source_device="usb-1"),
++        read("F", "USB_UNMAPPED", card_uuid=None, animal_id=None, event_class="LOCAL_UNMAPPED", credential_identifier="318567",
++             read_source="LOCAL_USB", source_device="usb-1"),
++        read("G", "SYSTEM", card_uuid=None, animal_id=None, gate_action="READER_HEARTBEAT", event_class="READER_STATUS")])
++    found = dict(rows(html))
++    assert "Repeat read, no new movement" in found["NO_MOVEMENT"] and "Not counted" in found["NO_MOVEMENT"]
++    assert "Second copy of a tap already counted" in found["COPY"] and "Copy, not counted" in found["COPY"] and "USB" in found["COPY"]
++    assert "credential 318567 matches no card" in found["USB_UNMAPPED"] and "Alert Raised" in found["USB_UNMAPPED"]
++    assert "READER_HEARTBEAT" in found["SYSTEM"] and "Success" in found["SYSTEM"]
++
++
++def test_the_filter_still_sorts_rows_into_gate_events_and_system_events():
++    html = reader_page([read("A", "HALF_CROSSING", half_side="INNER"), read("B", "PASSAGE", movement_id="M"), read("C", "COPY"),
++                        read("D", "UNREGISTERED_TAG", animal_id=None), read("G", "SYSTEM", card_uuid=None, animal_id=None)])
++    types = re.findall(r'data-outcome="([A-Z_]+)"\s+data-type="([A-Z]+)"', html)
++    assert dict(types) == {"HALF_CROSSING": "PASSAGE", "PASSAGE": "PASSAGE", "COPY": "SYSTEM", "UNREGISTERED_TAG": "ANOMALY", "SYSTEM": "SYSTEM"}
++
++
++def test_a_backend_that_does_not_send_the_outcome_never_calls_a_registered_tag_unregistered():
++    old = lambda **kw: {k: v for k, v in read("X", None, **kw).items() if k not in ("outcome", "half_side", "other_delta_ms", "event_class", "duplicate_of")}
++    html = reader_page([old(movement_id="M-1", direction="IN"), old(), old(card_uuid=None, animal_id=None, gate_action="READER_HEARTBEAT")],
++                       pair_window_ms=None)
++    found = rows(html)
++    assert [o for o, _ in found] == ["PASSAGE", "READ", "SYSTEM"]
++    assert "Passage IN" in found[0][1] and "Tag read" in found[1][1] and "READER_HEARTBEAT" in found[2][1]
++    assert "Unregistered" not in html and "Alert Raised" not in html
++
++
++def test_text_from_a_tag_or_a_reader_is_never_run():
++    html = reader_page([read("A", "UNREGISTERED_TAG", animal_id=None, card_uuid="<script>alert(1)</script>")])
++    assert "<script>alert(1)" not in html and "&lt;script&gt;alert(1)&lt;/script&gt;" in html
++
++
++def test_the_header_and_the_form_show_the_pairing_window_in_seconds():
++    html = reader_page([], pair_window_ms=31693, repeat_debounce_ms=2500)
++    assert "pairs reads within 31.693 s" in html
++    assert re.search(r'name="pair_window_s"[^>]*value="31.693"', html)
++    assert re.search(r'name="repeat_debounce_s"[^>]*value="2.5"', html)
++    default = reader_page([])
++    assert "pairs reads within 15 s" in default and re.search(r'name="pair_window_s"[^>]*value="15"', default)
++    assert re.search(r'name="repeat_debounce_s"[^>]*value="3"', default)
++    # a backend that does not send the settings yet still gets the defaults, not an empty box
++    assert re.search(r'name="pair_window_s"[^>]*value="15"', reader_page([], pair_window_ms=None, repeat_debounce_ms=None))
++
++
++# ---- the seconds the form is typed in ------------------------------------------------------------------------------
++@pytest.mark.parametrize("text,ms", [("15", 15000), ("31.7", 31700), ("0,5", 500), (" 60 ", 60000), ("1e1", 10000),
++                                     ("0.0004", 0), ("", None), ("   ", None), (None, None)])
++def test_seconds_become_milliseconds_and_empty_means_not_sent(text, ms):
++    assert main.seconds_to_ms(text, "The pairing window") == ms
++
++
++@pytest.mark.parametrize("text", ["abc", "nan", "inf", "-inf", "12 s"])
++def test_a_value_that_is_not_a_number_is_refused_with_a_message(text):
++    with pytest.raises(ValueError) as e:
++        main.seconds_to_ms(text, "The pairing window")
++    assert "The pairing window must be a number of seconds" in str(e.value)
++
++
++class ReaderBackend(BaseHTTPRequestHandler):
++    puts, page = [], {"reader": READER, "transactions": []}
++    answer = (200, {"status": "UPDATED"})
++
++    def log_message(self, *a):
++        pass
++
++    def _send(self, code, body):
++        raw = json.dumps(body).encode()
++        self.send_response(code)
++        self.send_header("Content-Type", "application/json")
++        self.send_header("Content-Length", str(len(raw)))
++        self.end_headers()
++        self.wfile.write(raw)
++
++    def do_GET(self):
++        if self.path.startswith("/api/v1/readers/GATE-T-1"):
++            self._send(200, ReaderBackend.page)
++        elif self.path.startswith("/api/v1/barns"):
++            self._send(200, [{"barnId": "BARN-DL-01", "code": "DL-01", "farmId": "FARM-1"}])
++        else:
++            self._send(404, {})
++
++    def do_PUT(self):
++        ReaderBackend.puts.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
++        self._send(*ReaderBackend.answer)
++
++
++@pytest.fixture
++def reader_portal(monkeypatch):
++    server = ThreadingHTTPServer(("127.0.0.1", 0), ReaderBackend)
++    threading.Thread(target=server.serve_forever, daemon=True).start()
++    monkeypatch.setattr(main, "BACKEND_BASE_URL", f"http://127.0.0.1:{server.server_port}/api/v1")
++    main.app.dependency_overrides[main.get_current_user] = lambda: {"username": "admin", "role": "SYSTEM_ADMIN", "token": "t"}
++    ReaderBackend.puts = []
++    ReaderBackend.answer = (200, {"status": "UPDATED"})
++    ReaderBackend.page = {"reader": READER, "transactions": [read("A-in", "HALF_CROSSING", half_side="INNER", other_delta_ms=31693)]}
++    yield TestClient(main.app, follow_redirects=False)
++    main.app.dependency_overrides.clear()
++    server.shutdown()
++
++
++FORM = {"barn_id": "BARN-DL-01", "label": "Test pair", "direction_mode": "BIDIRECTIONAL", "reader_name": "0ED4",
++        "outer_reader_name": "C1C4", "firmware_version": "1.0"}
++
++
++def test_the_reader_page_opens_and_explains_the_half_crossing(reader_portal):
++    r = reader_portal.get("/readers/GATE-T-1")
++    assert r.status_code == 200 and "Half crossing, waiting for the outer reader" in r.text and "Unregistered Tag Read" not in r.text
++
++
++def test_saving_a_longer_window_sends_milliseconds(reader_portal):
++    r = reader_portal.post("/readers/GATE-T-1/update", data=dict(FORM, pair_window_s="60", repeat_debounce_s="3"))
++    assert r.status_code == 303 and "notice=" in r.headers["location"]
++    assert ReaderBackend.puts == [{"barnId": "BARN-DL-01", "label": "Test pair", "directionMode": "BIDIRECTIONAL", "firmwareVersion": "1.0",
++                                   "readerName": "0ED4", "outerReaderName": "C1C4", "pairWindowMs": 60000, "repeatDebounceMs": 3000}]
++
++
++def test_a_form_without_the_timing_fields_leaves_them_alone(reader_portal):
++    reader_portal.post("/readers/GATE-T-1/update", data=FORM)
++    assert "pairWindowMs" not in ReaderBackend.puts[0] and "repeatDebounceMs" not in ReaderBackend.puts[0]
++
++
++def test_a_window_that_is_not_a_number_is_refused_before_anything_is_sent(reader_portal):
++    r = reader_portal.post("/readers/GATE-T-1/update", data=dict(FORM, pair_window_s="a minute"))
++    assert r.status_code == 303 and "problem=" in r.headers["location"] and "number%20of%20seconds" in r.headers["location"]
++    assert ReaderBackend.puts == []
++
++
++def test_the_reason_a_window_is_refused_by_the_backend_is_shown(reader_portal):
++    ReaderBackend.answer = (400, {"error": "The pairing window must be between 1 s and 300 s (it was 600 s)."})
++    r = reader_portal.post("/readers/GATE-T-1/update", data=dict(FORM, pair_window_s="600"))
++    assert r.status_code == 303 and "problem=" in r.headers["location"] and "between%201%20s%20and%20300%20s" in r.headers["location"]

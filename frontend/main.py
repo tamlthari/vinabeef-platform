@@ -265,6 +265,23 @@ def flash_header(message: str, kind: str = "ok") -> dict:
     return {"HX-Trigger": json.dumps({"flash": {"message": message, "kind": kind}})}
 
 
+def seconds_to_ms(text, label: str):
+    """A form field in seconds ("31.7", "60") becomes whole milliseconds. Empty or missing means "not sent" (None).
+
+    Anything that is not a finite number raises ValueError with a message that can be shown to the person. The
+    backend checks the allowed range and says what it is.
+    """
+    if text is None or not str(text).strip():
+        return None
+    try:
+        value = float(str(text).strip().replace(",", "."))
+    except ValueError:
+        raise ValueError(f"{label} must be a number of seconds (you entered '{str(text).strip()[:20]}').")
+    if not math.isfinite(value):
+        raise ValueError(f"{label} must be a number of seconds.")
+    return int(round(value * 1000))
+
+
 def redirect_with(path: str, notice: str = "", problem: str = "") -> RedirectResponse:
     """Redirect after a form post; base.html shows `notice` (green) or `problem` (red) above the page."""
     params = []
@@ -1325,12 +1342,23 @@ async def reader_update_action(
     form = await request.form()
     outer_reader_name = form.get("outer_reader_name")
 
+    # the pairing window and the repeat-read time are typed in seconds; the backend stores milliseconds
+    try:
+        pair_window_ms = seconds_to_ms(form.get("pair_window_s"), "The pairing window")
+        repeat_debounce_ms = seconds_to_ms(form.get("repeat_debounce_s"), "The repeat-read time")
+    except ValueError as exc:
+        return redirect_with(f"/readers/{gate_id}", problem=str(exc))
+
     payload = {
         "barnId": barn_id,
         "label": label,
         "directionMode": direction_mode,
         "firmwareVersion": firmware_version
     }
+    if pair_window_ms is not None:
+        payload["pairWindowMs"] = pair_window_ms
+    if repeat_debounce_ms is not None:
+        payload["repeatDebounceMs"] = repeat_debounce_ms
     if reader_name.strip():
         payload["readerName"] = reader_name.strip()
     if outer_reader_name is not None:

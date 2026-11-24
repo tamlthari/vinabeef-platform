@@ -51,7 +51,7 @@
                     which decides the direction. It applies again if that pair is removed.
                     {% elif reader.direction_mode == 'IN_ONLY' %}every read = animal returning
                     {% elif reader.direction_mode == 'OUT_ONLY' %}every read = animal out to pasture
-                    {% elif reader.outer_reader_name %}delta time: inner {{ reader.reader_name }} / outer {{ reader.outer_reader_name }}
+                    {% elif reader.outer_reader_name %}delta time: inner {{ reader.reader_name }} / outer {{ reader.outer_reader_name }}, pairs reads within {{ '%g' | format((reader.pair_window_ms | default(15000, true)) / 1000) }} s
                     {% else %}presence toggle (single reader){% endif %}
                 </div>
             </div>
@@ -114,21 +114,47 @@
                         </tr>
                     </thead>
                     <tbody id="tx-tbody" class="divide-y divide-gray-100">
+                        {% set window_ms = reader.pair_window_ms | default(15000, true) %}
                         {% for tx in transactions %}
-                        <tr class="tx-row hover:bg-gray-50 transition" data-type="{{ 'PASSAGE' if tx.movement_id else ('SYSTEM' if tx.duplicate_of else ('ANOMALY' if (tx.card_uuid or tx.event_class == 'LOCAL_UNMAPPED') else 'SYSTEM')) }}">
+                        {# what became of this read: the backend sends "outcome"; an older backend only sends movement_id #}
+                        {% set outcome = tx.outcome or ('PASSAGE' if tx.movement_id else ('READ' if tx.card_uuid else 'SYSTEM')) %}
+                        {% set other_side = 'outer' if tx.half_side == 'INNER' else 'inner' %}
+                        <tr class="tx-row hover:bg-gray-50 transition" data-outcome="{{ outcome }}"
+                            data-type="{{ 'SYSTEM' if outcome in ('SYSTEM', 'COPY') else ('ANOMALY' if outcome in ('UNREGISTERED_TAG', 'USB_UNMAPPED') else 'PASSAGE') }}">
                             <td class="py-3.5 px-3 font-medium text-gray-900">
-                                {% if tx.movement_id %}
+                                {% if outcome == 'PASSAGE' %}
                                     Passage {{ tx.direction }}
-                                {% elif tx.duplicate_of %}
+                                {% elif outcome == 'CROSSING_FIRST' %}
+                                    First read of a crossing ({{ tx.direction }})
+                                {% elif outcome == 'HALF_CROSSING' %}
+                                    Half crossing, waiting for the {{ other_side }} reader
+                                {% elif outcome == 'COPY' %}
                                     Second copy of a tap already counted
-                                {% elif tx.event_class == 'LOCAL_UNMAPPED' %}
+                                {% elif outcome == 'USB_UNMAPPED' %}
                                     USB read, credential {{ tx.credential_identifier }} matches no card
-                                {% elif tx.card_uuid %}
+                                {% elif outcome == 'UNREGISTERED_TAG' %}
                                     Unregistered Tag Read
+                                {% elif outcome == 'NO_MOVEMENT' %}
+                                    Repeat read, no new movement
+                                {% elif outcome == 'READ' %}
+                                    Tag read
                                 {% else %}
                                     {{ tx.gate_action or 'READER_HEARTBEAT' }}
                                 {% endif %}
-                                {% if tx.read_source == 'LOCAL_USB' %}<span class="ml-1 px-1.5 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200 text-[10px] font-semibold" title="Read by a USB reader on the barn gateway. The time is the gateway's clock.">USB{% if tx.source_device %} · {{ tx.source_device }}{% endif %}</span>{% endif %}
+                                {% if tx.read_source == 'LOCAL_USB' %}<span class="ml-1 px-1.5 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200 text-[10px] font-semibold" title="Read by a USB reader on the barn gateway. The time is the gateway's clock.">USB{% if tx.source_device %} &middot; {{ tx.source_device }}{% endif %}</span>{% endif %}
+                                {% if outcome == 'HALF_CROSSING' %}
+                                <div class="half-crossing-note mt-1 max-w-md font-normal text-[11px] text-gray-500">
+                                    {% if tx.other_delta_ms is number %}
+                                        The {{ other_side }} reader saw this tag {{ '%.1f' | format((tx.other_delta_ms | abs) / 1000) }} s {{ 'later' if tx.other_delta_ms > 0 else 'earlier' }}.
+                                        {% if (tx.other_delta_ms | abs) > window_ms %}
+                                            That is longer than the {{ '%g' | format(window_ms / 1000) }} s pairing window, so the two reads were not paired and no movement was recorded.
+                                            {% if can_manage %}For a normal crossing, raise the window under <a href="#" onclick="switchReaderTab('config'); return false;" class="text-blue-600 hover:underline">Reader Management</a>.{% endif %}
+                                        {% endif %}
+                                    {% else %}
+                                        The {{ other_side }} reader has not seen this tag within the {{ '%g' | format(window_ms / 1000) }} s pairing window.
+                                    {% endif %}
+                                </div>
+                                {% endif %}
                             </td>
                             <td class="py-3.5 px-3">
                                 {% if tx.animal_id %}
@@ -136,6 +162,7 @@
                                     <span class="w-4 h-4 rounded-full bg-gray-100 text-gray-500 inline-flex items-center justify-center text-[10px] font-serif">i</span>
                                     <span>{{ tx.animal_id }}</span>
                                 </a>
+                                {% if tx.card_uuid %}<div class="mt-0.5 font-mono text-[10px] text-gray-400">Tag: {{ tx.card_uuid }}</div>{% endif %}
                                 {% elif tx.card_uuid %}
                                 <span class="font-mono text-amber-700 text-[11px]">Tag: {{ tx.card_uuid }}</span>
                                 {% else %}
@@ -144,15 +171,30 @@
                             </td>
                             <td class="py-3.5 px-3 font-mono text-[11px] text-gray-500">{{ tx.observed_at }}</td>
                             <td class="py-3.5 px-3 text-right">
-                                {% if tx.duplicate_of %}
+                                {% if outcome == 'COPY' %}
                                 <span class="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-sky-50 text-sky-700 border border-sky-200" title="The same tap was already counted from the other route. Kept as evidence.">
                                     <span>=</span>
                                     <span>Copy, not counted</span>
                                 </span>
-                                {% elif tx.movement_id or (not tx.card_uuid and tx.event_class != 'LOCAL_UNMAPPED') %}
+                                {% elif outcome in ('PASSAGE', 'SYSTEM') %}
                                 <span class="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
                                     <span>&#10003;</span>
                                     <span>Success</span>
+                                </span>
+                                {% elif outcome == 'CROSSING_FIRST' %}
+                                <span class="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200" title="This read started a crossing that the other reader completed. It is counted once, with that passage.">
+                                    <span>&#10003;</span>
+                                    <span>Counted with the passage</span>
+                                </span>
+                                {% elif outcome == 'HALF_CROSSING' %}
+                                <span class="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200" title="The tag is registered. A movement is recorded when the other reader sees it too.">
+                                    <span>&hellip;</span>
+                                    <span>Waiting for the other reader</span>
+                                </span>
+                                {% elif outcome in ('NO_MOVEMENT', 'READ') %}
+                                <span class="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-gray-50 text-gray-600 border border-gray-200" title="The tag is registered. This read made no movement: it repeats a read that was already counted, or the other reader never saw the tag.">
+                                    <span>&ndash;</span>
+                                    <span>Not counted</span>
                                 </span>
                                 {% else %}
                                 <span class="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">
@@ -216,6 +258,22 @@
                     <input type="text" name="outer_reader_name" id="edit-outer-reader" value="{{ reader.outer_reader_name or '' }}" placeholder="none (single reader)"
                            class="w-full border border-gray-300 rounded px-3 py-2 font-mono focus:outline-none focus:border-blue-500">
                     <p class="text-[11px] text-gray-400 mt-1">Bidirectional gates only. Empty = single reader.</p>
+                </div>
+            </div>
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <label class="block font-semibold text-gray-700 mb-1">Pairing window (seconds)</label>
+                    <input type="number" name="pair_window_s" id="edit-pair-window" min="1" max="300" step="any"
+                           value="{{ '%g' | format((reader.pair_window_ms | default(15000, true)) / 1000) }}"
+                           class="w-full border border-gray-300 rounded px-3 py-2 font-mono focus:outline-none focus:border-blue-500">
+                    <p class="text-[11px] text-gray-400 mt-1">Longest time between the inner and the outer read that still counts as one crossing (1 to 300, default 15). Only used by a gate with two readers. An animal that stops between the readers needs a longer window.</p>
+                </div>
+                <div>
+                    <label class="block font-semibold text-gray-700 mb-1">Repeat-read time (seconds)</label>
+                    <input type="number" name="repeat_debounce_s" id="edit-repeat-time" min="0.5" max="60" step="any"
+                           value="{{ '%g' | format((reader.repeat_debounce_ms | default(3000, true)) / 1000) }}"
+                           class="w-full border border-gray-300 rounded px-3 py-2 font-mono focus:outline-none focus:border-blue-500">
+                    <p class="text-[11px] text-gray-400 mt-1">Reads of one tag at one reader closer together than this count as one tap (0.5 to 60, default 3). The pairing window cannot be shorter.</p>
                 </div>
             </div>
             <div>
