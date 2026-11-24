@@ -20,6 +20,7 @@ MQTT_CLIENT_ID=Web_Edge_barn1
 # EDGE_BIND_HOST=0.0.0.0               # LAN address for the HTTP intake and /status
 # EDGE_BIND_PORT=8090
 # EDGE_INGEST_TOKEN=change-me          # if set, POST needs the header  X-Edge-Token: change-me
+# EDGE_CONSOLE_TOKEN=change-me         # password for the read-only web console (http://<gateway>:8090/). Empty = open to the barn LAN
 # MQTT_CLEAN_SESSION=true              # false asks the broker to keep messages while this gateway is off
 # MQTT_QOS=1
 # MQTT_TLS_INSECURE=true               # the Safetrust demo broker needs this; use false with a real CA
@@ -36,6 +37,7 @@ MQTT_CLIENT_ID=Web_Edge_barn1
 # LOCAL_INPUTS=kbd:/dev/input/event5=DrC0F8,kbd:/dev/input/event6=DrC1C4
 # EDGE_GATEWAY_NO=1                    # 1..99, unique per gateway: keeps the negative EVENT_KEYs of USB swipes apart
 # LOCAL_READERS=DrC0F8,DrC1C4          # readers POST /local-swipe may name (the inputs above are added automatically)
+# LOCAL_CREDENTIAL_MAP=36=042FAC02AD1490,1005=04B86592C21290,35=04143802F32290,38=044E6602AD1490   # the card UUID of a typed number (demo, or numbers the cloud does not know yet)
 # LOCAL_HOLD_MS=6000                   # while MQTT is up, wait this long for the reader's own copy of the tap (0 = never wait)
 # LOCAL_MATCH_SKEW_MS=10000            # same tap = closer than this, on the reader's clock AND the gateway's
 # LOCAL_IDLE_FLUSH_MS=200              # a USB device that sends no Enter ends a swipe after this silence

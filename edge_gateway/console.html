@@ -1,0 +1,1055 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Edge gateway</title>
+<link rel="icon" href="data:,">
+<style nonce="{{NONCE}}">
+:root {
+  color-scheme: light;
+  --sans: "Avenir Next", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Roboto, "Noto Sans", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --ground: #E8ECE9;
+  --panel: #F6F8F6;
+  --ink: #15221D;
+  --ink2: #4E5E57;
+  --line: #CBD4CF;
+  --line-strong: #778A81;
+  --hover: #EDF1EE;
+  --tag: #F0BE1E;
+  --tag-ink: #3A2C00;
+  --ok: #1E7B4B;
+  --warn: #965709;
+  --bad: #B42318;
+  --idle: #5A6B63;
+  --hero: #12261E;
+  --hero-line: #2F4B3F;
+  --hero-ink: #EAF2EE;
+  --hero-ink2: #A9BBB2;
+  --ok-hero: #62D394;
+  --warn-hero: #F2A23A;
+  --bad-hero: #FF8E7F;
+  --idle-hero: #8FA59A;
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --ground: #0C1511;
+    --panel: #15211B;
+    --ink: #E6EEE9;
+    --ink2: #A5B6AD;
+    --line: #2A3A32;
+    --line-strong: #5F7A6E;
+    --hover: #1B2A23;
+    --ok: #4CC98A;
+    --warn: #F0A23B;
+    --bad: #FF8B7D;
+    --idle: #8EA096;
+    --hero: #07100C;
+    --hero-line: #24382F;
+    --series-1: #3987e5;
+    --series-2: #d95926;
+  }
+}
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--ground); color: var(--ink); font: 15px/1.5 var(--sans); }
+h1, h2, h3, p, dl, dd, ol, ul { margin: 0; padding: 0; }
+ol, ul { list-style: none; }
+button, input, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.hero :focus-visible { outline-color: var(--hero-ink); }
+.sr-only { position: absolute; left: -9999px; top: 0; width: 1px; height: 1px; overflow: hidden; }
+.mono { font-family: var(--mono); font-size: 0.875em; overflow-wrap: anywhere; }
+.muted { color: var(--ink2); }
+.small { font-size: 0.8125rem; }
+.ic { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.tone-ok { color: var(--ok); }
+.tone-warn { color: var(--warn); }
+.tone-bad { color: var(--bad); }
+.tone-idle { color: var(--idle); }
+
+.page { max-width: 1040px; margin: 0 auto; padding: 0 20px 48px; }
+
+/* top bar */
+.top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 20px; padding: 18px 0 16px; }
+.top h1 { font-size: 1.0625rem; font-weight: 650; letter-spacing: 0.005em; }
+.top h1 span { font-weight: 400; color: var(--ink2); margin-left: 10px; }
+.top-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; color: var(--ink2); font-size: 0.875rem; }
+.live { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.live input { width: 16px; height: 16px; accent-color: var(--ink); margin: 0; }
+
+.btn { font-weight: 600; padding: 7px 14px; min-height: 36px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--panel); color: var(--ink); cursor: pointer; }
+.btn:hover:not([disabled]) { background: var(--hover); }
+.btn[disabled] { opacity: 0.55; cursor: default; }
+.btn--quiet { background: transparent; }
+.btn--tag { background: var(--tag); color: var(--tag-ink); border-color: transparent; min-height: 42px; padding: 9px 18px; }
+.btn--tag:hover:not([disabled]) { background: #F7CC47; }
+
+.banner { margin: 0 0 14px; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--bad); color: var(--ink); background: var(--panel); display: flex; gap: 10px; align-items: flex-start; }
+
+/* hero: the path from the readers to the cloud */
+.hero { background: var(--hero); color: var(--hero-ink); border: 1px solid var(--hero-line); border-radius: 16px; padding: 28px 28px 26px; }
+.hero-head { display: flex; align-items: center; gap: 12px; }
+.hero-head .ic { width: 28px; height: 28px; stroke-width: 1.8; }
+.hero h2 { font-size: clamp(1.4rem, 3.6vw, 2rem); line-height: 1.15; font-weight: 650; letter-spacing: -0.012em; }
+.hero-note { margin-top: 8px; max-width: 62ch; color: var(--hero-ink2); font-size: 1rem; }
+.hero .tone-ok { color: var(--ok-hero); }
+.hero .tone-warn { color: var(--warn-hero); }
+.hero .tone-bad { color: var(--bad-hero); }
+.hero .tone-idle { color: var(--idle-hero); }
+
+.path { display: flex; align-items: flex-start; margin: 30px 0 22px; }
+.stop { flex: none; display: grid; justify-items: center; text-align: center; width: 132px; }
+.node { width: 44px; height: 44px; border-radius: 11px; border: 1.5px solid var(--hero-line); display: grid; place-items: center; color: var(--hero-ink); }
+.node svg { width: 30px; height: 30px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.node--ok { border-color: var(--ok-hero); }
+.node--warn { border-color: var(--warn-hero); }
+.node--bad { border-color: var(--bad-hero); }
+.stop-name { display: block; margin-top: 8px; font-weight: 600; }
+.stop-sub { display: block; color: var(--hero-ink2); font-size: 0.8125rem; overflow-wrap: anywhere; }
+.seg { position: relative; flex: 1 1 60px; min-width: 36px; height: 0; margin-top: 21px; border-top: 2px solid currentColor; }
+.seg--dashed { border-top-style: dashed; }
+.seg--flow::after { content: ""; position: absolute; left: 0; right: 0; top: -5px; height: 8px;
+  background: radial-gradient(circle at 4px 4px, var(--tag) 0 2.3px, transparent 2.8px) 0 0 / 18px 8px repeat-x; animation: flow 1.1s linear infinite; }
+.cut { position: absolute; left: 50%; top: 0; transform: translate(-50%, -50%); padding: 0 5px; background: var(--hero); line-height: 0; }
+.cut svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+@keyframes flow { to { background-position: 18px 0; } }
+@keyframes flow-v { to { background-position: 0 18px; } }
+@media (prefers-reduced-motion: reduce) { .seg--flow::after { animation: none; } }
+
+.tags { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; margin-top: 12px; min-height: 17px; max-width: 128px; }
+.tag { position: relative; width: 11px; height: 15px; flex: none; border-radius: 2px 2px 4px 4px; background: var(--tag); }
+.tag::before { content: ""; position: absolute; left: 50%; top: 2px; width: 3px; height: 3px; margin-left: -1.5px; border-radius: 50%; background: var(--hero); }
+.tag--held { background: transparent; box-shadow: inset 0 0 0 1.5px var(--tag); }
+.tag--dead { background: var(--bad-hero); }
+.tags-more { align-self: center; font-size: 0.8125rem; color: var(--hero-ink2); margin-left: 2px; }
+.tags-key { margin-top: 6px; color: var(--hero-ink2); font-size: 0.8125rem; max-width: 160px; }
+
+
+@media (max-width: 640px) {
+  .hero { padding: 22px 18px 20px; }
+  .path { flex-direction: column; align-items: stretch; margin: 24px 0 20px; }
+  .stop { grid-template-columns: auto 1fr; justify-items: start; text-align: left; width: auto; column-gap: 14px; }
+  .stop .node { grid-row: 1 / span 4; }
+  .stop > :not(.node) { grid-column: 2; }
+  .stop-name { margin-top: 0; }
+  .tags { justify-content: flex-start; margin-top: 8px; max-width: none; }
+  .tags-key { max-width: none; }
+  .seg { flex: none; width: 0; min-width: 0; height: 34px; margin: 0 0 0 21px; border-top: 0; border-left: 2px solid currentColor; }
+  .seg--dashed { border-left-style: dashed; }
+  .seg--flow::after { left: -5px; right: auto; top: 0; bottom: 0; width: 8px; height: auto;
+    background: radial-gradient(circle at 4px 4px, var(--tag) 0 2.3px, transparent 2.8px) 0 0 / 8px 18px repeat-y; animation-name: flow-v; }
+  .cut { left: 0; top: 50%; transform: translate(-50%, -50%) rotate(90deg); }
+}
+
+/* what the cloud check found */
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+.probe { margin-top: 14px; padding: 16px 18px 14px; }
+.probe h3 { font-size: 1rem; font-weight: 650; }
+.steps { margin-top: 10px; }
+.steps li { display: grid; grid-template-columns: 20px 1fr auto; gap: 2px 10px; padding: 8px 0; border-top: 1px solid var(--line); align-items: start; }
+.steps li:first-child { border-top: 0; }
+.steps .ms { color: var(--ink2); font-variant-numeric: tabular-nums; font-size: 0.875rem; }
+.steps .why { grid-column: 2 / 4; color: var(--ink2); font-size: 0.875rem; overflow-wrap: anywhere; }
+.probe .hint { margin-top: 6px; padding-top: 12px; border-top: 1px solid var(--line); }
+
+/* the two connections: the cloud backend and the MQTT reader feed */
+.conns { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 14px; }
+.conn { padding: 18px 20px 16px; display: flex; flex-direction: column; min-width: 0; }
+.conn-head { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; }
+.conn-head > span:first-child .ic { width: 24px; height: 24px; stroke-width: 1.8; display: block; }
+.conn-title { min-width: 0; }
+.conn-title h2 { font-size: 1.0625rem; font-weight: 650; line-height: 1.25; }
+.conn-title p { font-size: 0.8125rem; overflow-wrap: anywhere; }
+.pill { --c: var(--idle); display: inline-flex; align-items: center; gap: 6px; padding: 3px 12px 3px 9px; border-radius: 999px;
+  border: 1.5px solid var(--c); color: var(--ink); font-weight: 650; font-size: 0.875rem; white-space: nowrap; }
+.pill .ic { width: 14px; height: 14px; color: var(--c); stroke-width: 2; }
+.pill--ok { --c: var(--ok); } .pill--warn { --c: var(--warn); } .pill--bad { --c: var(--bad); } .pill--idle { --c: var(--idle); }
+.conn-say { margin-top: 12px; }
+.conn-note { margin-top: 8px; display: flex; gap: 8px; align-items: flex-start; font-size: 0.9375rem; }
+.conn-note .ic { margin-top: 3px; }
+.kv { margin: 12px 0 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); column-gap: 18px; }
+.kv dt, .kv dd { padding: 9px 0; border-top: 1px solid var(--line); }
+.kv dt { color: var(--ink2); font-size: 0.8125rem; padding-top: 11px; }
+.kv dd { font-weight: 600; overflow-wrap: anywhere; }
+.kv dd small { display: block; font-weight: 400; color: var(--ink2); font-size: 0.8125rem; }
+.kv dd .mono { font-weight: 500; }
+.kv .tl { display: block; }
+.kv .tl + .tl { margin-top: 8px; }
+.conn-hint { display: block; margin-top: 4px; color: var(--ink2); font-size: 0.875rem; }
+.conn-foot { margin-top: auto; padding-top: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.conn-foot .small { flex: 1 1 200px; }
+@media (max-width: 860px) { .conns { grid-template-columns: 1fr; } }
+@media (max-width: 520px) { .conn-head { grid-template-columns: auto 1fr; } .conn-head .pill { grid-column: 2; justify-self: start; } }
+@media (max-width: 420px) { .kv { grid-template-columns: 1fr; } .kv dt { border-top: 1px solid var(--line); padding-bottom: 0; } .kv dd { border-top: 0; padding-top: 2px; } }
+
+/* sections */
+.section { margin-top: 44px; }
+.section > header { margin-bottom: 14px; }
+.section h2 { font-size: 1.25rem; font-weight: 650; letter-spacing: -0.005em; }
+.section .lede { margin-top: 4px; color: var(--ink2); max-width: 70ch; }
+.stale { opacity: 0.55; transition: opacity 0.15s; }
+
+/* forward store */
+.controls { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+.tabs { display: inline-flex; border: 1px solid var(--line-strong); border-radius: 8px; overflow: hidden; }
+.tabs button { border: 0; background: transparent; padding: 6px 12px; min-height: 34px; cursor: pointer; font-weight: 600; display: inline-flex; gap: 7px; align-items: baseline; }
+.tabs button + button { border-left: 1px solid var(--line-strong); }
+.tabs button:hover { background: var(--hover); }
+.tabs button[aria-pressed="true"] { background: var(--ink); color: var(--panel); }
+.tabs .n { font-weight: 400; font-variant-numeric: tabular-nums; opacity: 0.85; }
+.tabs :focus-visible { outline-offset: -3px; }
+.field { display: inline-flex; align-items: center; gap: 8px; color: var(--ink2); font-size: 0.875rem; }
+.field input, .field select { min-height: 34px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--panel); padding: 4px 10px; color: var(--ink); }
+.field input[type="search"] { width: min(196px, 60vw); }
+.controls .grow { flex: 1 1 0; }
+.tabhelp { padding: 10px 16px 0; color: var(--ink2); font-size: 0.875rem; }
+
+.tablewrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; font-weight: 600; color: var(--ink2); font-size: 0.8125rem; padding: 10px 14px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td { padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tbody tr { cursor: pointer; }
+tbody tr:hover { background: var(--hover); }
+tbody tr:last-child td { border-bottom: 0; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+td.c-time { white-space: nowrap; }
+.rowbtn { border: 0; background: none; padding: 0; text-align: left; cursor: pointer; font-weight: 600; text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
+.rowbtn:hover { text-decoration-color: currentColor; }
+.stat { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; white-space: nowrap; }
+.err { display: block; margin-top: 2px; color: var(--ink2); font-size: 0.8125rem; font-weight: 400; white-space: normal; overflow-wrap: anywhere; max-width: 34ch; }
+.empty { padding: 28px 18px 30px; color: var(--ink2); }
+.empty strong { display: block; color: var(--ink); font-size: 1rem; margin-bottom: 2px; }
+.pager { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--line); color: var(--ink2); font-size: 0.875rem; }
+.pager .btns { display: flex; gap: 8px; }
+.storefoot { margin-top: 10px; color: var(--ink2); font-size: 0.875rem; }
+
+@media (max-width: 520px) {
+  .tabs { display: flex; width: 100%; }
+  .tabs button { flex: 1; flex-direction: column; align-items: center; gap: 0; padding: 5px 4px; }
+}
+@media (max-width: 680px) {
+  thead { display: none; }
+  table, tbody { display: block; }
+  tbody tr { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "time stat" "src tries" "card card" "err err"; gap: 3px 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  tbody tr:last-child { border-bottom: 0; }
+  td { display: block; padding: 0; border: 0; }
+  td.c-time { white-space: normal; grid-area: time; } .c-stat { grid-area: stat; } .c-src { grid-area: src; } .c-tries { grid-area: tries; text-align: right; } .c-card { grid-area: card; }
+  .c-tries::before { content: "Tries "; color: var(--ink2); font-size: 0.8125rem; }
+  .c-stat { display: contents; }
+  .stat { grid-area: stat; justify-self: end; }
+  .err { grid-area: err; margin-top: 4px; }
+  .err { max-width: none; }
+}
+
+/* synchronization */
+.syncbox { padding: 16px 18px 18px; }
+.chart-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 16px; margin-bottom: 8px; }
+.chart-title { font-weight: 650; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 18px; color: var(--ink2); font-size: 0.875rem; }
+.legend span { display: inline-flex; align-items: center; gap: 7px; }
+.legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.legend .l1 { background: var(--series-1); } .legend .l2 { background: var(--series-2); }
+.chartbox { position: relative; }
+.chartbox svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chartbox:focus-visible { outline: 2px solid var(--ink); outline-offset: 4px; border-radius: 4px; }
+.chartbox .grid { stroke: var(--line); stroke-width: 1; shape-rendering: crispEdges; }
+.chartbox .axis { fill: var(--ink2); font-size: 11px; font-family: var(--sans); }
+.chartbox .bar1 { fill: var(--series-1); }
+.chartbox .bar2 { fill: var(--series-2); }
+.chartbox .band { fill: var(--line); opacity: 0; }
+.chartbox .band.on { opacity: 0.5; }
+.tip { position: absolute; top: 0; left: 0; z-index: 3; min-width: 150px; padding: 8px 10px; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 8px; pointer-events: none; font-size: 0.8125rem; box-shadow: 0 2px 10px rgb(0 0 0 / 0.14); }
+.tip .when { color: var(--ink2); margin-bottom: 4px; }
+.tip .row { display: flex; align-items: center; gap: 8px; }
+.tip .key { width: 10px; height: 3px; border-radius: 2px; flex: none; }
+.tip .key.k1 { background: var(--series-1); } .tip .key.k2 { background: var(--series-2); }
+.tip .val { font-weight: 700; font-size: 0.9375rem; min-width: 2ch; }
+.tip .nm { color: var(--ink2); }
+.tablescroll { max-height: 270px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+.tablescroll table { font-variant-numeric: tabular-nums; }
+.tablescroll th { position: sticky; top: 0; background: var(--panel); }
+.tablescroll td { cursor: default; padding: 6px 14px; }
+.tablescroll tr:hover { background: none; }
+.stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0 32px; margin-top: 18px; }
+.stats div { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; border-top: 1px solid var(--line); }
+.stats dt { color: var(--ink2); }
+.stats dd { font-weight: 650; font-variant-numeric: tabular-nums; }
+.usbnote { margin-top: 12px; color: var(--ink2); font-size: 0.875rem; }
+@media (max-width: 640px) { .stats { grid-template-columns: 1fr; } }
+
+.log { margin-top: 26px; }
+.log h3 { font-size: 1rem; font-weight: 650; }
+.log ol { margin-top: 6px; }
+.log li { display: grid; grid-template-columns: 92px 20px 1fr auto; gap: 2px 10px; padding: 8px 0; border-top: 1px solid var(--line); align-items: start; }
+.log .t { color: var(--ink2); font-variant-numeric: tabular-nums; font-size: 0.875rem; white-space: nowrap; }
+.log .x { color: var(--ink2); font-size: 0.8125rem; white-space: nowrap; }
+.log .txt { overflow-wrap: anywhere; }
+.log .more { margin-top: 8px; }
+@media (max-width: 560px) { .log li { grid-template-columns: 86px 20px 1fr; } .log .x { grid-column: 3; } }
+
+footer { margin-top: 40px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--ink2); font-size: 0.8125rem; display: grid; gap: 4px; }
+
+/* dialogs */
+dialog { border: 1px solid var(--line-strong); border-radius: 12px; padding: 0; background: var(--panel); color: var(--ink); width: min(660px, calc(100vw - 24px)); max-height: calc(100vh - 32px); }
+dialog::backdrop { background: rgb(6 14 10 / 0.6); }
+.dlg { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; max-height: calc(100vh - 34px); }
+.dlg-head { padding: 16px 20px 12px; border-bottom: 1px solid var(--line); }
+.dlg-head h2 { font-size: 1.125rem; font-weight: 650; overflow-wrap: anywhere; }
+.dlg-body { padding: 14px 20px; overflow: auto; }
+.dlg-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--line); }
+.kv { display: grid; grid-template-columns: 9.5em 1fr; gap: 6px 14px; margin-bottom: 14px; }
+.kv dt { color: var(--ink2); }
+.kv dd { overflow-wrap: anywhere; }
+pre { margin: 0; padding: 12px; background: var(--ground); border: 1px solid var(--line); border-radius: 8px; font: 12.5px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 38vh; overflow: auto; }
+.tokenform { display: grid; gap: 10px; }
+.tokenform input { min-height: 40px; border: 1px solid var(--line-strong); border-radius: 8px; padding: 6px 10px; background: var(--ground); }
+@media (max-width: 520px) { .kv { grid-template-columns: 1fr; gap: 0; } .kv dd { margin-bottom: 8px; } }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="top">
+    <h1 id="gw-name">Edge gateway<span id="gw-host"></span></h1>
+    <div class="top-tools">
+      <span id="updated" role="status"></span>
+      <label class="live"><input type="checkbox" id="live" checked> Update every 5 seconds</label>
+      <button class="btn btn--quiet" id="refresh" type="button">Refresh</button>
+      <button class="btn btn--quiet" id="signout" type="button" hidden>Sign out</button>
+    </div>
+  </header>
+
+  <div class="banner" id="banner" role="alert" hidden></div>
+
+  <main>
+    <section class="hero" aria-labelledby="link-title">
+      <div class="hero-head"><span id="hero-icon"></span><h2 id="link-title">Checking the link</h2></div>
+      <p class="hero-note" id="hero-note">Waiting for the first answer from this gateway.</p>
+      <div class="path" id="path" aria-label="Path from the readers through this gateway to the cloud"></div>
+    </section>
+
+    <section class="conns" aria-label="Connections">
+      <article class="panel conn" id="conn-cloud" aria-labelledby="cloud-title">
+        <header class="conn-head">
+          <span id="cloud-ic"></span>
+          <div class="conn-title"><h2 id="cloud-title">Cloud backend</h2><p class="mono muted" id="cloud-target"></p></div>
+          <span class="pill" id="cloud-pill"></span>
+        </header>
+        <p class="conn-say" id="cloud-say"></p>
+        <dl class="kv" id="cloud-kv"></dl>
+        <div class="conn-foot">
+          <button class="btn" id="probe-btn" type="button">Check connection</button>
+          <span class="muted small">Looks up the address, connects and asks the backend if it can take events. Changes nothing.</span>
+        </div>
+      </article>
+      <article class="panel conn" id="conn-mqtt" aria-labelledby="mqtt-title">
+        <header class="conn-head">
+          <span id="mqtt-ic"></span>
+          <div class="conn-title"><h2 id="mqtt-title">Reader feed (MQTT)</h2><p class="mono muted" id="mqtt-target"></p></div>
+          <span class="pill" id="mqtt-pill"></span>
+        </header>
+        <p class="conn-say" id="mqtt-say"></p>
+        <dl class="kv" id="mqtt-kv"></dl>
+        <div class="conn-foot" id="mqtt-foot">
+          <button class="btn" id="mqtt-probe-btn" type="button">Check broker path</button>
+          <span class="muted small">Looks up the broker, connects and opens the MQTT endpoint. It cannot log in.</span>
+        </div>
+      </article>
+    </section>
+
+    <section class="panel probe" id="probe" aria-live="polite" hidden></section>
+
+    <section class="section" aria-labelledby="store-title">
+      <header>
+        <h2 id="store-title">Forward store</h2>
+        <p class="lede" id="store-lede">Events wait here until the cloud confirms them. Once confirmed they are removed from this list.</p>
+      </header>
+      <div class="panel">
+        <div class="controls">
+          <div class="tabs" role="group" aria-label="Show events" id="tabs"></div>
+          <label class="field">Search <input type="search" id="q" placeholder="Card, reader or number" autocomplete="off" spellcheck="false"></label>
+          <span class="grow"></span>
+          <label class="field">Order
+            <select id="order"><option value="oldest">Oldest first</option><option value="newest">Newest first</option></select>
+          </label>
+          <label class="field">Rows
+            <select id="limit"><option>25</option><option selected>50</option><option>100</option></select>
+          </label>
+        </div>
+        <p class="tabhelp" id="tabhelp"></p>
+        <div id="store-body">
+          <div class="tablewrap">
+            <table>
+              <thead><tr><th scope="col">Event time</th><th scope="col">State</th><th scope="col">Reader</th><th scope="col">Card or credential</th><th scope="col" class="num">Tries</th></tr></thead>
+              <tbody id="rows"></tbody>
+            </table>
+          </div>
+          <div class="empty" id="empty" hidden></div>
+        </div>
+        <div class="pager">
+          <span id="range" role="status"></span>
+          <span class="btns"><button class="btn" id="prev" type="button">Previous</button><button class="btn" id="next" type="button">Next</button></span>
+        </div>
+      </div>
+      <p class="storefoot" id="storefoot"></p>
+    </section>
+
+    <section class="section" aria-labelledby="sync-title">
+      <header>
+        <h2 id="sync-title">Synchronization</h2>
+        <p class="lede" id="sync-lede"></p>
+      </header>
+      <div class="panel syncbox">
+        <div class="chart-head">
+          <div>
+            <div class="chart-title" id="chart-title">Events per minute</div>
+          </div>
+          <div class="legend" aria-label="Legend"><span><i class="l1"></i>Received</span><span><i class="l2"></i>Sent to the cloud</span></div>
+          <button class="btn btn--quiet" id="chart-toggle" type="button" aria-pressed="false">Show as table</button>
+        </div>
+        <div id="chart-wrap" class="chartbox" tabindex="0" role="group" aria-label="Events per minute. Use the left and right arrow keys to read each minute."></div>
+        <div id="chart-table" hidden></div>
+        <dl class="stats" id="stats"></dl>
+        <p class="usbnote" id="usbnote" hidden></p>
+        <div class="log">
+          <h3>Recent activity</h3>
+          <ol id="log"></ol>
+          <button class="btn btn--quiet more" id="log-more" type="button" hidden>Show more</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span>This page only reads. It never changes, sends or deletes an event.</span>
+    <span id="open-note" hidden></span>
+  </footer>
+</div>
+
+<dialog id="event-dlg" aria-labelledby="event-title">
+  <div class="dlg">
+    <div class="dlg-head"><h2 id="event-title">Event</h2></div>
+    <div class="dlg-body" id="event-body"></div>
+    <div class="dlg-foot"><button class="btn" id="event-copy" type="button" hidden>Copy JSON</button><button class="btn" id="event-close" type="button">Close</button></div>
+  </div>
+</dialog>
+
+<dialog id="token-dlg" aria-labelledby="token-title">
+  <form class="dlg" id="token-form">
+    <div class="dlg-head"><h2 id="token-title">This console needs its password</h2></div>
+    <div class="dlg-body tokenform">
+      <p class="muted">Enter the console token set on this gateway (EDGE_CONSOLE_TOKEN). It is kept only while this browser tab is open.</p>
+      <label class="field">Token <input type="password" id="token-input" autocomplete="off" required></label>
+      <p class="tone-bad" id="token-error" hidden>That token was not accepted.</p>
+    </div>
+    <div class="dlg-foot"><button class="btn btn--tag" type="submit">Open console</button></div>
+  </form>
+</dialog>
+
+<script nonce="{{NONCE}}">
+(() => {
+'use strict';
+
+/* ---------- small helpers: every value from the gateway goes in as text, never as markup ---------- */
+const NS = 'http://www.w3.org/2000/svg';
+const $ = (sel, root = document) => root.querySelector(sel);
+
+function put(el, attrs, kids) {
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
+    if (k === 'class') el.setAttribute('class', v);
+    else if (k === 'text') el.textContent = v;
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v === true ? '' : v);
+  }
+  for (const kid of kids.flat(Infinity)) {
+    if (kid == null || kid === false) continue;
+    el.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
+  }
+  return el;
+}
+const h = (tag, attrs, ...kids) => put(document.createElement(tag), attrs, kids);
+const sv = (tag, attrs, ...kids) => put(document.createElementNS(NS, tag), attrs, kids);
+
+const ICONS = {
+  check: [['circle', { cx: 8, cy: 8, r: 6.6 }], ['path', { d: 'M4.9 8.3l2.1 2.1 4.1-4.4' }]],
+  alert: [['path', { d: 'M8 2L14.6 13.6H1.4Z' }], ['path', { d: 'M8 6.6v3.2M8 11.9v.1' }]],
+  cross: [['circle', { cx: 8, cy: 8, r: 6.6 }], ['path', { d: 'M5.7 5.7l4.6 4.6M10.3 5.7l-4.6 4.6' }]],
+  clock: [['circle', { cx: 8, cy: 8, r: 6.6 }], ['path', { d: 'M8 4.5V8l2.3 1.5' }]],
+  pause: [['circle', { cx: 8, cy: 8, r: 6.6 }], ['path', { d: 'M6.4 5.6v4.8M9.6 5.6v4.8' }]],
+  skip: [['circle', { cx: 8, cy: 8, r: 6.6 }], ['path', { d: 'M5.2 8h5.6' }]],
+  link: [['path', { d: 'M2.5 5.8h9.2L9.4 3.5M13.5 10.2H4.3l2.3 2.3' }]],
+};
+const icon = (name) => sv('svg', { class: 'ic', viewBox: '0 0 16 16', 'aria-hidden': 'true' }, ICONS[name].map(([t, a]) => sv(t, a)));
+
+const PICT = {
+  readers: [['rect', { x: 7, y: 11, width: 22, height: 17, rx: 3 }], ['path', { d: 'M13.5 20.5a6 6 0 0 1 9 0M10.6 17.4a10 10 0 0 1 14.8 0' }], ['circle', { cx: 18, cy: 24, r: 1 }], ['path', { d: 'M18 11V7' }]],
+  gateway: [['rect', { x: 5, y: 15, width: 26, height: 13, rx: 3 }], ['circle', { cx: 11, cy: 21.5, r: 1.2 }], ['circle', { cx: 16, cy: 21.5, r: 1.2 }], ['circle', { cx: 21, cy: 21.5, r: 1.2 }], ['path', { d: 'M25 15V8M25 8l2-2M25 8l-2-2' }]],
+  cloud: [['path', { d: 'M11 27h15a5.3 5.3 0 0 0 .6-10.5A7.6 7.6 0 0 0 12 15.4 6 6 0 0 0 11 27z' }]],
+};
+const pict = (name) => sv('svg', { viewBox: '0 0 36 36', 'aria-hidden': 'true' }, PICT[name].map(([t, a]) => sv(t, a)));
+
+const num = (n) => Number(n || 0).toLocaleString();
+const plural = (n, one, many) => `${num(n)} ${n === 1 ? one : many}`;
+function dur(s) {
+  s = Math.max(0, Math.round(s));
+  if (s < 60) return `${s} s`;
+  const m = Math.floor(s / 60);
+  if (s < 600) return `${m} min ${s % 60} s`;
+  if (s < 3600) return `${m} min`;
+  const hh = Math.floor(s / 3600);
+  if (s < 86400) return `${hh} h ${Math.floor((s % 3600) / 60)} min`;
+  return `${Math.floor(s / 86400)} d ${Math.floor((s % 86400) / 3600)} h`;
+}
+const ago = (s) => (s < 5 ? 'just now' : `${dur(s)} ago`);
+const clockTime = (ms, secs = true) => new Date(ms).toLocaleTimeString([], secs ? { hour: '2-digit', minute: '2-digit', second: '2-digit' } : { hour: '2-digit', minute: '2-digit' });
+function when(ms) {
+  const d = new Date(ms), t = new Date();
+  const same = d.getFullYear() === t.getFullYear() && d.getMonth() === t.getMonth() && d.getDate() === t.getDate();
+  return same ? clockTime(ms) : `${d.toLocaleDateString([], { day: 'numeric', month: 'short' })} ${clockTime(ms)}`;
+}
+const bytes = (n) => {
+  if (n == null) return '';
+  const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0, v = n;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)} ${u[i]}`;
+};
+
+/* ---------- state ---------- */
+const st = { ov: null, fetchedAt: 0, tab: 'ALL', q: '', order: 'oldest', limit: 50, offset: 0, queue: null, queueSig: '',
+  seq: 0, queueAt: 0, probe: null, probing: false, live: true, logAll: false, chartTable: false, authNeeded: false, error: null, tip: null, active: -1 };
+
+const TOKEN_KEY = 'edge-console-token';
+const tokenGet = () => { try { return sessionStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; } };
+const tokenSet = (v) => { try { v ? sessionStorage.setItem(TOKEN_KEY, v) : sessionStorage.removeItem(TOKEN_KEY); } catch { /* private mode */ } };
+
+class AuthError extends Error {}
+async function api(path, opts = {}) {
+  const token = tokenGet();
+  const res = await fetch(path, { method: opts.method || 'GET', headers: token ? { 'X-Edge-Token': token } : {}, cache: 'no-store', signal: opts.signal });
+  if (res.status === 401) throw new AuthError();
+  let body = null;
+  try { body = await res.json(); } catch { body = { error: `The gateway sent an unexpected answer (HTTP ${res.status}).` }; }
+  if (!res.ok) { const e = new Error(body.error || `HTTP ${res.status}`); e.status = res.status; e.body = body; throw e; }
+  return body;
+}
+
+/* ---------- link to the cloud ---------- */
+const LINK = {
+  ONLINE: { tone: 'ok', icon: 'check', head: 'Connected to the cloud', word: 'connected' },
+  DEGRADED: { tone: 'warn', icon: 'alert', head: 'The cloud is up but not accepting events', word: 'cloud unwell' },
+  OFFLINE: { tone: 'bad', icon: 'cross', head: 'No connection to the cloud', word: 'offline' },
+  UNKNOWN: { tone: 'idle', icon: 'clock', head: 'Checking the link', word: 'checking' },
+};
+
+function heroNote(ov) {
+  const { cloud, store } = ov, n = store.pending;
+  const kept = n === 0 ? 'No events are waiting.' : `${plural(n, 'event is', 'events are')} stored safely on this gateway.`;
+  switch (cloud.state) {
+    case 'ONLINE':
+      if (n === 0) return 'Nothing is waiting. New events go out within a second or two.';
+      return store.sendRatePerMin > 0 ? `Sending the ${plural(n, 'waiting event', 'waiting events')}, about ${num(store.sendRatePerMin)} a minute.` : `Sending the ${plural(n, 'waiting event', 'waiting events')}.`;
+    case 'DEGRADED':
+      return `The cloud answered, but it cannot take events right now. ${kept} They are sent in order when it recovers.`;
+    case 'OFFLINE':
+      return `This gateway cannot reach the cloud. ${kept} Nothing is lost: events are sent in order when the link returns.`;
+    default:
+      return 'This gateway has not reached the cloud yet since it started.';
+  }
+}
+
+function renderHero(ov) {
+  const meta = LINK[ov.cloud.state] || LINK.UNKNOWN;
+  $('#link-title').textContent = meta.head;
+  $('#hero-note').textContent = heroNote(ov);
+  const hi = $('#hero-icon'); hi.className = `tone-${meta.tone}`; hi.replaceChildren(icon(meta.icon));
+  document.title = `${ov.gateway.name}: ${meta.word}`;
+
+  const flowIn = ov.sync.perMinute.slice(-2).some((m) => m.received > 0);
+  const flowOut = ov.cloud.state === 'ONLINE' && (ov.store.sendRatePerMin > 0 || ov.store.pending > 0);
+  const mqtt = ov.mqtt;
+  const feedTone = !mqtt.configured ? 'idle' : mqtt.connected ? 'ok' : 'bad';
+  const feedText = !mqtt.configured ? 'HTTP and USB only' : mqtt.connected ? 'Reader feed connected' : 'Reader feed not connected';
+
+  const tags = [];
+  const room = 14;
+  let left = room;
+  for (const [count, cls] of [[ov.store.pending, ''], [ov.store.held, 'tag--held'], [ov.store.dead, 'tag--dead']]) {
+    const k = Math.min(count, left); left -= k;
+    for (let i = 0; i < k; i++) tags.push(h('span', { class: `tag ${cls}` }));
+  }
+  const over = ov.store.total - (room - left);
+  const keyParts = [];
+  if (ov.store.pending) keyParts.push(`${num(ov.store.pending)} waiting`);
+  if (ov.store.held) keyParts.push(`${num(ov.store.held)} held`);
+  if (ov.store.dead) keyParts.push(`${num(ov.store.dead)} refused`);
+
+  const seg = (tone, dashed, flow, cut) => h('div', { class: `seg tone-${tone}${dashed ? ' seg--dashed' : ''}${flow ? ' seg--flow' : ''}`, 'aria-hidden': 'true' },
+    cut ? h('span', { class: 'cut' }, sv('svg', { viewBox: '0 0 18 18' }, sv('path', { d: 'M5 13L13 5M3.5 9.5L9.5 3.5M8.5 14.5l6-6' }))) : null);
+
+  $('#path').replaceChildren(
+    h('div', { class: 'stop' }, h('span', { class: `node node--${feedTone === 'idle' ? '' : feedTone}` }, pict('readers')),
+      h('span', { class: 'stop-name', text: 'Readers' }), h('span', { class: 'stop-sub', text: feedText })),
+    seg(feedTone === 'bad' ? 'bad' : feedTone === 'ok' ? 'ok' : 'idle', feedTone === 'bad', flowIn && feedTone !== 'bad', feedTone === 'bad'),
+    h('div', { class: 'stop' }, h('span', { class: 'node' }, pict('gateway')),
+      h('span', { class: 'stop-name', text: 'This gateway' }), h('span', { class: 'stop-sub', text: ov.gateway.name }),
+      h('div', { class: 'tags', role: 'img', 'aria-label': keyParts.length ? `Stored on this gateway: ${keyParts.join(', ')}` : 'Nothing stored on this gateway' },
+        tags, over > 0 ? h('span', { class: 'tags-more', text: `+${num(over)}` }) : null),
+      keyParts.length ? h('div', { class: 'tags-key', text: keyParts.join(', ') }) : null),
+    seg(meta.tone, ov.cloud.state === 'OFFLINE', flowOut, ov.cloud.state === 'OFFLINE'),
+    h('div', { class: 'stop' }, h('span', { class: `node node--${meta.tone === 'idle' ? '' : meta.tone}` }, pict('cloud')),
+      h('span', { class: 'stop-name', text: 'Cloud' }), h('span', { class: 'stop-sub', text: ov.cloud.host || '' })),
+  );
+}
+
+/* clocks that tick between refreshes */
+function clock(kind, base) { const el = h('span', { class: 'clk' }); el.dataset.kind = kind; el.dataset.base = base; el.dataset.t0 = st.fetchedAt; paint(el); return el; }
+function paint(el) {
+  const base = Number(el.dataset.base), gone = (Date.now() - Number(el.dataset.t0)) / 1000;
+  if (el.dataset.kind === 'ago') el.textContent = ago(base + gone);
+  else if (el.dataset.kind === 'for') el.textContent = dur(base + gone);
+  else el.textContent = base - gone > 1 ? `in ${dur(base - gone)}` : 'any moment now';
+}
+function tickClocks() {
+  document.querySelectorAll('.clk').forEach(paint);
+  if (st.fetchedAt) {
+    const s = Math.round((Date.now() - st.fetchedAt) / 1000);
+    $('#updated').textContent = st.error ? `Last updated ${clockTime(st.fetchedAt)}` : (s < 3 ? 'Updated just now' : `Updated ${dur(s)} ago`);
+  }
+}
+
+const POINT = { ok: 'check', warn: 'alert', bad: 'cross', idle: 'clock' };
+const pill = (el, tone, word) => { el.className = `pill pill--${tone}`; el.replaceChildren(icon(POINT[tone]), word); };
+const cardHead = (id, tone, word, target) => {
+  const ic = $(`#${id}-ic`); ic.className = `tone-${tone}`; ic.replaceChildren(icon(POINT[tone]));
+  pill($(`#${id}-pill`), tone, word);
+  $(`#${id}-target`).textContent = target || '';
+};
+const row = (label, value, sub) => [h('dt', { text: label }), h('dd', null, value, sub ? h('small', null, sub) : null)];
+const note = (tone, text) => h('p', { class: 'conn-note' }, h('span', { class: `tone-${tone}` }, icon(tone === 'bad' ? 'cross' : 'alert')), h('span', { text }));
+
+/* "backend unreachable: ConnectTimeout" and the like, in words */
+function cloudReason(why) {
+  if (!why) return '';
+  let m = /^backend unreachable: (.+)$/.exec(why); if (m) return `no connection (${m[1]})`;
+  m = /^health returned (\d+)$/.exec(why); if (m) return `its health check returned HTTP ${m[1]}`;
+  m = /^post failed: (.+)$/.exec(why); if (m) return `sending failed (${m[1]})`;
+  return why;
+}
+
+function renderCloud(ov) {
+  const c = ov.cloud, p = c.lastProbe, waiting = ov.store.pending;
+  const word = { ONLINE: 'Online', DEGRADED: 'Degraded', OFFLINE: 'Offline', UNKNOWN: 'Checking' }[c.state] || 'Checking';
+  const tone = (LINK[c.state] || LINK.UNKNOWN).tone;
+  cardHead('cloud', tone, word, c.host);
+  const stored = waiting === 0 ? '' : ` ${plural(waiting, 'event waits', 'events wait')} on this gateway.`;
+  $('#cloud-say').textContent = {
+    ONLINE: 'The backend answers its health check and accepts events.',
+    DEGRADED: `The backend answers but cannot take events: ${cloudReason(c.why) || 'its health check failed'}. Events stay stored and are retried.${stored}`,
+    OFFLINE: `This gateway cannot reach the backend: ${cloudReason(c.why) || 'no answer'}.${stored} They are sent in order when the link returns.`,
+    UNKNOWN: 'No answer from the backend yet since this gateway started.',
+  }[c.state] || '';
+  const probeLine = !p ? 'No check yet' : p.ok ? `Passed in ${num(p.ms)} ms` : `Failed${p.http ? ` (HTTP ${p.http})` : p.error ? ` (${p.error})` : ''}`;
+  const next = c.state === 'ONLINE' || c.state === 'UNKNOWN' ? 'Not needed' : (c.nextAttemptInS == null ? 'Soon' : clock('down', c.nextAttemptInS));
+  $('#cloud-kv').replaceChildren(
+    ...row('Address', h('span', { class: 'mono', text: c.url })),
+    ...(c.state === 'UNKNOWN' ? row('Gateway running for', clock('for', ov.gateway.uptimeS))
+      : row(c.state === 'ONLINE' ? 'Online for' : `${word} for`, clock('for', c.sinceAgeS), `since ${when(c.sinceMs)}`)),
+    ...row('Last health check', probeLine, p ? clock('ago', p.ageS) : null),
+    ...row('Last event sent', c.lastSentAgeS == null ? 'None since start' : clock('ago', c.lastSentAgeS)),
+    ...row('Next try', next, c.failStreak ? `${plural(c.failStreak, 'failed try', 'failed tries')} in a row` : null),
+  );
+}
+
+function renderMqtt(ov) {
+  const m = ov.mqtt;
+  const flaky = m.state === 'CONNECTED' && m.warning;
+  const [tone, word] = {
+    NOT_CONFIGURED: ['idle', 'Not used'], CONNECTING: ['idle', 'Connecting'], CONNECTED: [flaky ? 'warn' : 'ok', 'Connected'],
+    DISCONNECTED: ['bad', 'Not connected'], REFUSED: ['bad', 'Login refused'],
+  }[m.state] || ['idle', 'Checking'];
+  cardHead('mqtt', tone, word, m.url || 'MQTT_URL is not set');
+  $('#mqtt-probe-btn').closest('.conn-foot').hidden = !m.configured;
+
+  const subs = m.topics || [];
+  const confirmed = subs.length > 0 && subs.every((t) => t.state === 'granted');
+  const tries = m.attempts ? ` (${plural(m.attempts, 'try', 'tries')} so far)` : '';
+  const say = {
+    NOT_CONFIGURED: 'MQTT_URL is not set, so this gateway takes reader events by HTTP and USB only.',
+    CONNECTING: `Trying to reach the broker${tries}.`,
+    CONNECTED: !subs.length ? 'Connected to the broker.' : confirmed ? 'Connected and subscribed. Reader events arrive as taps happen.' : 'Connected. Waiting for the broker to confirm the subscription.',
+    DISCONNECTED: `${m.why || 'The connection was lost.'} The gateway keeps retrying${tries}.`,
+    REFUSED: `${m.why || 'The broker refused the login.'}${tries}`,
+  }[m.state] || '';
+  const sayEl = $('#mqtt-say');
+  sayEl.replaceChildren(...[say, m.hint && (m.state === 'REFUSED' || m.state === 'DISCONNECTED') ? h('span', { class: 'conn-hint', text: m.hint }) : null, m.warning ? note('warn', m.warning) : null].filter(Boolean));
+
+  const topicLine = (t) => h('span', { class: 'mono', text: t.topic });
+  const topicSub = (t) => !m.connected ? 'subscribes when connected' : t.state === 'granted' ? `subscribed, QoS ${t.qos}` : t.state === 'refused' ? 'refused by the broker' : 'waiting for the broker';
+  const rows = [];
+  if (!m.configured) {
+    rows.push(...row('To turn on', 'Set MQTT_URL, MQTT_USERNAME, MQTT_PASSWORD and MQTT_TOPICS, then restart the gateway.'));
+  } else {
+    rows.push(...row('Broker', h('span', { class: 'mono', text: m.url }), `Client id ${m.clientId}`));
+    rows.push(...row(subs.length === 1 ? 'Topic' : 'Topics', subs.length ? h('span', null, ...subs.map((t) => h('span', { class: 'tl' }, topicLine(t), h('small', { text: topicSub(t) })))) : 'None: MQTT_TOPICS is empty'));
+    rows.push(...row(m.state === 'CONNECTED' ? 'Connected for' : m.state === 'CONNECTING' ? 'Trying for' : 'Not connected for', clock('for', m.sinceAgeS), `since ${when(m.sinceMs)}`));
+    rows.push(...row('Last message', m.lastMessageAgeS == null ? 'None yet' : clock('ago', m.lastMessageAgeS),
+      m.messages ? `${num(m.messages)} received, ${num(m.events)} ${m.events === 1 ? 'reader event' : 'reader events'}` : null));
+  }
+  rows.push(...row('USB swipes', m.holding ? `Wait up to ${dur(m.holdMs / 1000)} for the reader's own copy` : 'Queued at once',
+    m.holding ? null : m.configured ? 'No reader copy can arrive while the feed is down.' : 'There is no reader feed to wait for.'));
+  $('#mqtt-kv').replaceChildren(...rows);
+}
+
+function renderConnections(ov) { renderCloud(ov); renderMqtt(ov); }
+
+function renderProbe() {
+  const box = $('#probe');
+  if (st.probing) {
+    box.hidden = false;
+    box.replaceChildren(h('h3', { text: st.probing === 'mqtt' ? 'Checking the path to the broker…' : 'Checking the connection…' }), h('p', { class: 'muted', text: 'This takes a few seconds when the server does not answer.' }));
+    return;
+  }
+  const r = st.probe;
+  if (!r) { box.hidden = true; return; }
+  box.hidden = false;
+  if (r.error) { box.replaceChildren(h('h3', { text: 'The check did not run' }), h('p', { class: 'muted', text: r.error })); return; }
+  const what = r.target === 'mqtt' ? 'broker' : 'cloud';
+  const stepIcon = (s) => (s.ok === true ? (s.skipped ? ['skip', 'idle'] : ['check', 'ok']) : s.ok === false ? ['cross', 'bad'] : ['skip', 'idle']);
+  box.replaceChildren(
+    h('h3', { text: r.ok ? `The ${what} is reachable` : `The ${what} is not reachable` }),
+    h('p', { class: 'muted small', text: `Checked ${r.url} at ${clockTime(r.checkedAt)}, ${num(r.totalMs)} ms in total.` }),
+    h('ol', { class: 'steps' }, r.steps.map((s) => {
+      const [ic, tone] = stepIcon(s);
+      return h('li', null, h('span', { class: `tone-${tone}` }, icon(ic)), h('span', null, s.label), h('span', { class: 'ms', text: s.ok == null || s.skipped ? '' : `${num(s.ms)} ms` }),
+        s.error || s.detail ? h('span', { class: 'why', text: s.error || s.detail }) : null);
+    })),
+    h('p', { class: 'hint', text: r.hint }),
+  );
+}
+
+/* ---------- forward store ---------- */
+const TABS = [['ALL', 'All'], ['PENDING', 'Waiting'], ['HELD', 'Held'], ['DEAD', 'Refused']];
+const TAB_HELP = {
+  ALL: 'Everything still on this gateway.',
+  PENDING: 'These are sent to the cloud in this order, oldest first.',
+  HELD: 'USB swipes waiting a few seconds for the reader’s own copy of the same tap, so one tap is not counted twice.',
+  DEAD: 'The cloud refused these too many times. They are kept here and not retried.',
+};
+const STATE = { PENDING: ['clock', 'Waiting', 'idle'], HELD: ['pause', 'Held', 'warn'], DEAD: ['cross', 'Refused', 'bad'] };
+const KIND = { usb: 'USB swipe', card: 'Card read', reader: 'Reader status' };
+
+function renderTabs(ov) {
+  const counts = ov ? { ALL: ov.store.total, PENDING: ov.store.pending, HELD: ov.store.held, DEAD: ov.store.dead } : {};
+  const box = $('#tabs');
+  if (!box.children.length) {
+    for (const [key, label] of TABS) {
+      box.append(h('button', { type: 'button', 'data-tab': key, 'aria-pressed': 'false', onclick: () => { st.tab = key; st.offset = 0; syncTabs(); loadQueue(); } },
+        h('span', { text: label }), h('span', { class: 'n', 'data-n': key })));
+    }
+  }
+  box.querySelectorAll('[data-n]').forEach((el) => { el.textContent = counts[el.dataset.n] == null ? '' : num(counts[el.dataset.n]); });
+  syncTabs();
+}
+function syncTabs() {
+  $('#tabs').querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.tab === st.tab)));
+  $('#tabhelp').textContent = TAB_HELP[st.tab] + (st.q ? ' Search results change only when you press Refresh.' : '');
+}
+
+function renderStoreText(ov) {
+  const s = ov.store;
+  $('#store-lede').textContent = s.total === 0
+    ? 'Nothing is waiting. Events are removed from this list as soon as the cloud confirms them.'
+    : `${plural(s.pending, 'event is', 'events are')} waiting to be sent${s.held ? `, ${num(s.held)} held for a reader copy` : ''}${s.dead ? `, ${num(s.dead)} refused by the cloud` : ''}.${s.oldestPendingAgeS ? ` The oldest has waited ${dur(s.oldestPendingAgeS)}.` : ''}`;
+  const bits = [`Store file ${bytes(s.dbBytes + s.walBytes)}`, `${bytes(s.diskFreeBytes)} free of ${bytes(s.diskTotalBytes)} on this disk`, `${s.fillPct}% of the ${num(s.maxRows)} event limit used`];
+  if (s.emptyInS) bits.push(`at this speed it empties in about ${dur(s.emptyInS)}`);
+  $('#storefoot').textContent = `${bits.join('. ')}.`;
+}
+
+function rowsSig(q) { return JSON.stringify([q.total, q.offset, q.rows.map((r) => [r.id, r.status, r.attempts, r.lastError])]); }
+
+function renderQueue() {
+  const q = st.queue; if (!q) return;
+  const sig = rowsSig(q) + st.order + st.tab + st.q;
+  if (sig !== st.queueSig) {
+    st.queueSig = sig;
+    $('#rows').replaceChildren(...q.rows.map((r) => {
+      const [ic, label, tone] = STATE[r.status] || ['skip', r.status, 'idle'];
+      const open = () => openEvent(r.id);
+      return h('tr', { onclick: (e) => { if (e.target.closest('button') == null) open(); } },
+        h('td', { class: 'c-time' }, h('button', { class: 'rowbtn', type: 'button', onclick: open, 'aria-label': `Open event ${r.eventKey}, ${when(r.eventAt)}` }, when(r.eventAt)),
+          h('div', { class: 'muted small', text: ago(r.waitingS) })),
+        h('td', { class: 'c-stat' }, h('span', { class: 'stat' }, h('span', { class: `tone-${tone}` }, icon(ic)), label), r.lastError ? h('span', { class: 'err', text: r.lastError }) : null),
+        h('td', { class: 'c-src' }, h('div', { text: r.reader || 'Unknown reader' }), h('div', { class: 'muted small', text: KIND[r.kind] || '' })),
+        h('td', { class: 'c-card' }, (r.card || r.credential) ? h('span', { class: 'mono', text: r.card || r.credential }) : h('span', { class: 'muted', text: 'None' }),
+          r.card && r.credential ? h('div', { class: 'muted small', text: `Credential ${r.credential}` }) : null),
+        h('td', { class: 'num c-tries', text: String(r.attempts) }));
+    }));
+  }
+  const empty = $('#empty');
+  if (q.rows.length === 0) {
+    empty.hidden = false;
+    const none = st.q ? ['No events match your search.', 'Try a card number, a reader name or an event number.'] :
+      st.tab === 'ALL' ? ['Nothing is waiting.', 'Every event so far has been confirmed by the cloud.'] :
+      st.tab === 'PENDING' ? ['Nothing is waiting to be sent.', 'Every event so far has been confirmed by the cloud.'] :
+      st.tab === 'HELD' ? ['No swipes are being held.', 'USB swipes appear here for a few seconds when a reader feed is connected.'] :
+      ['No events were refused.', 'The cloud has accepted everything it was sent.'];
+    empty.replaceChildren(h('strong', { text: none[0] }), none[1]);
+  } else empty.hidden = true;
+  $('.tablewrap').hidden = q.rows.length === 0;
+  const from = q.total === 0 ? 0 : q.offset + 1, to = q.offset + q.rows.length;
+  $('#range').textContent = q.total === 0 ? 'No events' : `Showing ${num(from)} to ${num(to)} of ${num(q.total)}`;
+  $('#prev').disabled = q.offset <= 0;
+  $('#next').disabled = to >= q.total;
+}
+
+let queueCtl = null;
+async function loadQueue() {
+  const my = ++st.seq;
+  if (queueCtl) queueCtl.abort();
+  queueCtl = new AbortController();
+  const params = new URLSearchParams({ status: st.tab, order: st.order, limit: st.limit, offset: st.offset });
+  if (st.q) params.set('q', st.q);
+  $('#store-body').classList.add('stale');
+  try {
+    const q = await api(`/api/queue?${params}`, { signal: queueCtl.signal });
+    if (my !== st.seq) return;
+    if (q.rows.length === 0 && q.offset > 0 && q.total > 0) { st.offset = Math.floor((q.total - 1) / st.limit) * st.limit; return loadQueue(); }
+    st.queue = q; st.queueAt = Date.now(); renderQueue();
+  } catch (e) { if (e.name !== 'AbortError') handleError(e); }
+  finally { if (my === st.seq) $('#store-body').classList.remove('stale'); }
+}
+
+/* ---------- event detail ---------- */
+async function copyText(text) {
+  try { if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; } } catch { /* fall through */ }
+  const ta = h('textarea', { class: 'sr-only', 'aria-hidden': 'true' }); ta.value = text; document.body.append(ta); ta.select();
+  let ok = false; try { ok = document.execCommand('copy'); } catch { ok = false; }
+  ta.remove(); return ok;
+}
+async function openEvent(id) {
+  const dlg = $('#event-dlg'), body = $('#event-body'), copy = $('#event-copy');
+  $('#event-title').textContent = 'Event';
+  body.replaceChildren(h('p', { class: 'muted', text: 'Loading…' })); copy.hidden = true;
+  if (!dlg.open) dlg.showModal();
+  try {
+    const e = await api(`/api/queue/${encodeURIComponent(id)}`);
+    const [ic, label, tone] = STATE[e.status] || ['skip', e.status, 'idle'];
+    $('#event-title').textContent = `Event ${e.eventKey}`;
+    const kv = (k, v) => [h('dt', { text: k }), h('dd', null, v)];
+    body.replaceChildren(
+      h('dl', { class: 'kv' },
+        kv('State', h('span', { class: 'stat' }, h('span', { class: `tone-${tone}` }, icon(ic)), label)),
+        kv('Event time', when(e.eventAt)),
+        kv('Stored here', e.storedAt ? when(e.storedAt) : 'Not recorded'),
+        kv('Send attempts', `${e.attempts} of ${e.maxAttempts} allowed`),
+        e.lastError ? kv('Last error', e.lastError) : null,
+        kv('Source', `${KIND[e.kind] || ''}${e.reader ? `, reader ${e.reader}` : ''}${e.device ? `, ${e.device}` : ''}`),
+        e.card ? kv('Card', h('span', { class: 'mono', text: e.card })) : null,
+        e.credential ? kv('Credential', h('span', { class: 'mono', text: e.credential })) : null,
+        e.action ? kv('Action', e.action) : null),
+      h('pre', { text: e.payload }),
+      ...(e.payloadCut ? [h('p', { class: 'muted small', text: 'The payload is long and is cut here. The full text is stored on the gateway.' })] : []));
+    copy.hidden = false; copy.textContent = 'Copy JSON';
+    copy.onclick = async () => { copy.textContent = (await copyText(e.payload)) ? 'Copied' : 'Could not copy'; setTimeout(() => { copy.textContent = 'Copy JSON'; }, 1600); };
+  } catch (err) {
+    if (err instanceof AuthError) { dlg.close(); return handleError(err); }
+    body.replaceChildren(h('p', { text: err.status === 404 ? 'That event is no longer in the store. It was probably sent to the cloud a moment ago.' : err.message }));
+  }
+}
+
+/* ---------- synchronization ---------- */
+const COUNTER_ROWS = [
+  ['Received from readers (MQTT and HTTP)', 'received'], ['Sent to the cloud', 'forwarded'], ['Duplicates ignored', 'duplicates'], ['Refused by the cloud and kept', 'dead'],
+];
+function renderSync(ov) {
+  const c = ov.sync.counters;
+  $('#sync-lede').textContent = `Since this gateway started ${dur(ov.gateway.uptimeS)} ago: ${plural(c.forwarded, 'event was', 'events were')} sent to the cloud. This history starts empty after a restart. The store above is not affected.`;
+  const total = c.localReceived;
+  $('#stats').replaceChildren(...COUNTER_ROWS.map(([label, key]) => h('div', null, h('dt', { text: label }), h('dd', { text: num(c[key]) }))),
+    ...(total || ov.local.inputs.length ? [h('div', null, h('dt', { text: 'USB swipes taken' }), h('dd', { text: num(c.localReceived) })),
+      h('div', null, h('dt', { text: 'USB swipes matched to a reader copy' }), h('dd', { text: num(ov.local.shadow ?? c.localShadow) }))] : []));
+  const note = $('#usbnote');
+  if (ov.local.inputs.length) {
+    note.hidden = false;
+    note.textContent = `USB readers: ${ov.local.inputs.map((i) => `${i.reader} on ${i.device} (${i.connected ? 'connected' : 'not connected'})`).join('; ')}.` +
+      (ov.local.mappedCredentials ? ` ${plural(ov.local.mappedCredentials, 'typed number is', 'typed numbers are')} mapped to a card on this gateway.` : '');
+  } else note.hidden = true;
+  renderLog(ov);
+  drawChart();
+}
+
+const LOG_ICON = { SENT: ['check', 'ok'], RETRY: ['alert', 'warn'], REJECTED: ['cross', 'bad'], LINK: ['link', 'idle'] };
+function renderLog(ov) {
+  const items = ov.sync.recent, shown = st.logAll ? items : items.slice(0, 12);
+  const list = $('#log');
+  if (!items.length) { list.replaceChildren(h('li', null, h('span'), h('span'), h('span', { class: 'muted', text: 'Nothing yet since the gateway started.' }))); }
+  else list.replaceChildren(...shown.map((e) => {
+    const [ic, tone] = e.kind === 'FEED' ? [{ ok: 'check', bad: 'cross', warn: 'alert' }[e.tone] || 'link', e.tone || 'idle'] : (LOG_ICON[e.kind] || ['skip', 'idle']);
+    return h('li', null, h('span', { class: 't', text: clockTime(e.t) }), h('span', { class: `tone-${tone}` }, icon(ic)), h('span', { class: 'txt', text: e.text }),
+      h('span', { class: 'x', text: e.repeat > 1 ? `${num(e.repeat)} times` : (e.ms != null && e.kind === 'SENT' ? `${num(e.ms)} ms` : '') }));
+  }));
+  const more = $('#log-more'); more.hidden = items.length <= 12; more.textContent = st.logAll ? 'Show fewer' : `Show all ${items.length}`;
+}
+
+function niceTop(v) { for (let m = 1; ; m *= 10) for (const k of [2, 4, 10]) if (k * m / 10 >= v && k * m / 10 >= 2) return k * m / 10; }
+function barPath(x, y, w, hgt, r) { r = Math.min(r, w / 2, hgt); return `M${x},${y + hgt}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + hgt}Z`; }
+
+function drawChart() {
+  const ov = st.ov; if (!ov) return;
+  const wrap = $('#chart-wrap'), W = Math.max(260, Math.floor(wrap.clientWidth || 640));
+  const count = W < 520 ? 15 : 30, data = ov.sync.perMinute.slice(-count), n = data.length;
+  $('#chart-title').textContent = `Events per minute, last ${n} minutes`;
+  const H = 180, M = { l: 34, r: 4, t: 10, b: 24 }, iw = W - M.l - M.r, ih = H - M.t - M.b, slot = iw / n;
+  const top = niceTop(Math.max(1, ...data.map((d) => Math.max(d.received, d.sent)))), y = (v) => M.t + ih - (ih * v) / top;
+  const pad = Math.max(2, slot * 0.16), bw = Math.max(2, Math.min(24, (slot - pad * 2 - 2) / 2));
+  const svg = sv('svg', { viewBox: `0 0 ${W} ${H}`, width: W, height: H, 'aria-hidden': 'true' });
+  [0, top / 2, top].forEach((v) => {
+    svg.append(sv('line', { class: 'grid', x1: M.l, x2: W - M.r, y1: y(v), y2: y(v) }), sv('text', { class: 'axis', x: M.l - 8, y: y(v) + 4, 'text-anchor': 'end' }, num(v)));
+  });
+  data.forEach((d, i) => {
+    const x0 = M.l + i * slot, cx = x0 + slot / 2;
+    svg.append(sv('rect', { class: 'band', 'data-i': i, x: x0, y: M.t, width: slot, height: ih }));
+    const pair = bw * 2 + 2, left = cx - pair / 2;
+    if (d.received > 0) svg.append(sv('path', { class: 'bar1', d: barPath(left, y(d.received), bw, M.t + ih - y(d.received), 4) }));
+    if (d.sent > 0) svg.append(sv('path', { class: 'bar2', d: barPath(left + bw + 2, y(d.sent), bw, M.t + ih - y(d.sent), 4) }));
+    if ((n - 1 - i) % 5 === 0) svg.append(sv('text', { class: 'axis', x: cx, y: H - 6, 'text-anchor': 'middle' }, i === n - 1 ? 'now' : clockTime(d.t, false)));
+  });
+  svg.append(sv('line', { class: 'grid', x1: M.l, x2: W - M.r, y1: M.t + ih, y2: M.t + ih }));
+  const tip = h('div', { class: 'tip', role: 'tooltip', hidden: true });
+  wrap.replaceChildren(svg, tip);
+  st.tip = { data, M, slot, W, tip, svg };
+  const show = (i) => {
+    if (i < 0 || i >= n) return hide();
+    st.active = i;
+    svg.querySelectorAll('.band').forEach((b) => b.classList.toggle('on', Number(b.dataset.i) === i));
+    const d = data[i];
+    tip.replaceChildren(h('div', { class: 'when', text: `${clockTime(d.t, false)}, minute ${i === n - 1 ? 'so far' : 'total'}` }),
+      h('div', { class: 'row' }, h('span', { class: 'key k1' }), h('span', { class: 'val', text: num(d.received) }), h('span', { class: 'nm', text: 'Received' })),
+      h('div', { class: 'row' }, h('span', { class: 'key k2' }), h('span', { class: 'val', text: num(d.sent) }), h('span', { class: 'nm', text: 'Sent to the cloud' })));
+    tip.hidden = false;
+    const cx = M.l + i * slot + slot / 2, tw = tip.offsetWidth;
+    tip.style.left = `${Math.max(0, Math.min(W - tw, cx > W / 2 ? cx - tw / 2 - slot - 8 - tw / 2 : cx + slot / 2 + 8))}px`;   // beside the bars, never over them
+    tip.style.top = `${Math.max(0, M.t - 4)}px`;
+  };
+  const hide = () => { st.active = -1; tip.hidden = true; svg.querySelectorAll('.band').forEach((b) => b.classList.remove('on')); };
+  wrap.onpointermove = (ev) => { const r = svg.getBoundingClientRect(), x = (ev.clientX - r.left) * (W / r.width); show(Math.floor((x - M.l) / slot)); };
+  wrap.onpointerleave = hide;
+  wrap.onfocus = () => show(st.active >= 0 ? st.active : n - 1);
+  wrap.onblur = hide;
+  wrap.onkeydown = (ev) => {
+    if (ev.key === 'ArrowLeft') { show(Math.max(0, (st.active < 0 ? n : st.active) - 1)); ev.preventDefault(); }
+    else if (ev.key === 'ArrowRight') { show(Math.min(n - 1, st.active + 1)); ev.preventDefault(); }
+    else if (ev.key === 'Escape') hide();
+  };
+  // the table view carries every value without hovering
+  const tbl = h('div', { class: 'tablescroll', tabindex: '0', role: 'region', 'aria-label': 'Events per minute as a table' },
+    h('table', null, h('thead', null, h('tr', null, h('th', { scope: 'col', text: 'Minute' }), h('th', { scope: 'col', class: 'num', text: 'Received' }), h('th', { scope: 'col', class: 'num', text: 'Sent' }), h('th', { scope: 'col', class: 'num', text: 'Refused' }))),
+      h('tbody', null, [...data].reverse().map((d) => h('tr', null, h('td', { text: clockTime(d.t, false) }), h('td', { class: 'num', text: num(d.received) }), h('td', { class: 'num', text: num(d.sent) }), h('td', { class: 'num', text: num(d.rejected) }))))));
+  $('#chart-table').replaceChildren(tbl);
+  syncChartView();
+}
+function syncChartView() {
+  $('#chart-wrap').hidden = st.chartTable; $('#chart-table').hidden = !st.chartTable;
+  const b = $('#chart-toggle'); b.setAttribute('aria-pressed', String(st.chartTable)); b.textContent = st.chartTable ? 'Show as chart' : 'Show as table';
+}
+
+/* ---------- loading ---------- */
+function handleError(e) {
+  if (e instanceof AuthError) {
+    st.authNeeded = true; const dlg = $('#token-dlg');
+    $('#token-error').hidden = !tokenGet();
+    if (!dlg.open) { dlg.showModal(); $('#token-input').focus(); }
+    return;
+  }
+  st.error = e.message || 'The gateway did not answer.';
+  const b = $('#banner');
+  b.hidden = false;
+  b.replaceChildren(h('span', { class: 'tone-bad' }, icon('alert')), h('span', null, `Cannot reach the gateway console: ${st.error} Showing the last data received. Trying again.`));
+  document.body.classList.add('is-stale');
+  $('.page').classList.add('stale');
+  tickClocks();
+}
+function clearError() {
+  if (!st.error) return;
+  st.error = null; $('#banner').hidden = true; $('.page').classList.remove('stale');
+}
+
+async function loadOverview() {
+  try {
+    const ov = await api('/api/overview');
+    st.ov = ov; st.fetchedAt = Date.now(); st.authNeeded = false; clearError();
+    $('#gw-name').firstChild.textContent = ov.gateway.name;
+    $('#gw-host').textContent = ov.gateway.host;
+    $('#signout').hidden = !tokenGet();
+    const open = $('#open-note');
+    open.hidden = ov.gateway.consoleProtected;
+    open.textContent = ov.gateway.consoleProtected ? '' : 'This console has no password: anyone on the barn network can open it and read card numbers. Set EDGE_CONSOLE_TOKEN to require one.';
+    renderHero(ov); renderConnections(ov); renderTabs(ov); renderStoreText(ov); renderSync(ov); tickClocks();
+    return true;
+  } catch (e) { handleError(e); return false; }
+}
+
+/* A big store (an outage of days) is slow to sort and to search, so the list refreshes itself less often there,
+   and not at all while a search is open: the Refresh button reloads it. The summary above always refreshes. */
+async function refreshAll(manual = true) {
+  if (!(await loadOverview())) return;
+  const slow = st.ov.store.total > 20000;
+  if (manual || (!st.q && Date.now() - st.queueAt >= (slow ? 30000 : 4500))) await loadQueue();
+}
+
+async function runProbe(target = 'cloud') {
+  if (st.probing) return;
+  const btn = $(target === 'mqtt' ? '#mqtt-probe-btn' : '#probe-btn'), label = btn.textContent;
+  st.probing = target; renderProbe(); btn.disabled = true; btn.textContent = 'Checking…';
+  try { st.probe = await api(`/api/probe?target=${target}`, { method: 'POST' }); }
+  catch (e) {
+    if (e instanceof AuthError) { st.probe = null; handleError(e); }
+    else st.probe = { error: e.status === 429 ? 'A check was just made. Wait a moment and try again.' : e.message };
+  } finally {
+    st.probing = null; btn.disabled = false; btn.textContent = label; renderProbe();
+  }
+  loadOverview();
+}
+
+/* ---------- wiring ---------- */
+$('#probe-btn').addEventListener('click', () => runProbe('cloud'));
+$('#mqtt-probe-btn').addEventListener('click', () => runProbe('mqtt'));
+$('#refresh').addEventListener('click', () => refreshAll(true));
+$('#live').addEventListener('change', (e) => { st.live = e.target.checked; if (st.live) refreshAll(); });
+$('#event-close').addEventListener('click', () => $('#event-dlg').close());
+$('#event-dlg').addEventListener('click', (e) => { if (e.target === e.currentTarget) e.currentTarget.close(); });
+$('#order').addEventListener('change', (e) => { st.order = e.target.value; st.offset = 0; loadQueue(); });
+$('#limit').addEventListener('change', (e) => { st.limit = Number(e.target.value); st.offset = 0; loadQueue(); });
+let typing = null;
+$('#q').addEventListener('input', (e) => { clearTimeout(typing); typing = setTimeout(() => { st.q = e.target.value.trim(); st.offset = 0; syncTabs(); loadQueue(); }, 300); });
+$('#prev').addEventListener('click', () => { st.offset = Math.max(0, st.offset - st.limit); loadQueue(); });
+$('#next').addEventListener('click', () => { st.offset += st.limit; loadQueue(); });
+$('#log-more').addEventListener('click', () => { st.logAll = !st.logAll; if (st.ov) renderLog(st.ov); });
+$('#chart-toggle').addEventListener('click', () => { st.chartTable = !st.chartTable; syncChartView(); });
+$('#signout').addEventListener('click', () => { tokenSet(''); st.ov = null; handleError(new AuthError()); });
+$('#token-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  tokenSet($('#token-input').value.trim()); $('#token-input').value = '';
+  $('#token-dlg').close(); refreshAll();
+});
+$('#token-dlg').addEventListener('cancel', (e) => e.preventDefault());   // the console is unusable without the token: keep asking
+
+let resizeTimer = null;
+new ResizeObserver(() => { cancelAnimationFrame(resizeTimer); resizeTimer = requestAnimationFrame(() => { if (st.ov && !st.chartTable) drawChart(); }); }).observe($('#chart-wrap'));
+document.addEventListener('visibilitychange', () => { if (!document.hidden && st.live && !st.authNeeded) refreshAll(); });
+setInterval(() => { if (st.live && !document.hidden && !st.authNeeded && !$('#event-dlg').open) refreshAll(false); }, 5000);
+setInterval(tickClocks, 1000);
+
+renderTabs(null);
+refreshAll();
+})();
+</script>
+</body>
+</html>

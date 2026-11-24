@@ -40,6 +40,32 @@ def parse_credential(text):
     return str(int(s)) if CREDENTIAL_RE.match(s) else None
 
 
+CARD_UUID_RE = re.compile(r"^[0-9A-Fa-f]{8,32}$")
+
+
+def parse_credential_map(text: str) -> dict:
+    """"36=042FAC02AD1490,1005=04B86592C21290" -> {"36": "042FAC02AD1490", "1005": "04B86592C21290"}.
+    For a demo or a barn where the cloud does not know the numbers yet: the gateway puts the card on the swipe itself.
+    Fails loudly at start-up on a malformed entry, a number written twice, or two numbers for one card, because a wrong
+    card on a movement is worse than a refused start."""
+    out, seen = {}, {}
+    for part in (p.strip() for p in (text or "").split(",")):
+        if not part:
+            continue
+        number, sep, uuid = (s.strip() for s in part.partition("="))
+        credential = parse_credential(number)
+        if not sep or credential is None or not CARD_UUID_RE.match(uuid):
+            raise ValueError(f"LOCAL_CREDENTIAL_MAP entry '{part}' must look like 38=044E6602AD1490 "
+                             "(a number of 1 to 12 digits, then the card UUID in hexadecimal)")
+        uuid = uuid.upper()
+        if credential in out:
+            raise ValueError(f"LOCAL_CREDENTIAL_MAP lists the number {credential} twice")
+        if uuid in seen:
+            raise ValueError(f"LOCAL_CREDENTIAL_MAP gives the card {uuid} to both {seen[uuid]} and {credential}")
+        out[credential], seen[uuid] = uuid, credential
+    return out
+
+
 @dataclass(frozen=True)
 class RawSwipe:
     text: str

@@ -392,3 +392,46 @@ def test_the_hold_loop_releases_a_swipe_without_anyone_calling_it(tmp_path):
         assert g.outbox.stats()["pending"] == 1 and g.outbox.stats()["held"] == 0
     finally:
         g.stop.set(); t.join(2)
+
+
+# ---- LOCAL_CREDENTIAL_MAP: the card of a typed number ------------------------------------------------------
+DEMO_MAP = "36=042FAC02AD1490,1005=04B86592C21290,35=04143802F32290,38=044E6602AD1490"
+
+
+def test_credential_map_is_parsed_and_normalised():
+    from usb_input import parse_credential_map
+    assert parse_credential_map(DEMO_MAP) == {"36": "042FAC02AD1490", "1005": "04B86592C21290",
+                                              "35": "04143802F32290", "38": "044E6602AD1490"}
+    assert parse_credential_map(" 0038 = 044e6602ad1490 , ") == {"38": "044E6602AD1490"}      # zeros dropped, hex upper-cased
+    assert parse_credential_map("") == {} and parse_credential_map(None) == {}
+
+
+@pytest.mark.parametrize("bad", ["38", "38=", "=044E6602AD1490", "abc=044E6602AD1490", "38=XYZ", "38=0044",
+                                 "38=044E6602AD1490,38=042FAC02AD1490", "38=044E6602AD1490,36=044E6602AD1490"])
+def test_credential_map_refuses_what_could_put_the_wrong_card_on_a_movement(bad):
+    from usb_input import parse_credential_map
+    with pytest.raises(ValueError):
+        parse_credential_map(bad)
+
+
+def test_a_mapped_swipe_carries_its_card_and_an_unmapped_one_does_not(tmp_path):
+    g = make(tmp_path, local_credential_map=DEMO_MAP)          # MQTT is down: swipes are queued at once
+    for number in ("36", "1005", "35", "38", "99"):
+        g.accept_local("DrC0F8", "stdin", number, T)
+    rows = {json.loads(r[0])["CREDENTIAL_IDENTIFIER"]: json.loads(r[0])
+            for r in g.outbox.db.execute("SELECT payload_json FROM edge_queue")}
+    assert rows["36"]["CARD_UUID"] == "042FAC02AD1490" and rows["1005"]["CARD_UUID"] == "04B86592C21290"
+    assert rows["35"]["CARD_UUID"] == "04143802F32290" and rows["38"]["CARD_UUID"] == "044E6602AD1490"
+    assert "CARD_UUID" not in rows["99"]                       # not guessed: the cloud may still resolve it, or keep it unmapped
+    assert rows["38"]["EDGE_SOURCE"] == "LOCAL_USB" and rows["38"]["READER_NAME"] == "DrC0F8"   # still a USB swipe at that reader
+    assert g.credential_cards["1005"] == "04B86592C21290"
+
+
+def test_the_gateway_refuses_to_start_with_a_bad_map(tmp_path):
+    with pytest.raises(ValueError, match="LOCAL_CREDENTIAL_MAP"):
+        make(tmp_path, local_credential_map="38=nonsense")
+
+
+def test_the_map_reads_its_environment_variable(monkeypatch):
+    monkeypatch.setenv("LOCAL_CREDENTIAL_MAP", DEMO_MAP)
+    assert edge.Config.from_env().local_credential_map == DEMO_MAP

@@ -23,7 +23,9 @@ class H(BaseHTTPRequestHandler):
         with open(outfile, "a") as f:
             for e in body:
                 dup = e["EVENT_KEY"] in seen; seen.add(e["EVENT_KEY"])
-                f.write(json.dumps({"key": e["EVENT_KEY"], "ts": e["TIMESTAMP"], "dup": dup, "at": time.time()}) + "\n")
+                f.write(json.dumps({"key": e["EVENT_KEY"], "ts": e["TIMESTAMP"], "dup": dup, "at": time.time(), "src": e.get("EDGE_SOURCE"),
+                                    "dev": e.get("EDGE_DEVICE"), "reader": e.get("READER_NAME"), "cred": e.get("CREDENTIAL_IDENTIFIER"),
+                                    "card": e.get("CARD_UUID")}) + "\n")
         self._send(200, {"accepted": len(body)})
     def log_message(self, *a): pass
 ThreadingHTTPServer(("127.0.0.1", port), H).serve_forever()

@@ -16,7 +16,7 @@ ONLY when the backend confirms it (HTTP 200, or an OK entry in the 207 result li
 is down, events stay in the queue and are retried with exponential backoff. The backend is idempotent on
 EVENT_KEY, so resending is always safe.
 
-Configuration is by environment variables (see edge.env.example). Secrets are never hard-coded.
+Configuration is by environment variables (see edge.environment.example and RUN-AND-TEST.md). Secrets are never hard-coded.
 """
 import base64
 import binascii
@@ -37,8 +37,9 @@ from urllib.parse import urlparse
 
 import httpx
 
+from edge_console import ConsoleApi, SyncJournal, clean_broker_url, connack_reason, disconnect_reason
 from local_swipes import LocalSwipes
-from usb_input import build_source, parse_credential, parse_inputs
+from usb_input import build_source, parse_credential, parse_credential_map, parse_inputs
 
 log = logging.getLogger("edge")
 
@@ -64,6 +65,7 @@ class Config:
     bind_host: str = "0.0.0.0"
     bind_port: int = 8090
     ingest_token: str = ""            # optional shared secret for the LAN HTTP endpoint (header X-Edge-Token)
+    console_token: str = ""           # optional password for the read-only web console (/api/*, header X-Edge-Token)
     backoff_min: float = 2.0
     backoff_max: float = 60.0
     # MQTT source (leave mqtt_url empty to run HTTP-only)
@@ -85,6 +87,7 @@ class Config:
     local_idle_flush_ms: int = 200    # a USB device that sends no Enter ends a swipe after this silence
     local_retention_s: int = 86_400   # how long the swipe log is kept
     local_company_key: int = 0        # optional COMPANY_KEY copied onto USB swipes (0 = none)
+    local_credential_map: str = ""    # 36=042FAC02AD1490,38=044E6602AD1490: the card UUID of a typed number (demo, or numbers the cloud does not know)
     local_grab_keyboard: bool = True  # take the keyboard device exclusively so digits do not reach a console
 
     @classmethod
@@ -99,6 +102,7 @@ class Config:
             bind_host=g("EDGE_BIND_HOST", cls.bind_host),
             bind_port=int(g("EDGE_BIND_PORT", cls.bind_port)),
             ingest_token=g("EDGE_INGEST_TOKEN", ""),
+            console_token=g("EDGE_CONSOLE_TOKEN", ""),
             backoff_min=float(g("EDGE_BACKOFF_MIN", cls.backoff_min)),
             backoff_max=float(g("EDGE_BACKOFF_MAX", cls.backoff_max)),
             mqtt_url=g("MQTT_URL", ""),
@@ -118,6 +122,7 @@ class Config:
             local_idle_flush_ms=int(g("LOCAL_IDLE_FLUSH_MS", cls.local_idle_flush_ms)),
             local_retention_s=int(g("LOCAL_LOG_RETENTION_S", cls.local_retention_s)),
             local_company_key=int(g("LOCAL_COMPANY_KEY", cls.local_company_key)),
+            local_credential_map=g("LOCAL_CREDENTIAL_MAP", ""),
             local_grab_keyboard=_env_bool("LOCAL_GRAB_KEYBOARD", True),
         )
 
@@ -263,11 +268,19 @@ class Gateway:
         self.mqtt_connected = False
         self.counters = {"received": 0, "duplicates": 0, "ignored": 0, "forwarded": 0, "dead": 0,
                          "localReceived": 0, "localHeld": 0, "localShadow": 0, "localQueued": 0, "localRejected": 0}
+        self.credential_cards = parse_credential_map(cfg.local_credential_map)
         self.local = LocalSwipes(self.outbox, cfg.gateway_no, cfg.local_hold_ms, cfg.local_match_skew_ms,
-                                 cfg.local_retention_s, cfg.local_company_key)
+                                 cfg.local_retention_s, cfg.local_company_key, cards=self.credential_cards)
         self.local_specs = parse_inputs(cfg.local_inputs)
         self.local_readers = {r.strip() for r in cfg.local_readers.split(",") if r.strip()} | {s.reader for s in self.local_specs}
         self.local_sources = []
+        self.journal = SyncJournal()        # what the web console shows about the link and the sync; in memory only
+        self.console = ConsoleApi(self)
+        self._post_ms = None
+        self._health_at = None
+        self._sub_mids = {}                 # subscribe request id -> topic, to match each broker answer to its topic
+        if cfg.mqtt_url:
+            self.journal.mqtt_setup(self.mqtt_topic_list())
 
     # ---- intake -------------------------------------------------------------------------------------
     def accept_event(self, event: dict, raw_json: str) -> bool:
@@ -278,6 +291,7 @@ class Gateway:
         is_new = self.outbox.add(ev)
         self.counters["received" if is_new else "duplicates"] += 1
         if is_new:
+            self.journal.received()
             try:                                   # matching is an optimisation: it must never lose the event
                 self.local.record_safetrust(ev)
             except Exception:
@@ -301,6 +315,8 @@ class Gateway:
         result = self.local.submit(reader, device, credential, str(text), t_ms, hold)
         self.counters["localReceived"] += 1
         self.counters[{"HELD": "localHeld", "SHADOW": "localShadow", "QUEUED": "localQueued"}[result.state]] += 1
+        if result.state == "QUEUED":                # a HELD swipe counts when its hold ends; a SHADOW never does
+            self.journal.received()
         log.info("USB swipe: credential %s at reader %s from %s -> %s", credential, reader, device, result.state)
         return result
 
@@ -323,7 +339,9 @@ class Gateway:
         last_prune = 0.0
         while not self.stop.wait(0.25):
             try:
-                if self.local.release_due():
+                released = self.local.release_due()
+                if released:
+                    self.journal.received(released)
                     log.info("USB swipes with no reader copy within %d ms were queued.", self.cfg.local_hold_ms)
                 if time.time() - last_prune > 60:
                     self.local.prune()
@@ -333,7 +351,9 @@ class Gateway:
 
     def handle_mqtt_message(self, topic: str, payload: bytes):
         decoded = decode_payload(payload)
-        if decoded is None or "EVENT_KEY" not in decoded[0]:
+        is_event = decoded is not None and "EVENT_KEY" in decoded[0]
+        self.journal.mqtt_message(is_event)
+        if not is_event:
             self.counters["ignored"] += 1          # e.g. the token notice topic
             log.debug("Ignored non-event message on %s", topic)
             return
@@ -342,29 +362,46 @@ class Gateway:
     # ---- forwarding ---------------------------------------------------------------------------------
     def forward_once(self, client: httpx.Client) -> str:
         """One cycle. Returns 'IDLE', 'SENT' or 'RETRY' (caller backs off)."""
+        started = time.monotonic()
         try:
             health = client.get(f"{self.cfg.cloud_base_url}/ingestion/health")
         except httpx.HTTPError as ex:
+            self.journal.probe(False, None, self._ms(started), ex.__class__.__name__)
             self._wan("OFFLINE", f"backend unreachable: {ex.__class__.__name__}")
+            self.journal.retry(f"The cloud cannot be reached ({ex.__class__.__name__}). Events stay in the store.")
             return "RETRY"
         if health.status_code != 200:
+            self.journal.probe(False, health.status_code, self._ms(started), f"HTTP {health.status_code}")
             self._wan("DEGRADED", f"health returned {health.status_code}")
+            self.journal.retry(f"The cloud answered HTTP {health.status_code} to the health check. Events stay in the store.")
             return "RETRY"
+        self.journal.probe(True, 200, self._ms(started))
+        self._health_at = time.time()
 
         rows = self.outbox.next_batch(self.cfg.batch_size)
         if not rows:
             self._wan("ONLINE")
+            self.journal.healthy()
             return "IDLE"
         try:
             sent = self._post(client, rows)
         except httpx.HTTPError as ex:
             self._wan("OFFLINE", f"post failed: {ex.__class__.__name__}")
+            self.journal.retry(f"Sending failed ({ex.__class__.__name__}). The events stay in the store.")
             return "RETRY"
         self._wan("ONLINE" if sent else "DEGRADED")
+        if not sent:
+            self.journal.retry("The cloud did not accept every event in the batch. They stay in the store and are retried.")
         return "SENT" if sent else "RETRY"
 
+    @staticmethod
+    def _ms(started: float) -> int:
+        return int((time.monotonic() - started) * 1000)
+
     def _post(self, client: httpx.Client, rows) -> bool:
+        started = time.monotonic()
         resp = client.post(f"{self.cfg.cloud_base_url}/ingestion/batch", json=[json.loads(r[2]) for r in rows])
+        self._post_ms = self._ms(started)
         if resp.status_code == 200:
             self.outbox.delete([r[0] for r in rows])
             self._done(len(rows))
@@ -394,18 +431,22 @@ class Gateway:
         return all_ok
 
     def _reject(self, row, error: str):
-        if self.outbox.fail(row[0], error, self.cfg.max_attempts):
+        dead = self.outbox.fail(row[0], error, self.cfg.max_attempts)
+        if dead:
             self.counters["dead"] += 1
             log.error("Event %s marked DEAD after %d attempts: %s", row[1], self.cfg.max_attempts, error)
+        self.journal.rejected(row[1], str(error)[:200], dead)
 
     def _done(self, n: int):
         self.counters["forwarded"] += n
         self.last_success_at = time.time()
+        self.journal.forwarded(n, self._post_ms)
         log.info("Forwarded %d events to the backend.", n)
 
     def _wan(self, state: str, why: str = ""):
         if state == self.wan_state:
             return
+        self.journal.link_changed(self.wan_state, state, why, at=self._health_at if state == "ONLINE" else None)
         if state == "ONLINE":
             log.info("Backend link %s -> ONLINE", self.wan_state)
         else:
@@ -428,6 +469,7 @@ class Gateway:
                 else:
                     wait = delay * random.uniform(0.8, 1.2)
                     delay = min(self.cfg.backoff_max, delay * 2)
+                self.journal.next_attempt(wait if result == "RETRY" else None)
                 self.stop.wait(wait)
 
     def status(self) -> dict:
@@ -443,6 +485,56 @@ class Gateway:
         }
 
     # ---- MQTT source --------------------------------------------------------------------------------
+    def mqtt_topic_list(self) -> list:
+        return [t.strip() for t in self.cfg.mqtt_topics.split(",") if t.strip()]
+
+    def _mqtt_subscribe(self, subscribe, topic: str, qos: int):
+        result = subscribe(topic, qos=qos)
+        if isinstance(result, tuple) and len(result) > 1:
+            self._sub_mids[result[1]] = (topic, qos)
+
+    def mqtt_on_connect(self, rc, subscribe):
+        """The broker answered the login. `subscribe` is the client's own subscribe."""
+        if rc != 0:
+            self.mqtt_connected = False
+            why, hint = connack_reason(rc)
+            log.error("MQTT connect refused (rc=%s): %s %s", rc, why, hint)
+            self.journal.mqtt_refused(rc, why, hint)
+            return
+        topics = self.mqtt_topic_list()
+        self.mqtt_connected = True
+        self.journal.mqtt_up()
+        log.info("MQTT connected to %s; subscribing to %s", self.cfg.mqtt_url, topics)
+        for t in topics:                               # on EVERY (re)connect: a clean session forgets them
+            self._mqtt_subscribe(subscribe, t, self.cfg.mqtt_qos)
+
+    def mqtt_on_subscribe(self, mid, granted, subscribe):
+        log.info("MQTT subscription granted QoS %s", list(granted))
+        topic, asked = self._sub_mids.pop(mid, (None, self.cfg.mqtt_qos))
+        if 128 in granted and asked != 0:              # the broker refused this QoS: ask again for that topic at QoS 0
+            for t in ([topic] if topic is not None else self.mqtt_topic_list()):
+                self._mqtt_subscribe(subscribe, t, 0)
+            return
+        if topic is not None and granted:              # refused even at QoS 0 is a final answer: do not ask again
+            self.journal.mqtt_subscribed(topic, granted[0])
+            if granted[0] >= 128:
+                log.error("The MQTT broker refused the subscription to %s: check the topic and what this account may read.", topic)
+
+    def mqtt_on_disconnect(self, rc):
+        was_connected = self.mqtt_connected
+        self.mqtt_connected = False
+        log.warning("MQTT disconnected (rc=%s); the client reconnects on its own.", rc)
+        if was_connected:                              # a refused login is followed by a disconnect: that is not a lost feed
+            self.journal.mqtt_down(rc, disconnect_reason(rc))
+        try:                                           # no reader copy can arrive now: stop waiting for one
+            self.journal.received(self.local.release_all_held())
+        except Exception:
+            log.exception("Could not release held USB swipes")
+
+    def mqtt_on_connect_fail(self):
+        self.mqtt_connected = False
+        self.journal.mqtt_attempt_failed()
+
     def start_mqtt(self):
         if not self.cfg.mqtt_url:
             log.info("MQTT_URL not set: HTTP intake only.")
@@ -470,31 +562,10 @@ class Gateway:
                 client.tls_set(ca_certs=cfg.mqtt_ca_certs or None)
         if cfg.mqtt_username:
             client.username_pw_set(cfg.mqtt_username, cfg.mqtt_password)
-        topics = [t.strip() for t in cfg.mqtt_topics.split(",") if t.strip()]
-
-        def on_connect(c, userdata, flags, rc):
-            if rc != 0:
-                self.mqtt_connected = False
-                log.error("MQTT connect refused (rc=%s)", rc)
-                return
-            self.mqtt_connected = True
-            log.info("MQTT connected to %s; subscribing to %s", cfg.mqtt_url, topics)
-            for t in topics:                           # on EVERY (re)connect: a clean session forgets them
-                c.subscribe(t, qos=cfg.mqtt_qos)
-
-        def on_subscribe(c, userdata, mid, granted):
-            log.info("MQTT subscription granted QoS %s", list(granted))
-            if 128 in granted and cfg.mqtt_qos != 0:   # the broker refused this QoS: fall back to 0
-                for t in topics:
-                    c.subscribe(t, qos=0)
-
-        def on_disconnect(c, userdata, rc):
-            self.mqtt_connected = False
-            log.warning("MQTT disconnected (rc=%s); the client reconnects on its own.", rc)
-            try:                                       # no reader copy can arrive now: stop waiting for one
-                self.local.release_all_held()
-            except Exception:
-                log.exception("Could not release held USB swipes")
+        topics = self.mqtt_topic_list()
+        log.info("MQTT: %s as client '%s', topics %s", clean_broker_url(cfg.mqtt_url), cfg.mqtt_client_id, topics or "none")
+        if not topics:
+            log.warning("MQTT_TOPICS is empty: the gateway will connect to the broker but subscribe to nothing.")
 
         def on_message(c, userdata, msg):
             try:
@@ -502,8 +573,11 @@ class Gateway:
             except Exception:
                 log.exception("Could not queue a message from %s", msg.topic)
 
-        client.on_connect, client.on_subscribe = on_connect, on_subscribe
-        client.on_disconnect, client.on_message = on_disconnect, on_message
+        client.on_connect = lambda c, userdata, flags, rc: self.mqtt_on_connect(rc, c.subscribe)
+        client.on_subscribe = lambda c, userdata, mid, granted: self.mqtt_on_subscribe(mid, granted, c.subscribe)
+        client.on_disconnect = lambda c, userdata, rc: self.mqtt_on_disconnect(rc)
+        client.on_connect_fail = lambda c, userdata: self.mqtt_on_connect_fail()
+        client.on_message = on_message
         client.reconnect_delay_set(min_delay=1, max_delay=60)
         client.connect_async(url.hostname, port, keepalive=30)   # keeps retrying even if the first attempt fails
         client.loop_start()
@@ -514,23 +588,43 @@ class Gateway:
         gw = self
 
         class Handler(BaseHTTPRequestHandler):
-            def _json(self, code: int, body: dict):
+            def _json(self, code: int, body: dict, no_store: bool = False):
                 data = json.dumps(body).encode()
                 self.send_response(code)
                 self.send_header("Content-Type", "application/json")
+                if no_store:
+                    self.send_header("Cache-Control", "no-store")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
+
+            def _console_api(self, method: str):
+                answer = gw.console.handle(method, self.path, self.headers)
+                if answer is None:
+                    return self._json(404, {"error": "not found"})
+                self._json(*answer, no_store=True)
 
             def do_GET(self):
                 if self.path.startswith("/status"):
                     self._json(200, gw.status())
                 elif self.path.startswith("/health"):
                     self._json(200, {"status": "UP"})
+                elif self.path.split("?")[0] in ("/", "/console", "/console/"):
+                    body, headers = gw.console.page()          # the page holds no data; the /api calls it makes need the token
+                    self.send_response(200)
+                    for name, value in headers.items():
+                        self.send_header(name, value)
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                elif self.path.startswith("/api/"):
+                    self._console_api("GET")
                 else:
                     self._json(404, {"error": "not found"})
 
             def do_POST(self):
+                if self.path.startswith("/api/"):             # the console has its own token; the ingest token is not needed
+                    return self._console_api("POST")
                 if gw.cfg.ingest_token and self.headers.get("X-Edge-Token") != gw.cfg.ingest_token:
                     return self._json(401, {"error": "bad token"})
                 if self.path.startswith("/local-swipe"):
@@ -565,6 +659,8 @@ class Gateway:
 
 def main():
     logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
+    if os.getenv("LOG_LEVEL", "INFO").upper() != "DEBUG":
+        logging.getLogger("httpx").setLevel(logging.WARNING)       # one health-check line a second would bury the lines that matter
     gw = Gateway(Config.from_env())
     threading.Thread(target=gw.forward_loop, name="forwarder", daemon=True).start()
     threading.Thread(target=gw.local_loop, name="usb-hold", daemon=True).start()
@@ -572,6 +668,8 @@ def main():
     mqtt_client = gw.start_mqtt()
     server = gw.http_server()
     signal.signal(signal.SIGTERM, lambda *_: threading.Thread(target=server.shutdown).start())
+    if gw.credential_cards:
+        log.info("USB numbers mapped to cards: %s", ", ".join(f"{n}->{c}" for n, c in gw.credential_cards.items()))
     log.info("Barn edge gateway up: HTTP %s:%s, queue %s, backend %s",
              gw.cfg.bind_host, gw.cfg.bind_port, gw.cfg.db_path, gw.cfg.cloud_base_url)
     try:

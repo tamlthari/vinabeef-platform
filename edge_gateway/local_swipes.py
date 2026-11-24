@@ -46,12 +46,13 @@ def _now_ms() -> int:
 
 class LocalSwipes:
     def __init__(self, outbox, gateway_no: int = 1, hold_ms: int = 6000, skew_ms: int = 10_000,
-                 retention_s: int = 86_400, company_key: int = 0, clock=_now_ms):
+                 retention_s: int = 86_400, company_key: int = 0, clock=_now_ms, cards: dict = None):
         if not 1 <= gateway_no <= 99:
             raise ValueError("EDGE_GATEWAY_NO must be between 1 and 99")
         self.outbox, self.gateway_no = outbox, gateway_no
         self.hold_ms, self.skew_ms, self.retention_ms = hold_ms, skew_ms, retention_s * 1000
         self.company_key, self.clock = company_key, clock
+        self.cards = dict(cards or {})                 # credential number -> card UUID, from LOCAL_CREDENTIAL_MAP
         self._offsets = deque(maxlen=50)               # arrival time minus the reader's TIMESTAMP, live Safetrust reads
         with outbox.lock:
             db = outbox.db
@@ -132,6 +133,9 @@ class LocalSwipes:
             "EDGE_TIME_SOURCE": "GATEWAY_CLOCK",           # the USB reader sends no time: this is the gateway's
             "rawPayload": json.dumps({"input": text, "device": device, "reader": reader}),
         }
+        card = self.cards.get(credential)
+        if card:                                       # the cloud then reads it as an ordinary card read, no lookup needed
+            event["CARD_UUID"] = card
         if self.company_key:
             event["COMPANY_KEY"] = self.company_key
         return event
