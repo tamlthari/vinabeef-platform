@@ -137,4 +137,30 @@ class GateDirectionPolicyTest {
         assertEquals("IN", GateDirectionMode.IN_ONLY.fixedDirection());
         assertEquals("OUT", GateDirectionMode.OUT_ONLY.fixedDirection());
     }
+
+    // --- the correction of a half crossing whose first guess was wrong -------------------------------------------------
+
+    @Test
+    void aGuessedInThatWasReallyOutTakesTheEntryBack() {
+        // the animal was outside: IN was guessed (+1), but it really went OUT, which changes nothing for an animal outside
+        assertEquals(List.of(new HeadcountMove(B1, -1)), GateDirectionPolicy.correction("IN", "OUT", "OUT_PASTURE", B1, B1));
+    }
+
+    @Test
+    void aGuessedOutThatWasReallyInPutsTheAnimalBack() {
+        // the animal was inside: OUT was guessed (-1), but it really came IN, which changes nothing for an animal inside
+        assertEquals(List.of(new HeadcountMove(B1, 1)), GateDirectionPolicy.correction("OUT", "IN", "IN_BARN", B1, B1));
+    }
+
+    @Test
+    void aCorrectionForAnAnimalCountedInAnotherBarnEndsWithTheCountInTheGateBarn() {
+        // counted in B2, OUT guessed at B1's gate (B2 -1), really IN (B2 -> B1): B2 stays at -1 and B1 gains one
+        assertEquals(List.of(new HeadcountMove(B1, 1)), GateDirectionPolicy.correction("OUT", "IN", "IN_BARN", B2, B1));
+    }
+
+    @Test
+    void theSameDirectionNeedsNoCorrection() {
+        assertTrue(GateDirectionPolicy.correction("IN", "IN", "OUT_PASTURE", B1, B1).isEmpty());
+        assertTrue(GateDirectionPolicy.correction("OUT", "OUT", "IN_BARN", B1, B1).isEmpty());
+    }
 }

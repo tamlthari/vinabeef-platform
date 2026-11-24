@@ -29,6 +29,11 @@ public class JpaMovementBook implements MovementBook {
     }
 
     @Override
+    public Optional<Movement> findMovement(String movementId) {
+        return movements.findById(movementId);
+    }
+
+    @Override
     public void savePresence(PresenceState state) {
         presence.save(state);
     }

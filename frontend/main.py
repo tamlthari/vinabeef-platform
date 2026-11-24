@@ -1342,9 +1342,8 @@ async def reader_update_action(
     form = await request.form()
     outer_reader_name = form.get("outer_reader_name")
 
-    # the pairing window and the repeat-read time are typed in seconds; the backend stores milliseconds
+    # the repeat-read time is typed in seconds; the backend stores milliseconds
     try:
-        pair_window_ms = seconds_to_ms(form.get("pair_window_s"), "The pairing window")
         repeat_debounce_ms = seconds_to_ms(form.get("repeat_debounce_s"), "The repeat-read time")
     except ValueError as exc:
         return redirect_with(f"/readers/{gate_id}", problem=str(exc))
@@ -1355,8 +1354,6 @@ async def reader_update_action(
         "directionMode": direction_mode,
         "firmwareVersion": firmware_version
     }
-    if pair_window_ms is not None:
-        payload["pairWindowMs"] = pair_window_ms
     if repeat_debounce_ms is not None:
         payload["repeatDebounceMs"] = repeat_debounce_ms
     if reader_name.strip():

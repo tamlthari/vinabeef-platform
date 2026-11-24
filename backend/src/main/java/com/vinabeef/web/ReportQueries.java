@@ -152,7 +152,7 @@ final class ReportQueries {
         params.add(size);
         params.add(offset);
         return new Query("""
-            SELECT mv.movement_id, mv.occurred_at, mv.animal_id, mv.direction, mv.detection_method,
+            SELECT mv.movement_id, mv.occurred_at, mv.animal_id, mv.direction, mv.detection_method, mv.crossing_status,
                    g.gate_id, g.label AS gate_label, g.reader_name AS gate_reader,
                    re.reader_name AS read_reader, re.card_uuid,
                    b.barn_id, b.code AS barn_code, f.farm_id, f.name AS farm_name
@@ -206,8 +206,13 @@ final class ReportQueries {
             params.add(direction);
         }
         if (isSet(f.method())) {
-            sql.append(" AND mv.detection_method = ? ");
-            params.add(upper(f.method()));
+            if ("HALF_CROSSING".equals(upper(f.method()))) {
+                // not a detection method: the passages that only one reader of a pair has seen so far
+                sql.append(" AND mv.crossing_status = 'HALF_CROSSING' ");
+            } else {
+                sql.append(" AND mv.detection_method = ? ");
+                params.add(upper(f.method()));
+            }
         }
         return new Query(sql.toString(), params);
     }

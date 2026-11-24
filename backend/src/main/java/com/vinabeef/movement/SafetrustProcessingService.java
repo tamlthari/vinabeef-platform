@@ -5,12 +5,15 @@ import com.vinabeef.facilities.GateDirectionMode;
 import com.vinabeef.ingestion.IngestionBenchmarkService;
 import com.vinabeef.ingestion.SafetrustEventDto;
 import com.vinabeef.ingestion.TelemetryEventProcessor;
+import com.vinabeef.movement.GateCrossingResolver.Action;
 import com.vinabeef.movement.GateCrossingResolver.Decision;
+import com.vinabeef.movement.GateCrossingResolver.Side;
 import com.vinabeef.movement.GateCrossingResolver.Sighting;
 import com.vinabeef.movement.port.AlertSink;
 import com.vinabeef.movement.port.AnimalRegistry;
 import com.vinabeef.movement.port.BarnCounters;
 import com.vinabeef.movement.port.GateCrossingStore;
+import com.vinabeef.movement.port.GateCrossingStore.Neighbours;
 import com.vinabeef.movement.port.GateCrossingStore.ReaderBinding;
 import com.vinabeef.movement.port.GateLookup;
 import com.vinabeef.movement.port.MovementBook;
@@ -34,9 +37,6 @@ import java.util.UUID;
 @RequiredArgsConstructor
 @Slf4j
 public class SafetrustProcessingService implements TelemetryEventProcessor {
-
-    /** Unpaired sightings older than this (event time) can no longer find a partner and are dropped. */
-    private static final long UNPAIRED_RETENTION_MS = 3_600_000L;
 
     private final AnimalRegistry animals;
     private final GateLookup gates;
@@ -222,9 +222,12 @@ public class SafetrustProcessingService implements TelemetryEventProcessor {
         String firstEventId = null;
         Instant occurredAt = observedAt;
         Instant crossingStartedAt = null;
+        String crossingStatus = Movement.COMPLETE;
+        String readerSide = null;
 
         // The gate's direction mode decides how the direction is found:
         //   IN_ONLY / OUT_ONLY  fixed by the gate, whatever reader saw the animal       (ONE_WAY_GATE)
+        //                       A one-way gate never takes part in an inner/outer pair, even if reader rows say otherwise.
         //   BIDIRECTIONAL       two readers: order of the inner and outer read           (PAIRED_READERS)
         //                       one reader: the opposite of the animal's last presence   (GATE_MODE)
         GateDirectionMode mode = GateDirectionMode.parseOrDefault(gate.getDirectionMode());
@@ -232,37 +235,38 @@ public class SafetrustProcessingService implements TelemetryEventProcessor {
         method = GateDirectionPolicy.methodFor(mode, readerHasSide);
 
         if (GateDirectionPolicy.PAIRED_READERS.equals(method)) {
-            // 5a. Paired readers: direction is the ORDER in which the two readers saw the tag (event time).
+            // 5a. Paired readers. Every read is recorded. The first read at one reader is a movement marked HALF_CROSSING
+            //     (no time limit: it waits for the other reader as long as it takes). A read at the OTHER reader completes
+            //     it, and the order of the two reads (event time) is the direction. A second read at the SAME reader, after
+            //     the repeat-read time, turns the direction around. See GateCrossingResolver.
             String gateId = gate.getGateId();
-            long window = gate.getPairWindowMs();
-            long debounce = gate.getRepeatDebounceMs();
-            long reach = Math.max(window, debounce);
+            Side side = binding.get().side();
 
             crossingStore.lockCrossing(card, gateId);
-            Sighting incoming = new Sighting(binding.get().side(), hardwareMs, eventId);
-            Decision decision = GateCrossingResolver.decide(
-                    crossingStore.findUnpaired(card, gateId, hardwareMs - reach, hardwareMs + reach),
-                    incoming,
-                    crossingStore.crossingCompletedNear(resolvedAnimalId, gateId, hardwareMs, debounce),
-                    window, debounce);
+            Sighting incoming = new Sighting(side, hardwareMs, eventId);
+            Neighbours around = crossingStore.neighbours(resolvedAnimalId, gateId, hardwareMs);
+            Decision decision = GateCrossingResolver.decide(around.previous(), around.next(), incoming,
+                    gate.getRepeatDebounceMs());
 
-            if (decision.action() != GateCrossingResolver.Action.COMPLETE) {
-                if (decision.action() == GateCrossingResolver.Action.REMEMBER) {
-                    crossingStore.addUnpaired(card, gateId, incoming);
-                    crossingStore.pruneBefore(card, gateId, hardwareMs - UNPAIRED_RETENTION_MS);
-                }
-                log.info("[{}] Half crossing: tag '{}' seen at {} reader '{}' ({}). Waiting for the other reader.",
-                        ingressMode, card, binding.get().side(), readerName, decision.action());
+            if (decision.action() == Action.IGNORE) {
+                log.info("[{}] Repeat read of tag '{}' at {} reader '{}' of gate '{}' ignored.",
+                        ingressMode, card, side, readerName, gateId);
                 benchmarkService.recordMetric(ingressMode, metricKey, tIngressNano, System.nanoTime(), System.nanoTime(), hardwareMs);
                 return;
             }
-
-            crossingStore.consume(card, gateId, decision.partner().eventId(), decision.later().eventMs(), window);
-            direction = decision.direction();
-            sourceEventId = decision.later().eventId();
-            firstEventId = decision.first().eventId();
-            occurredAt = Instant.ofEpochMilli(decision.later().eventMs());
-            crossingStartedAt = Instant.ofEpochMilli(decision.first().eventMs());
+            if (decision.action() == Action.COMPLETE) {
+                completeHalfCrossing(decision, incoming, gate, resolvedAnimalId, state, readerName, ingressMode,
+                        metricKey, tIngressNano, hardwareMs);
+                return;
+            }
+            // the animal passed one reader: it is recorded now, like a read at a single-reader gate (the animal's last
+            // presence turned around), and marked HALF_CROSSING until the other reader sees it
+            direction = GateDirectionPolicy.singleReadDirection(mode, previousStatus);
+            crossingStatus = Movement.HALF_CROSSING;
+            readerSide = side.name();
+            log.info("[{}] {}: tag '{}' seen at {} reader '{}' of gate '{}'. Recorded as {} (HALF_CROSSING).",
+                    ingressMode, decision.secondPass() ? "Second pass at the same reader" : "Half crossing",
+                    card, side, readerName, gateId, direction);
         } else {
             // 5b. One-way gate, or a single reader: one read is one crossing. An animal that stays in front of the
             //     reader reports several times, so a read within the debounce time (event time) of this animal's
@@ -303,6 +307,10 @@ public class SafetrustProcessingService implements TelemetryEventProcessor {
         movement.setDetectionMethod(method);
         movement.setFirstEventId(firstEventId);
         movement.setCrossingStartedAt(crossingStartedAt);
+        movement.setCrossingStatus(crossingStatus);
+        movement.setReaderSide(readerSide);
+        movement.setPreviousPresence(previousStatus);
+        movement.setPreviousBarnId(previousBarnId);
         book.saveMovement(movement);
 
         // 9. Presence and barn counters
@@ -330,9 +338,80 @@ public class SafetrustProcessingService implements TelemetryEventProcessor {
 
         long tDbDoneNano = System.nanoTime();
         benchmarkService.recordMetric(ingressMode, metricKey, tIngressNano, tDedupDoneNano, tDbDoneNano, hardwareMs);
-        log.info("[{}] Movement recorded: Animal '{}' -> {} at Gate '{}' via {} [Barn: {}] in {} ms",
-                ingressMode, resolvedAnimalId, direction, gate.getGateId(), method, gate.getBarnId(),
+        log.info("[{}] Movement recorded: Animal '{}' -> {} at Gate '{}' via {}{} [Barn: {}] in {} ms",
+                ingressMode, resolvedAnimalId, direction, gate.getGateId(), method,
+                Movement.HALF_CROSSING.equals(crossingStatus) ? " (HALF_CROSSING)" : "", gate.getBarnId(),
                 Math.round((tDbDoneNano - tIngressNano) / 10000.0) / 100.0);
+    }
+
+    /**
+     * The other reader of the pair saw an animal that already has a half crossing at this gate: that movement becomes a
+     * complete crossing. The order of the two reads is the direction. When it agrees with the direction the half crossing
+     * was recorded with, nothing else changes. When it does not, the animal's presence and the barn headcount are
+     * corrected, as long as the half crossing is still the animal's latest movement (otherwise a later movement has
+     * already built on it and is left alone).
+     */
+    private void completeHalfCrossing(Decision decision, Sighting incoming, Gate gate, String animalId, PresenceState state,
+                                      String readerName, String ingressMode, long metricKey, long tIngressNano,
+                                      long hardwareMs) {
+        Optional<Movement> stored = book.findMovement(decision.partner().movementId());
+        if (stored.isEmpty()) {
+            log.warn("[{}] Half crossing {} of animal '{}' is gone; the read at reader '{}' was stored but made no movement.",
+                    ingressMode, decision.partner().movementId(), animalId, readerName);
+            benchmarkService.recordMetric(ingressMode, metricKey, tIngressNano, System.nanoTime(), System.nanoTime(), hardwareMs);
+            return;
+        }
+        Movement m = stored.get();
+        Sighting partner = new Sighting(decision.partner().side(), decision.partner().atMs(), m.getSourceEventId());
+        Sighting first = decision.partnerFirst() ? partner : incoming;
+        Sighting later = decision.partnerFirst() ? incoming : partner;
+
+        String guessed = m.getDirection();
+        String real = decision.direction();
+        m.setFirstEventId(first.eventId());
+        m.setSourceEventId(later.eventId());
+        m.setOccurredAt(Instant.ofEpochMilli(later.eventMs()));
+        m.setCrossingStartedAt(Instant.ofEpochMilli(first.eventMs()));
+        m.setDirection(real);
+        m.setDetectionMethod(GateDirectionPolicy.PAIRED_READERS);
+        m.setCrossingStatus(Movement.COMPLETE);
+        m.setReaderSide(null);
+        book.saveMovement(m);
+
+        String effect = guessed.equals(real)
+                ? "direction " + real + " confirmed"
+                : "direction " + guessed + " corrected to " + real + ": " + correctPresence(m, guessed, real, state, gate, animalId, readerName);
+        benchmarkService.recordMetric(ingressMode, metricKey, tIngressNano, System.nanoTime(), System.nanoTime(), hardwareMs);
+        log.info("[{}] Half crossing completed: Animal '{}' at Gate '{}' went {} ({} reader first, then {}), {}.",
+                ingressMode, animalId, gate.getGateId(), real, first.side(), later.side(), effect);
+    }
+
+    /** Applies the difference between the direction a half crossing was recorded with and its real direction. */
+    private String correctPresence(Movement m, String guessed, String real, PresenceState state, Gate gate,
+                                   String animalId, String readerName) {
+        if (m.getPreviousPresence() == null) {
+            return "presence left unchanged (the half crossing has no recorded starting state)";
+        }
+        if (!m.getMovementId().equals(state.getLastMovementId())) {
+            return "presence left unchanged (the animal has moved since)";
+        }
+        for (GateDirectionPolicy.HeadcountMove move : GateDirectionPolicy.correction(
+                guessed, real, m.getPreviousPresence(), m.getPreviousBarnId(), gate.getBarnId())) {
+            barns.adjustHeadcount(move.barnId(), move.delta());
+        }
+        if ("IN".equals(real)) {
+            barns.uncountOut(gate.getBarnId());
+            barns.countIn(gate.getBarnId());
+            alerts.resolveMissingCattle(animalId, readerName);
+        } else {
+            barns.uncountIn(gate.getBarnId());
+            barns.countOut(gate.getBarnId());
+        }
+        state.setPresenceStatus(GateDirectionPolicy.presenceAfter(real));
+        state.setCurrentBarnId(gate.getBarnId());
+        state.setUpdatedAt(Instant.now());
+        book.savePresence(state);
+        return "presence and headcount corrected";
     }
 
     private void recordReaderEvent(SafetrustEventDto dto, long hardwareMs, String ingressMode) {

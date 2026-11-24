@@ -6,12 +6,14 @@ package com.vinabeef.web;
  * <p>A read is not simply "a passage or an alert". The reads of a gate with an inner and an outer reader end in one of:
  * <ul>
  *   <li>{@code PASSAGE}: the read that completed a crossing (it is the movement's source event)</li>
- *   <li>{@code CROSSING_FIRST}: the earlier read of a crossing that completed; it is counted with the passage</li>
- *   <li>{@code HALF_CROSSING}: the tag is registered, but the other reader has not seen it (yet). It waits as an
- *       unpaired sighting. {@code half_side} says which reader saw it and {@code other_delta_ms} how far away the
- *       nearest sighting of the other reader is (positive: later), so a slow crossing is visible as such</li>
+ *   <li>{@code CROSSING_FIRST}: the earlier read of a crossing that completed; it is counted with the passage.
+ *       {@code crossing_gap_ms} is the time between the two reads, for both rows of a crossing</li>
+ *   <li>{@code HALF_CROSSING}: the tag is registered and the read is recorded as a movement, but the other reader has
+ *       not seen the animal (yet). It waits with no time limit; {@code half_side} says which reader saw it</li>
+ *   <li>{@code UNPAIRED_OLD}: a sighting left over from the time before half crossings were recorded as movements. It
+ *       made no movement and can no longer be completed</li>
  *   <li>{@code NO_MOVEMENT}: the tag is registered but the read made no movement, for example a repeat read while the
- *       animal walks away from the reader, or an unpaired sighting that is older than the retention time</li>
+ *       animal walks away from the reader</li>
  *   <li>{@code UNREGISTERED_TAG}: no animal is bound to the tag (an alert was raised)</li>
  *   <li>{@code COPY}: the second copy of a tap that came by both routes (Safetrust and the USB reader)</li>
  *   <li>{@code USB_UNMAPPED}: a USB read whose credential number matches no card</li>
@@ -45,25 +47,28 @@ final class ReaderReadFeed {
                COALESCE(m.animal_id, fm.animal_id, ra.animal_id) AS animal_id,
                COALESCE(m.direction, fm.direction)               AS direction,
                CASE
-                   WHEN r.duplicate_of IS NOT NULL          THEN 'COPY'
-                   WHEN r.event_class = 'LOCAL_UNMAPPED'    THEN 'USB_UNMAPPED'
-                   WHEN m.movement_id  IS NOT NULL          THEN 'PASSAGE'
-                   WHEN fm.movement_id IS NOT NULL          THEN 'CROSSING_FIRST'
-                   WHEN cand.event_id  IS NOT NULL          THEN 'HALF_CROSSING'
-                   WHEN r.card_uuid IS NULL                 THEN 'SYSTEM'
-                   WHEN ra.animal_id IS NULL                THEN 'UNREGISTERED_TAG'
+                   WHEN r.duplicate_of IS NOT NULL                       THEN 'COPY'
+                   WHEN r.event_class = 'LOCAL_UNMAPPED'                 THEN 'USB_UNMAPPED'
+                   WHEN m.crossing_status = 'HALF_CROSSING'              THEN 'HALF_CROSSING'
+                   WHEN m.movement_id  IS NOT NULL                       THEN 'PASSAGE'
+                   WHEN fm.movement_id IS NOT NULL                       THEN 'CROSSING_FIRST'
+                   WHEN cand.event_id  IS NOT NULL                       THEN 'UNPAIRED_OLD'
+                   WHEN r.card_uuid IS NULL                              THEN 'SYSTEM'
+                   WHEN ra.animal_id IS NULL                             THEN 'UNREGISTERED_TAG'
                    ELSE 'NO_MOVEMENT'
                END AS outcome,
-               cand.side AS half_side,
-               (SELECT c2.seen_ms - cand.seen_ms
-                  FROM gate_crossing_candidates c2
-                 WHERE c2.gate_id = cand.gate_id AND c2.tag_epc = cand.tag_epc AND c2.side <> cand.side
-                 ORDER BY ABS(c2.seen_ms - cand.seen_ms), c2.event_id
-                 LIMIT 1) AS other_delta_ms
+               CASE WHEN m.crossing_status = 'HALF_CROSSING'
+                    THEN COALESCE(m.reader_side, (SELECT gr.side FROM gate_readers gr WHERE gr.reader_name = r.reader_name))
+               END AS half_side,
+               CASE WHEN COALESCE(m.movement_id, fm.movement_id) IS NOT NULL
+                     AND COALESCE(m.crossing_status, fm.crossing_status) = 'COMPLETE'
+                    THEN (EXTRACT(EPOCH FROM (COALESCE(m.occurred_at, fm.occurred_at)
+                                              - COALESCE(m.crossing_started_at, fm.crossing_started_at))) * 1000)::BIGINT
+               END AS crossing_gap_ms
         FROM recent r
         LEFT JOIN movements m  ON m.source_event_id = r.event_id
         LEFT JOIN movements fm ON fm.first_event_id = r.event_id
-        LEFT JOIN gate_crossing_candidates cand ON cand.event_id = r.event_id
+        LEFT JOIN gate_crossing_candidates cand ON cand.event_id = r.event_id   -- legacy rows only
         LEFT JOIN LATERAL (
             SELECT COALESCE(
                 (SELECT ta.animal_id

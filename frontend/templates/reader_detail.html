@@ -51,7 +51,7 @@
                     which decides the direction. It applies again if that pair is removed.
                     {% elif reader.direction_mode == 'IN_ONLY' %}every read = animal returning
                     {% elif reader.direction_mode == 'OUT_ONLY' %}every read = animal out to pasture
-                    {% elif reader.outer_reader_name %}delta time: inner {{ reader.reader_name }} / outer {{ reader.outer_reader_name }}, pairs reads within {{ '%g' | format((reader.pair_window_ms | default(15000, true)) / 1000) }} s
+                    {% elif reader.outer_reader_name %}delta time: inner {{ reader.reader_name }} / outer {{ reader.outer_reader_name }}. A read at one reader is recorded at once as a half crossing, and the other reader completes it, however long that takes
                     {% else %}presence toggle (single reader){% endif %}
                 </div>
             </div>
@@ -114,11 +114,10 @@
                         </tr>
                     </thead>
                     <tbody id="tx-tbody" class="divide-y divide-gray-100">
-                        {% set window_ms = reader.pair_window_ms | default(15000, true) %}
                         {% for tx in transactions %}
                         {# what became of this read: the backend sends "outcome"; an older backend only sends movement_id #}
                         {% set outcome = tx.outcome or ('PASSAGE' if tx.movement_id else ('READ' if tx.card_uuid else 'SYSTEM')) %}
-                        {% set other_side = 'outer' if tx.half_side == 'INNER' else 'inner' %}
+                        {% set other_side = 'outer' if tx.half_side == 'INNER' else ('inner' if tx.half_side == 'OUTER' else 'other') %}
                         <tr class="tx-row hover:bg-gray-50 transition" data-outcome="{{ outcome }}"
                             data-type="{{ 'SYSTEM' if outcome in ('SYSTEM', 'COPY') else ('ANOMALY' if outcome in ('UNREGISTERED_TAG', 'USB_UNMAPPED') else 'PASSAGE') }}">
                             <td class="py-3.5 px-3 font-medium text-gray-900">
@@ -127,7 +126,9 @@
                                 {% elif outcome == 'CROSSING_FIRST' %}
                                     First read of a crossing ({{ tx.direction }})
                                 {% elif outcome == 'HALF_CROSSING' %}
-                                    Half crossing, waiting for the {{ other_side }} reader
+                                    Half crossing {{ tx.direction }}, waiting for the {{ other_side }} reader
+                                {% elif outcome == 'UNPAIRED_OLD' %}
+                                    Read from before half crossings were recorded
                                 {% elif outcome == 'COPY' %}
                                     Second copy of a tap already counted
                                 {% elif outcome == 'USB_UNMAPPED' %}
@@ -144,15 +145,11 @@
                                 {% if tx.read_source == 'LOCAL_USB' %}<span class="ml-1 px-1.5 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200 text-[10px] font-semibold" title="Read by a USB reader on the barn gateway. The time is the gateway's clock.">USB{% if tx.source_device %} &middot; {{ tx.source_device }}{% endif %}</span>{% endif %}
                                 {% if outcome == 'HALF_CROSSING' %}
                                 <div class="half-crossing-note mt-1 max-w-md font-normal text-[11px] text-gray-500">
-                                    {% if tx.other_delta_ms is number %}
-                                        The {{ other_side }} reader saw this tag {{ '%.1f' | format((tx.other_delta_ms | abs) / 1000) }} s {{ 'later' if tx.other_delta_ms > 0 else 'earlier' }}.
-                                        {% if (tx.other_delta_ms | abs) > window_ms %}
-                                            That is longer than the {{ '%g' | format(window_ms / 1000) }} s pairing window, so the two reads were not paired and no movement was recorded.
-                                            {% if can_manage %}For a normal crossing, raise the window under <a href="#" onclick="switchReaderTab('config'); return false;" class="text-blue-600 hover:underline">Reader Management</a>.{% endif %}
-                                        {% endif %}
-                                    {% else %}
-                                        The {{ other_side }} reader has not seen this tag within the {{ '%g' | format(window_ms / 1000) }} s pairing window.
-                                    {% endif %}
+                                    Recorded as {{ tx.direction }}, from where the animal was last seen. The {{ other_side }} reader has not seen this tag yet. When it does, the order of the two reads confirms or corrects the direction. There is no time limit.
+                                </div>
+                                {% elif outcome in ('PASSAGE', 'CROSSING_FIRST') and tx.crossing_gap_ms is number %}
+                                <div class="crossing-gap-note mt-1 font-normal text-[11px] text-gray-400">
+                                    The two readers saw this tag {{ '%g' | format((tx.crossing_gap_ms / 1000) | round(1)) }} s apart.
                                 </div>
                                 {% endif %}
                             </td>
@@ -187,12 +184,12 @@
                                     <span>Counted with the passage</span>
                                 </span>
                                 {% elif outcome == 'HALF_CROSSING' %}
-                                <span class="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200" title="The tag is registered. A movement is recorded when the other reader sees it too.">
+                                <span class="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200" title="The tag is registered and the passage is recorded. The other reader completes it when it sees the animal.">
                                     <span>&hellip;</span>
-                                    <span>Waiting for the other reader</span>
+                                    <span>Recorded, waiting for the other reader</span>
                                 </span>
-                                {% elif outcome in ('NO_MOVEMENT', 'READ') %}
-                                <span class="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-gray-50 text-gray-600 border border-gray-200" title="The tag is registered. This read made no movement: it repeats a read that was already counted, or the other reader never saw the tag.">
+                                {% elif outcome in ('NO_MOVEMENT', 'READ', 'UNPAIRED_OLD') %}
+                                <span class="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-gray-50 text-gray-600 border border-gray-200" title="The tag is registered. This read made no movement: it repeats a read that was already counted, or it was taken before half crossings were recorded.">
                                     <span>&ndash;</span>
                                     <span>Not counted</span>
                                 </span>
@@ -262,18 +259,11 @@
             </div>
             <div class="grid grid-cols-2 gap-4">
                 <div>
-                    <label class="block font-semibold text-gray-700 mb-1">Pairing window (seconds)</label>
-                    <input type="number" name="pair_window_s" id="edit-pair-window" min="1" max="300" step="any"
-                           value="{{ '%g' | format((reader.pair_window_ms | default(15000, true)) / 1000) }}"
-                           class="w-full border border-gray-300 rounded px-3 py-2 font-mono focus:outline-none focus:border-blue-500">
-                    <p class="text-[11px] text-gray-400 mt-1">Longest time between the inner and the outer read that still counts as one crossing (1 to 300, default 15). Only used by a gate with two readers. An animal that stops between the readers needs a longer window.</p>
-                </div>
-                <div>
                     <label class="block font-semibold text-gray-700 mb-1">Repeat-read time (seconds)</label>
                     <input type="number" name="repeat_debounce_s" id="edit-repeat-time" min="0.5" max="60" step="any"
                            value="{{ '%g' | format((reader.repeat_debounce_ms | default(3000, true)) / 1000) }}"
                            class="w-full border border-gray-300 rounded px-3 py-2 font-mono focus:outline-none focus:border-blue-500">
-                    <p class="text-[11px] text-gray-400 mt-1">Reads of one tag at one reader closer together than this count as one tap (0.5 to 60, default 3). The pairing window cannot be shorter.</p>
+                    <p class="text-[11px] text-gray-400 mt-1">Reads of one tag at one reader closer together than this count as one tap (0.5 to 60, default 3). A second read at the same reader after this time turns the animal around, when the other reader of the pair has not seen it in between.</p>
                 </div>
             </div>
             <div>

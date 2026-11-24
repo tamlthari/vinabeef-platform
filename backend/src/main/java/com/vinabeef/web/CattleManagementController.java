@@ -220,7 +220,7 @@ public class CattleManagementController {
         """, animalId);
 
         var movements = jdbcTemplate.queryForList("""
-            SELECT m.movement_id, m.direction, m.occurred_at, g.gate_id, g.label AS gate_label, g.reader_name
+            SELECT m.movement_id, m.direction, m.crossing_status, m.occurred_at, g.gate_id, g.label AS gate_label, g.reader_name
             FROM movements m
             LEFT JOIN gates g ON m.gate_id = g.gate_id
             WHERE m.animal_id = ?

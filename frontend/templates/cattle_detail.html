@@ -168,7 +168,7 @@
                         <span class="text-gray-400 ml-2">({{ m.gate_label }})</span>
                     </div>
                     <span class="px-2 py-0.5 rounded font-semibold {% if m.direction == 'IN' %}bg-emerald-50 text-emerald-700{% else %}bg-amber-50 text-amber-700{% endif %}">
-                        {{ m.direction }}
+                        {{ m.direction }}{% if m.crossing_status == 'HALF_CROSSING' %} (half){% endif %}
                     </span>
                 </div>
                 {% endfor %}
@@ -279,6 +279,10 @@
                         <span class="px-2 py-0.5 rounded font-bold {% if m.direction == 'IN' %}bg-emerald-50 text-emerald-700{% else %}bg-amber-50 text-amber-700{% endif %}">
                             {{ m.direction }}
                         </span>
+                        {% if m.crossing_status == 'HALF_CROSSING' %}
+                        <span class="ml-1 px-2 py-0.5 rounded font-semibold bg-sky-50 text-sky-700 border border-sky-200"
+                              title="One reader of the pair has seen this animal. The other has not yet, so the direction is provisional until it does.">half crossing</span>
+                        {% endif %}
                     </td>
                     <td class="px-5 py-3 font-mono text-gray-500 text-right">{{ (m.occurred_at | string).replace('T', ' ')[:19] }}</td>
                 </tr>

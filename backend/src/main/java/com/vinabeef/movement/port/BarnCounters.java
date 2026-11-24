@@ -11,4 +11,10 @@ public interface BarnCounters {
 
     /** One more animal went out today. */
     void countOut(String barnId);
+
+    /** Takes back one {@link #countIn}: a half crossing counted as IN turned out to be OUT. Never below zero. */
+    void uncountIn(String barnId);
+
+    /** Takes back one {@link #countOut}. Never below zero. */
+    void uncountOut(String barnId);
 }

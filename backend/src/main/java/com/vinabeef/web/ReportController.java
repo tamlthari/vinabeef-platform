@@ -135,7 +135,7 @@ public class ReportController {
         List<Map<String, Object>> rows = scope.seesNothing() ? List.of()
                 : run(ReportQueries.passageExport(scope, filter, EXPORT_LIMIT));
 
-        String[] columns = {"occurred_at", "animal_id", "direction", "detection_method", "gate_id", "gate_label",
+        String[] columns = {"occurred_at", "animal_id", "direction", "detection_method", "crossing_status", "gate_id", "gate_label",
                 "gate_reader", "read_reader", "card_uuid", "barn_code", "farm_name", "movement_id"};
         StringBuilder csv = new StringBuilder(String.join(",", columns)).append("\n");
         for (Map<String, Object> r : rows) {

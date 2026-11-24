@@ -38,16 +38,30 @@ class ReaderReadFeedTest {
     }
 
     @Test
-    void anUnpairedReadIsAHalfCrossingNotAnUnregisteredTag() {
+    void aHalfCrossingIsAMovementAndIsClassifiedBeforeTheRegisteredTagTest() {
+        assertTrue(SQL.contains("WHEN m.crossing_status = 'HALF_CROSSING'              THEN 'HALF_CROSSING'"));
+        assertTrue(SQL.indexOf("THEN 'HALF_CROSSING'") < SQL.indexOf("THEN 'PASSAGE'"),
+                "a half crossing is also a movement, so it is tested before the passage");
+        assertTrue(SQL.indexOf("THEN 'HALF_CROSSING'") < SQL.indexOf("THEN 'UNREGISTERED_TAG'"));
+    }
+
+    @Test
+    void aLeftOverSightingFromTheOldPairingIsLabelledAsSuch() {
         assertTrue(SQL.contains("LEFT JOIN gate_crossing_candidates cand ON cand.event_id = r.event_id"));
-        assertTrue(SQL.indexOf("THEN 'HALF_CROSSING'") < SQL.indexOf("THEN 'UNREGISTERED_TAG'"),
-                "a read waiting for its partner must be classified before the registered-tag test");
+        assertTrue(SQL.contains("THEN 'UNPAIRED_OLD'"));
+        assertTrue(SQL.indexOf("THEN 'UNPAIRED_OLD'") < SQL.indexOf("THEN 'UNREGISTERED_TAG'"));
+    }
+
+    @Test
+    void theSideOfAHalfCrossingSurvivesAChangedReaderPair() {
+        // reader_side is cleared when the pair is edited; the reader's own side is the fallback
+        assertTrue(SQL.contains("COALESCE(m.reader_side, (SELECT gr.side FROM gate_readers gr WHERE gr.reader_name = r.reader_name))"));
     }
 
     @Test
     void everyOutcomeThePageKnowsIsProduced() {
         List<String> outcomes = List.of("COPY", "USB_UNMAPPED", "PASSAGE", "CROSSING_FIRST", "HALF_CROSSING",
-                "SYSTEM", "UNREGISTERED_TAG", "NO_MOVEMENT");
+                "UNPAIRED_OLD", "SYSTEM", "UNREGISTERED_TAG", "NO_MOVEMENT");
         for (String outcome : outcomes) {
             assertTrue(SQL.contains("'" + outcome + "'"), outcome);
         }
@@ -64,7 +78,7 @@ class ReaderReadFeedTest {
     @Test
     void theColumnsTheTemplateRendersAreAllReturned() {
         for (String column : List.of("event_class", "read_source", "source_device", "credential_identifier",
-                "duplicate_of", "movement_id", "animal_id", "direction", "outcome", "half_side", "other_delta_ms")) {
+                "duplicate_of", "movement_id", "animal_id", "direction", "outcome", "half_side", "crossing_gap_ms")) {
             assertTrue(SQL.contains(column), column);
         }
     }

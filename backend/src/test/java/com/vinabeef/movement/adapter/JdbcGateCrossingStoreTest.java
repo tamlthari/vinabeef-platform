@@ -42,10 +42,19 @@ class JdbcGateCrossingStoreTest {
     }
 
     @Test
-    void aCrossingNearCountsOnlyPairedReaderMovements() {
-        ScriptedJdbc none = new ScriptedJdbc().answerCount(0);
-        assertFalse(new JdbcGateCrossingStore(none).crossingCompletedNear("A-1", "G-1", T, 3_000));
-        assertEquals(List.of("CROSSING_NEAR"), none.calls);
+    void theNeighboursAreAskedForWithOneStatementWithTheEventTimeOnBothSides() {
+        ScriptedJdbc jdbc = new ScriptedJdbc();
+        var around = new JdbcGateCrossingStore(jdbc).neighbours("A-1", "G-1", T);
+        assertEquals(List.of("NEIGHBOURS"), jdbc.calls);
+        Object[] a = jdbc.lastArgs.get("NEIGHBOURS");
+        assertEquals("A-1", a[0]);
+        assertEquals("G-1", a[1]);
+        assertEquals(new java.sql.Timestamp(T), a[2]);
+        assertEquals("A-1", a[3]);
+        assertEquals("G-1", a[4]);
+        assertEquals(new java.sql.Timestamp(T), a[5]);
+        assertEquals(null, around.previous(), "no movement before");
+        assertEquals(null, around.next(), "no movement after");
     }
 
     @Test

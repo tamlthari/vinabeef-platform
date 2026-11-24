@@ -184,6 +184,13 @@
           <td class="px-4 py-2 text-gray-600">{{ r.farm_name }}</td>
           <td class="px-4 py-2 text-gray-500">
             {{ (r.detection_method or '') | replace('_', ' ') | lower }}
+            {% if r.crossing_status == 'HALF_CROSSING' %}
+            <span
+              class="inline-block ml-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-sky-50 text-sky-700 border border-sky-200"
+              title="One reader of the pair has seen this animal. The other has not yet, so the direction is provisional until it does."
+              >half crossing</span
+            >
+            {% endif %}
           </td>
         </tr>
         {% else %}

@@ -35,4 +35,15 @@ class JdbcAnimalRegistryAndCountersTest {
         assertEquals("BARN-1", jdbc.lastArgs.get("DAILY_IN")[0]);
         assertEquals("BARN-2", jdbc.lastArgs.get("DAILY_OUT")[0]);
     }
+
+    @Test
+    void aCorrectedHalfCrossingTakesTheDailyCountBackFromTheRightColumn() {
+        ScriptedJdbc jdbc = new ScriptedJdbc();
+        JdbcBarnCounters counters = new JdbcBarnCounters(null, jdbc);
+        counters.uncountIn("BARN-1");
+        counters.uncountOut("BARN-2");
+        assertEquals(List.of("UNDO_DAILY_IN", "UNDO_DAILY_OUT"), jdbc.calls);
+        assertEquals("BARN-1", jdbc.lastArgs.get("UNDO_DAILY_IN")[0]);
+        assertEquals("BARN-2", jdbc.lastArgs.get("UNDO_DAILY_OUT")[0]);
+    }
 }

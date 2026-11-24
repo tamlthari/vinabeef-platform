@@ -45,6 +45,25 @@ class ReportQueriesTest {
     }
 
     @Test
+    void theHalfCrossingFilterIsAStatusNotADetectionMethod() {
+        var half = ReportQueries.passagePage(ReportQueries.Scope.ALL, passages("", "", "", "", "", "half_crossing", null, null), 10, 0);
+        assertBound(half);
+        assertTrue(half.sql().contains("mv.crossing_status = 'HALF_CROSSING'"));
+        assertFalse(half.sql().contains("mv.detection_method = ?"));
+
+        var paired = ReportQueries.passagePage(ReportQueries.Scope.ALL, passages("", "", "", "", "", "paired_readers", null, null), 10, 0);
+        assertBound(paired);
+        assertTrue(paired.sql().contains("mv.detection_method = ?"), "paired readers still means every passage found by two readers");
+        assertTrue(paired.params().contains("PAIRED_READERS"));
+    }
+
+    @Test
+    void thePassageReportCarriesTheCrossingStatus() {
+        assertTrue(ReportQueries.passagePage(ReportQueries.Scope.ALL, passages("", "", "", "", "", "", null, null), 10, 0)
+                .sql().contains("mv.crossing_status"));
+    }
+
+    @Test
     void textFromTheRequestIsNeverPartOfTheSql() {
         String evil = "x'; DROP TABLE movements; --";
         var q = ReportQueries.passagePage(ReportQueries.Scope.ALL,

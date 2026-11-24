@@ -46,11 +46,6 @@ public class GateReaderController {
         /** BIDIRECTIONAL, IN_ONLY (every read is an animal returning) or OUT_ONLY (every read is an animal leaving). */
         private String directionMode;
         private String firmwareVersion;
-        /**
-         * Edit only. Longest gap, in milliseconds, between the inner and the outer reader that still counts as one
-         * crossing; omitted keeps the current value (the default is 15000). See {@link GatePairingSettings}.
-         */
-        private Integer pairWindowMs;
         /** Edit only. Reads at the same reader closer than this many milliseconds are one tap; omitted keeps the current value. */
         private Integer repeatDebounceMs;
     }
@@ -161,7 +156,6 @@ public class GateReaderController {
                 g.label,
                 g.reader_name,
                 g.direction_mode,
-                g.pair_window_ms,
                 g.repeat_debounce_ms,
                 COALESCE(g.firmware_version, '1.58.1998') AS firmware_version,
                 COALESCE(g.status, 'ONLINE') AS status,
@@ -229,7 +223,7 @@ public class GateReaderController {
         var scope = currentScope.getCurrentScope();
 
         var existing = jdbcTemplate.queryForList("""
-            SELECT barn_id, label, reader_name, direction_mode, firmware_version, pair_window_ms, repeat_debounce_ms,
+            SELECT barn_id, label, reader_name, direction_mode, firmware_version, repeat_debounce_ms,
                    (SELECT gr.reader_name FROM gate_readers gr WHERE gr.gate_id = gates.gate_id AND gr.side = 'OUTER') AS outer_reader_name
             FROM gates WHERE gate_id = ? AND retired_at IS NULL
         """, gateId);
@@ -267,11 +261,9 @@ public class GateReaderController {
         String newFirmware = req.getFirmwareVersion() != null && !req.getFirmwareVersion().isBlank()
                 ? req.getFirmwareVersion().trim() : (String) row.get("firmware_version");
 
-        // how far apart the two readers of a pair may see a tag and still count as one crossing
         var timing = GatePairingSettings.resolve(
-                row.get("pair_window_ms") instanceof Number w ? w.intValue() : GatePairingSettings.DEFAULT_PAIR_WINDOW_MS,
                 row.get("repeat_debounce_ms") instanceof Number d ? d.intValue() : GatePairingSettings.DEFAULT_REPEAT_DEBOUNCE_MS,
-                req.getPairWindowMs(), req.getRepeatDebounceMs());
+                req.getRepeatDebounceMs());
         if (!timing.ok()) {
             return ResponseEntity.badRequest().body(Map.of("error", timing.error()));
         }
@@ -279,14 +271,15 @@ public class GateReaderController {
         jdbcTemplate.update("""
             UPDATE gates
             SET barn_id = ?, label = ?, reader_name = ?, direction_mode = ?, firmware_version = ?,
-                pair_window_ms = ?, repeat_debounce_ms = ?
+                repeat_debounce_ms = ?
             WHERE gate_id = ? AND retired_at IS NULL
         """, newBarnId, newLabel, target.primary(), target.mode().name(), newFirmware,
-                timing.pairWindowMs(), timing.repeatDebounceMs(), gateId);
+                timing.repeatDebounceMs(), gateId);
 
         if (target.pairChanged()) {
             // Readers that stay on the same side keep their Safetrust details; the rest are replaced.
-            // Unpaired sightings belong to the old pair and can no longer be matched.
+            // A half crossing belongs to the old pair: it stays in the history, but no read of the new pair can
+            // complete it any more.
             if (target.outer() == null) {
                 jdbcTemplate.update("DELETE FROM gate_readers WHERE gate_id = ?", gateId);
             } else {
@@ -300,7 +293,8 @@ public class GateReaderController {
                 jdbcTemplate.update("INSERT INTO gate_readers (reader_name, gate_id, side) VALUES (?, ?, 'OUTER') ON CONFLICT (reader_name) DO NOTHING",
                         target.outer(), gateId);
             }
-            jdbcTemplate.update("DELETE FROM gate_crossing_candidates WHERE gate_id = ?", gateId);
+            jdbcTemplate.update("UPDATE movements SET reader_side = NULL WHERE gate_id = ? AND crossing_status = 'HALF_CROSSING'", gateId);
+            jdbcTemplate.update("DELETE FROM gate_crossing_candidates WHERE gate_id = ?", gateId);   // leftovers of the old pairing
         }
 
         Map<String, Object> result = new LinkedHashMap<>();

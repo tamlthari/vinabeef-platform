@@ -1,15 +1,14 @@
 package com.vinabeef.movement.port;
 
+import com.vinabeef.movement.GateCrossingResolver.Known;
 import com.vinabeef.movement.GateCrossingResolver.Side;
-import com.vinabeef.movement.GateCrossingResolver.Sighting;
 
-import java.util.List;
 import java.util.Optional;
 
 /**
- * Output port of the movement use case: which reader sits on which side of which gate, the unpaired sightings
- * waiting for the other reader, and reader status. Owned by {@code movement}; the JDBC implementation lives in
- * {@code movement.adapter}.
+ * Output port of the movement use case: which reader sits on which side of which gate, the movements an animal
+ * already has at a gate (to find the half crossing a read completes), and reader status. Owned by {@code movement};
+ * the JDBC implementation lives in {@code movement.adapter}.
  *
  * <p>Every method joins the caller's transaction.
  */
@@ -27,22 +26,16 @@ public interface GateCrossingStore {
      */
     void lockCrossing(String tagEpc, String gateId);
 
-    /** Sightings of this tag at this gate that have no partner yet, with event time in [fromMs, toMs]. */
-    List<Sighting> findUnpaired(String tagEpc, String gateId, long fromMs, long toMs);
-
-    void addUnpaired(String tagEpc, String gateId, Sighting sighting);
-
     /**
-     * Removes the paired sighting and the other unpaired reads that led up to the same pass (earlier than the
-     * later sighting and within the window), so a tag that lingers between the readers is counted once.
+     * The animal's movements at this gate on either side of {@code eventMs}: the latest one at or before it and the
+     * earliest one after it. Half crossings are movements, so this is where a read finds the half crossing it
+     * completes. It compares event time, so a replayed backlog gives the same answer as live ingestion.
      */
-    void consume(String tagEpc, String gateId, String partnerEventId, long laterMs, long windowMs);
+    Neighbours neighbours(String animalId, String gateId, long eventMs);
 
-    /** Forgets unpaired sightings of this tag at this gate that are older than {@code beforeMs}. */
-    void pruneBefore(String tagEpc, String gateId, long beforeMs);
-
-    /** True when a paired-reader movement of this animal at this gate happened within {@code debounceMs} of {@code eventMs}. */
-    boolean crossingCompletedNear(String animalId, String gateId, long eventMs, long debounceMs);
+    /** Either side may be null: the animal has no movement at the gate before, or after, that time. */
+    record Neighbours(Known previous, Known next) {
+    }
 
     /**
      * True when this animal already has a movement at this gate within {@code debounceMs} of {@code eventMs}, by any

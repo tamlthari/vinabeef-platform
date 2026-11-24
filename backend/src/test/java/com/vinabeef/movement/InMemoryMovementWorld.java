@@ -2,8 +2,8 @@ package com.vinabeef.movement;
 
 import com.vinabeef.facilities.Gate;
 import com.vinabeef.ingestion.SafetrustEventDto;
+import com.vinabeef.movement.GateCrossingResolver.Known;
 import com.vinabeef.movement.GateCrossingResolver.Side;
-import com.vinabeef.movement.GateCrossingResolver.Sighting;
 import com.vinabeef.movement.port.AlertSink;
 import com.vinabeef.movement.port.AnimalRegistry;
 import com.vinabeef.movement.port.BarnCounters;
@@ -74,7 +74,6 @@ final class InMemoryMovementWorld implements AnimalRegistry, GateLookup, Movemen
     final List<String> resolvedMissing = new ArrayList<>();
     final Map<String, Long> lastSeen = new HashMap<>();
     final Map<String, String> connection = new HashMap<>();
-    private final List<Object[]> unpaired = new ArrayList<>();        // {tag, gate, Sighting}
 
     // --- set-up helpers ---------------------------------------------------------------------------------------
 
@@ -87,7 +86,12 @@ final class InMemoryMovementWorld implements AnimalRegistry, GateLookup, Movemen
 
     /** A bidirectional gate with an inner and an outer reader. */
     Gate pairedGate(String gateId, String barnId, String innerReader, String outerReader) {
-        Gate g = gate(gateId, barnId, "BIDIRECTIONAL");
+        return pairedGate(gateId, barnId, innerReader, outerReader, "BIDIRECTIONAL");
+    }
+
+    /** A gate with an inner and an outer reader and the given direction mode (a one-way mode here is a leftover). */
+    Gate pairedGate(String gateId, String barnId, String innerReader, String outerReader, String directionMode) {
+        Gate g = gate(gateId, barnId, directionMode);
         readers.put(innerReader, new ReaderBinding(innerReader, gateId, Side.INNER));
         readers.put(outerReader, new ReaderBinding(outerReader, gateId, Side.OUTER));
         return g;
@@ -157,7 +161,15 @@ final class InMemoryMovementWorld implements AnimalRegistry, GateLookup, Movemen
 
     @Override
     public void saveMovement(Movement movement) {
-        movements.add(movement);
+        // like the repository: a movement that is already stored is updated, not stored twice
+        if (movements.stream().noneMatch(m -> m.getMovementId().equals(movement.getMovementId()))) {
+            movements.add(movement);
+        }
+    }
+
+    @Override
+    public Optional<Movement> findMovement(String movementId) {
+        return movements.stream().filter(m -> m.getMovementId().equals(movementId)).findFirst();
     }
 
     @Override
@@ -179,6 +191,16 @@ final class InMemoryMovementWorld implements AnimalRegistry, GateLookup, Movemen
     @Override
     public void countOut(String barnId) {
         dailyOut.merge(barnId, 1, Integer::sum);
+    }
+
+    @Override
+    public void uncountIn(String barnId) {
+        dailyIn.merge(barnId, -1, (a, b) -> Math.max(a + b, 0));
+    }
+
+    @Override
+    public void uncountOut(String barnId) {
+        dailyOut.merge(barnId, -1, (a, b) -> Math.max(a + b, 0));
     }
 
     // --- AlertSink --------------------------------------------------------------------------------------------
@@ -320,42 +342,28 @@ final class InMemoryMovementWorld implements AnimalRegistry, GateLookup, Movemen
     }
 
     @Override
-    public List<Sighting> findUnpaired(String tagEpc, String gateId, long fromMs, long toMs) {
-        return unpaired.stream()
-                .filter(u -> u[0].equals(tagEpc) && u[1].equals(gateId))
-                .map(u -> (Sighting) u[2])
-                .filter(s -> s.eventMs() >= fromMs && s.eventMs() <= toMs)
-                .sorted(Comparator.comparingLong(Sighting::eventMs).thenComparing(Sighting::eventId))
-                .toList();
+    public Neighbours neighbours(String animalId, String gateId, long eventMs) {
+        List<Movement> here = movements.stream()
+                .filter(m -> m.getAnimalId().equals(animalId) && m.getGateId().equals(gateId)).toList();
+        Comparator<Movement> byTime = Comparator.comparing(Movement::getOccurredAt).thenComparing(Movement::getMovementId);
+        Movement previous = here.stream().filter(m -> m.getOccurredAt().toEpochMilli() <= eventMs).max(byTime).orElse(null);
+        Movement next = here.stream().filter(m -> m.getOccurredAt().toEpochMilli() > eventMs).min(byTime).orElse(null);
+        return new Neighbours(known(previous), known(next));
     }
 
-    @Override
-    public void addUnpaired(String tagEpc, String gateId, Sighting sighting) {
-        if (unpaired.stream().noneMatch(u -> ((Sighting) u[2]).eventId().equals(sighting.eventId()))) {
-            unpaired.add(new Object[]{tagEpc, gateId, sighting});
+    private static Known known(Movement m) {
+        if (m == null) {
+            return null;
         }
+        long at = m.getOccurredAt().toEpochMilli();
+        return new Known(m.getMovementId(), Movement.HALF_CROSSING.equals(m.getCrossingStatus()),
+                Side.parse(m.getReaderSide()), m.getCrossingStartedAt() != null ? m.getCrossingStartedAt().toEpochMilli() : at, at);
     }
 
-    @Override
-    public void consume(String tagEpc, String gateId, String partnerEventId, long laterMs, long windowMs) {
-        unpaired.removeIf(u -> u[0].equals(tagEpc) && u[1].equals(gateId)
-                && (((Sighting) u[2]).eventId().equals(partnerEventId)
-                || (((Sighting) u[2]).eventMs() >= laterMs - windowMs && ((Sighting) u[2]).eventMs() <= laterMs)));
-    }
-
-    @Override
-    public void pruneBefore(String tagEpc, String gateId, long beforeMs) {
-        unpaired.removeIf(u -> u[0].equals(tagEpc) && u[1].equals(gateId) && ((Sighting) u[2]).eventMs() < beforeMs);
-    }
-
-    int unpairedCount() {
-        return unpaired.size();
-    }
-
-    @Override
-    public boolean crossingCompletedNear(String animalId, String gateId, long eventMs, long debounceMs) {
-        return movements.stream().anyMatch(m -> m.getAnimalId().equals(animalId) && m.getGateId().equals(gateId)
-                && "PAIRED_READERS".equals(m.getDetectionMethod()) && within(m, eventMs, debounceMs));
+    /** The animal's movements at a gate, oldest first. */
+    List<Movement> movementsOf(String animalId, String gateId) {
+        return movements.stream().filter(m -> m.getAnimalId().equals(animalId) && m.getGateId().equals(gateId))
+                .sorted(Comparator.comparing(Movement::getOccurredAt).thenComparing(Movement::getMovementId)).toList();
     }
 
     @Override

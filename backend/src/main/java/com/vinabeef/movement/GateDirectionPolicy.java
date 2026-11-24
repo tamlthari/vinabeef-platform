@@ -2,7 +2,9 @@ package com.vinabeef.movement;
 
 import com.vinabeef.facilities.GateDirectionMode;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Pure rules that turn a gate's direction mode and an animal's presence into a direction and a headcount
@@ -78,5 +80,27 @@ final class GateDirectionPolicy {
             return List.of();
         }
         return List.of(new HeadcountMove(previousBarnId != null ? previousBarnId : gateBarnId, -1));
+    }
+
+    /**
+     * The headcount change that turns a movement applied as {@code appliedDirection} into one that went
+     * {@code realDirection}, from the same starting point ({@code previousStatus}, {@code previousBarnId}). It is what
+     * a half crossing needs when the other reader completes it and the order of the two reads says the animal went the
+     * other way: the first guess is taken back and the real direction applied, so the barns end up exactly as if the
+     * real direction had been known from the start. Empty when nothing has to move.
+     */
+    static List<HeadcountMove> correction(String appliedDirection, String realDirection, String previousStatus,
+                                          String previousBarnId, String gateBarnId) {
+        Map<String, Integer> net = new LinkedHashMap<>();
+        for (HeadcountMove m : headcountMoves(appliedDirection, previousStatus, previousBarnId, gateBarnId)) {
+            net.merge(m.barnId(), -m.delta(), Integer::sum);
+        }
+        for (HeadcountMove m : headcountMoves(realDirection, previousStatus, previousBarnId, gateBarnId)) {
+            net.merge(m.barnId(), m.delta(), Integer::sum);
+        }
+        return net.entrySet().stream()
+                .filter(e -> e.getValue() != 0)
+                .map(e -> new HeadcountMove(e.getKey(), e.getValue()))
+                .toList();
     }
 }

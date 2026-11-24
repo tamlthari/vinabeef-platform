@@ -1,12 +1,14 @@
 package com.vinabeef.movement.adapter;
 
+import com.vinabeef.movement.GateCrossingResolver.Known;
 import com.vinabeef.movement.GateCrossingResolver.Side;
-import com.vinabeef.movement.GateCrossingResolver.Sighting;
 import com.vinabeef.movement.port.GateCrossingStore;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
@@ -42,49 +44,40 @@ public class JdbcGateCrossingStore implements GateCrossingStore {
     }
 
     @Override
-    public List<Sighting> findUnpaired(String tagEpc, String gateId, long fromMs, long toMs) {
-        return jdbc.query("""
-                        SELECT side, seen_ms, event_id
-                        FROM gate_crossing_candidates
-                        WHERE tag_epc = ? AND gate_id = ? AND seen_ms BETWEEN ? AND ?
-                        ORDER BY seen_ms, event_id
+    public Neighbours neighbours(String animalId, String gateId, long eventMs) {
+        Timestamp at = ts(eventMs);
+        List<Object[]> rows = jdbc.query("""
+                        (SELECT 'P', movement_id, crossing_status, reader_side, crossing_started_at, occurred_at
+                           FROM movements
+                          WHERE animal_id = ? AND gate_id = ? AND occurred_at <= ?
+                          ORDER BY occurred_at DESC, movement_id DESC
+                          LIMIT 1)
+                        UNION ALL
+                        (SELECT 'N', movement_id, crossing_status, reader_side, crossing_started_at, occurred_at
+                           FROM movements
+                          WHERE animal_id = ? AND gate_id = ? AND occurred_at > ?
+                          ORDER BY occurred_at ASC, movement_id ASC
+                          LIMIT 1)
                         """,
-                (rs, n) -> new Sighting(Side.parse(rs.getString(1)), rs.getLong(2), rs.getString(3)),
-                tagEpc, gateId, fromMs, toMs);
+                (rs, n) -> new Object[]{rs.getString(1), known(rs)},
+                animalId, gateId, at, animalId, gateId, at);
+        Known previous = null;
+        Known next = null;
+        for (Object[] row : rows) {
+            if ("P".equals(row[0])) {
+                previous = (Known) row[1];
+            } else {
+                next = (Known) row[1];
+            }
+        }
+        return new Neighbours(previous, next);
     }
 
-    @Override
-    public void addUnpaired(String tagEpc, String gateId, Sighting sighting) {
-        jdbc.update("""
-                INSERT INTO gate_crossing_candidates (event_id, tag_epc, gate_id, side, seen_ms)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT (event_id) DO NOTHING
-                """, sighting.eventId(), tagEpc, gateId, sighting.side().name(), sighting.eventMs());
-    }
-
-    @Override
-    public void consume(String tagEpc, String gateId, String partnerEventId, long laterMs, long windowMs) {
-        jdbc.update("""
-                DELETE FROM gate_crossing_candidates
-                WHERE tag_epc = ? AND gate_id = ?
-                  AND (event_id = ? OR seen_ms BETWEEN ? AND ?)
-                """, tagEpc, gateId, partnerEventId, laterMs - windowMs, laterMs);
-    }
-
-    @Override
-    public void pruneBefore(String tagEpc, String gateId, long beforeMs) {
-        jdbc.update("DELETE FROM gate_crossing_candidates WHERE tag_epc = ? AND gate_id = ? AND seen_ms < ?",
-                tagEpc, gateId, beforeMs);
-    }
-
-    @Override
-    public boolean crossingCompletedNear(String animalId, String gateId, long eventMs, long debounceMs) {
-        Integer n = jdbc.queryForObject("""
-                SELECT COUNT(*) FROM movements
-                WHERE animal_id = ? AND gate_id = ? AND detection_method = 'PAIRED_READERS'
-                  AND occurred_at > ? AND occurred_at < ?
-                """, Integer.class, animalId, gateId, ts(eventMs - debounceMs), ts(eventMs + debounceMs));
-        return n != null && n > 0;
+    private static Known known(ResultSet rs) throws SQLException {
+        long at = rs.getTimestamp(6).getTime();
+        Timestamp started = rs.getTimestamp(5);
+        return new Known(rs.getString(2), "HALF_CROSSING".equals(rs.getString(3)), Side.parse(rs.getString(4)),
+                started != null ? started.getTime() : at, at);
     }
 
     @Override

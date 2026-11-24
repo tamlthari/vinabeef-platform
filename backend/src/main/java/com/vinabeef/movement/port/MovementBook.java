@@ -10,7 +10,10 @@ public interface MovementBook {
 
     Optional<PresenceState> presenceOf(String animalId);
 
+    /** Stores a new movement, or the changes to one that is already stored (a half crossing that was completed). */
     void saveMovement(Movement movement);
+
+    Optional<Movement> findMovement(String movementId);
 
     void savePresence(PresenceState state);
 }

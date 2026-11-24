@@ -73,6 +73,7 @@ public class GateMonitorController {
             m.put("gateId", r.get("gate_id"));
             m.put("direction", r.get("direction"));
             m.put("detectionMethod", r.get("detection_method"));
+            m.put("crossingStatus", r.get("crossing_status"));
             m.put("occurredAt", r.get("occurred_at") instanceof Timestamp t ? t.toInstant().toString() : r.get("occurred_at"));
             m.put("gateLabel", r.get("gate_label"));
             m.put("gateReader", r.get("gate_reader"));

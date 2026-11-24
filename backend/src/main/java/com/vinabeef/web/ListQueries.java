@@ -153,7 +153,7 @@ final class ListQueries {
     static ReportQueries.Query recentMovements(ReportQueries.Scope scope, int limit) {
         List<Object> params = new ArrayList<>();
         StringBuilder sql = new StringBuilder("""
-            SELECT mv.movement_id, mv.animal_id, mv.gate_id, mv.direction, mv.detection_method, mv.occurred_at,
+            SELECT mv.movement_id, mv.animal_id, mv.gate_id, mv.direction, mv.detection_method, mv.crossing_status, mv.occurred_at,
                    g.label       AS gate_label,
                    g.reader_name AS gate_reader,
                    sr.reader_name AS read_reader,

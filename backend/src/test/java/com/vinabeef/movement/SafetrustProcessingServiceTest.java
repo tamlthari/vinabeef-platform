@@ -76,28 +76,47 @@ class SafetrustProcessingServiceTest {
         service().processSafetrustRead(dto, "DIRECT_MQTT", System.nanoTime());
     }
 
-    // --- two readers: the order of the reads is the direction ------------------------------------------------------
+    // --- two readers: every read is recorded, the order of the two reads is the direction ----------------------------
 
     @Test
-    void outerThenInnerWithinTheWindowIsOneMovementIn() {
+    void aReadAtOneReaderOfAPairIsRecordedAtOnceAsAHalfCrossing() {
         process(read(1, "OUT-R", "TAG-1", T));
-        assertTrue(world.movements.isEmpty(), "one read is half a crossing");
-        assertEquals(1, world.unpairedCount());
 
+        assertEquals(1, world.movements.size(), "a read at a paired gate is a movement even without the other reader");
+        Movement m = world.movements.get(0);
+        assertEquals("HALF_CROSSING", m.getCrossingStatus());
+        assertEquals("OUTER", m.getReaderSide());
+        assertEquals("IN", m.getDirection(), "provisional: the animal was out, so it is coming in");
+        assertEquals("PAIRED_READERS", m.getDetectionMethod());
+        assertEquals(Instant.ofEpochMilli(T), m.getOccurredAt());
+        assertNull(m.getCrossingStartedAt());
+        assertNull(m.getFirstEventId());
+        assertEquals(world.row(1).eventId, m.getSourceEventId());
+        assertEquals("OUT_PASTURE", m.getPreviousPresence());
+        assertEquals("BARN-1", m.getPreviousBarnId());
+        assertEquals("IN_BARN", world.presence.get("A-1").getPresenceStatus());
+        assertEquals(1, world.headcount.get("BARN-1"));
+        assertEquals(1, world.dailyIn.get("BARN-1"));
+    }
+
+    @Test
+    void theOtherReaderCompletesTheCrossingAndConfirmsTheDirection() {
+        process(read(1, "OUT-R", "TAG-1", T));
         process(read(2, "IN-R", "TAG-1", T + 2_000));
 
-        assertEquals(1, world.movements.size());
+        assertEquals(1, world.movements.size(), "the half crossing became the crossing, not a second movement");
         Movement m = world.movements.get(0);
+        assertEquals("COMPLETE", m.getCrossingStatus());
+        assertNull(m.getReaderSide());
         assertEquals("IN", m.getDirection());
         assertEquals("PAIRED_READERS", m.getDetectionMethod());
         assertEquals(Instant.ofEpochMilli(T + 2_000), m.getOccurredAt());
         assertEquals(Instant.ofEpochMilli(T), m.getCrossingStartedAt());
         assertEquals(world.row(2).eventId, m.getSourceEventId());
         assertEquals(world.row(1).eventId, m.getFirstEventId());
-        assertEquals(0, world.unpairedCount(), "both reads are used up by the crossing");
         assertEquals("IN_BARN", world.presence.get("A-1").getPresenceStatus());
         assertEquals(m.getMovementId(), world.presence.get("A-1").getLastMovementId());
-        assertEquals(1, world.headcount.get("BARN-1"));
+        assertEquals(1, world.headcount.get("BARN-1"), "counted once, not twice");
         assertEquals(1, world.dailyIn.get("BARN-1"));
     }
 
@@ -105,44 +124,167 @@ class SafetrustProcessingServiceTest {
     void innerThenOuterIsOut() {
         world.presenceOf("A-1", "IN_BARN", "BARN-1");
         process(read(1, "IN-R", "TAG-1", T));
+        assertEquals("OUT", world.movements.get(0).getDirection());
         process(read(2, "OUT-R", "TAG-1", T + 1_000));
 
+        assertEquals(1, world.movements.size());
         assertEquals("OUT", world.movements.get(0).getDirection());
+        assertEquals("COMPLETE", world.movements.get(0).getCrossingStatus());
         assertEquals("OUT_PASTURE", world.presence.get("A-1").getPresenceStatus());
         assertEquals(-1, world.headcount.get("BARN-1"));
         assertEquals(1, world.dailyOut.get("BARN-1"));
     }
 
     @Test
-    void theDirectionComesFromEventTimeNotFromArrivalOrder() {
-        process(read(1, "IN-R", "TAG-1", T + 2_000));       // arrives first, but was read second
-        process(read(2, "OUT-R", "TAG-1", T));
-        assertEquals("IN", world.movements.get(0).getDirection());
+    void thereIsNoTimeLimitBetweenTheTwoReaders() {
+        process(read(1, "OUT-R", "TAG-1", T));
+        process(read(2, "IN-R", "TAG-1", T + 3L * 3_600_000));       // three hours later
+
+        assertEquals(1, world.movements.size());
+        Movement m = world.movements.get(0);
+        assertEquals("COMPLETE", m.getCrossingStatus());
+        assertEquals("IN", m.getDirection());
+        assertEquals(Instant.ofEpochMilli(T), m.getCrossingStartedAt());
+        assertEquals(Instant.ofEpochMilli(T + 3L * 3_600_000), m.getOccurredAt());
     }
 
     @Test
-    void twoReadsFurtherApartThanThePairWindowAreNotOneCrossing() {
-        process(read(1, "OUT-R", "TAG-1", T));
-        process(read(2, "IN-R", "TAG-1", T + 20_000));      // the window is 15 s
-        assertTrue(world.movements.isEmpty());
-        assertEquals(2, world.unpairedCount());
+    void theOrderOfTheTwoReadsCorrectsTheFirstGuessOfTheDirection() {
+        // the animal is outside, so a lone read says "coming in" ... but it was the INNER reader that saw it first,
+        // so it is going out (it was wrongly counted as outside, or its entry was missed)
+        process(read(1, "IN-R", "TAG-1", T));
+        Movement m = world.movements.get(0);
+        assertEquals("IN", m.getDirection());
+        assertEquals(1, world.headcount.get("BARN-1"));
+
+        process(read(2, "OUT-R", "TAG-1", T + 2_000));
+
+        assertEquals(1, world.movements.size());
+        assertEquals("OUT", m.getDirection());
+        assertEquals("COMPLETE", m.getCrossingStatus());
+        assertEquals("OUT_PASTURE", world.presence.get("A-1").getPresenceStatus());
+        assertEquals(0, world.headcount.get("BARN-1"), "the guessed entry is taken back");
+        assertEquals(0, world.dailyIn.get("BARN-1"));
+        assertEquals(1, world.dailyOut.get("BARN-1"));
+        assertTrue(world.resolvedMissing.size() <= 1);
     }
 
     @Test
-    void aRepeatReadAtTheSameReaderInsideTheDebounceIsNotRemembered() {
+    void theCorrectionIsLeftAloneWhenTheAnimalHasMovedSince() {
+        process(read(1, "IN-R", "TAG-1", T));                          // guessed IN (animal was outside)
+        process(read(3, "ONE-R", "TAG-1", T + 10_000));                // single reader: it is in, so this is OUT
+        assertEquals("OUT_PASTURE", world.presence.get("A-1").getPresenceStatus());
+        int headcount = world.headcount.get("BARN-1");
+
+        process(read(4, "OUT-R", "TAG-1", T + 20_000));                // completes the first crossing as OUT
+
+        Movement half = world.movements.get(0);
+        assertEquals("COMPLETE", half.getCrossingStatus());
+        assertEquals("OUT", half.getDirection());
+        assertEquals("OUT_PASTURE", world.presence.get("A-1").getPresenceStatus(), "built on the later movement");
+        assertEquals(headcount, world.headcount.get("BARN-1"));
+    }
+
+    @Test
+    void aReadThatArrivesLateCompletesTheCrossingThatIsAfterIt() {
+        process(read(1, "OUT-R", "TAG-1", T + 2_000));                 // arrives first, but was read second
+        process(read(2, "IN-R", "TAG-1", T));
+        assertEquals(1, world.movements.size());
+        assertEquals("OUT", world.movements.get(0).getDirection(), "inner first, then outer");
+        assertEquals("COMPLETE", world.movements.get(0).getCrossingStatus());
+        assertEquals(Instant.ofEpochMilli(T), world.movements.get(0).getCrossingStartedAt());
+        assertEquals(Instant.ofEpochMilli(T + 2_000), world.movements.get(0).getOccurredAt());
+    }
+
+    @Test
+    void theSameReaderAgainInsideTheRepeatTimeIsOneRead() {
         process(read(1, "OUT-R", "TAG-1", T));
-        process(read(2, "OUT-R", "TAG-1", T + 1_000));      // the debounce is 3 s
-        assertEquals(1, world.unpairedCount());
-        assertTrue(world.movements.isEmpty());
+        process(read(2, "OUT-R", "TAG-1", T + 1_000));                 // the repeat-read time is 3 s
+        assertEquals(1, world.movements.size());
+        assertEquals("HALF_CROSSING", world.movements.get(0).getCrossingStatus());
+        assertEquals(1, world.headcount.get("BARN-1"));
+    }
+
+    @Test
+    void theSameReaderAgainAfterTheRepeatTimeTurnsTheDirectionAround() {
+        // OUT_PASTURE: the animal comes in at the outer reader, and then passes the outer reader again
+        process(read(1, "OUT-R", "TAG-1", T));
+        process(read(2, "OUT-R", "TAG-1", T + 60_000));
+
+        assertEquals(List.of("IN", "OUT"), world.movements.stream().map(Movement::getDirection).toList());
+        assertEquals(List.of("HALF_CROSSING", "HALF_CROSSING"),
+                world.movements.stream().map(Movement::getCrossingStatus).toList());
+        assertEquals("OUT_PASTURE", world.presence.get("A-1").getPresenceStatus());
+        assertEquals(0, world.headcount.get("BARN-1"));
+        assertEquals(1, world.dailyIn.get("BARN-1"));
+        assertEquals(1, world.dailyOut.get("BARN-1"));
+    }
+
+    @Test
+    void aThirdPassAtTheSameReaderTurnsItAroundAgain() {
+        process(read(1, "IN-R", "TAG-1", T));
+        process(read(2, "IN-R", "TAG-1", T + 60_000));
+        process(read(3, "IN-R", "TAG-1", T + 120_000));
+        assertEquals(List.of("IN", "OUT", "IN"), world.movements.stream().map(Movement::getDirection).toList());
+        assertEquals("IN_BARN", world.presence.get("A-1").getPresenceStatus());
+        assertEquals(1, world.headcount.get("BARN-1"));
     }
 
     @Test
     void anAnimalStillBeingReadAfterItsCrossingDoesNotStartAnother() {
         process(read(1, "OUT-R", "TAG-1", T));
         process(read(2, "IN-R", "TAG-1", T + 2_000));
-        process(read(3, "OUT-R", "TAG-1", T + 3_000));      // still walking past the readers
+        process(read(3, "OUT-R", "TAG-1", T + 3_000));                 // still walking past the readers
+        process(read(4, "IN-R", "TAG-1", T + 4_500));
         assertEquals(1, world.movements.size());
-        assertEquals(0, world.unpairedCount());
+        assertEquals("COMPLETE", world.movements.get(0).getCrossingStatus());
+        assertEquals(1, world.headcount.get("BARN-1"));
+    }
+
+    @Test
+    void aNewCrossingAfterTheEchoTimeIsASecondMovementThatStartsAsAHalfCrossing() {
+        process(read(1, "OUT-R", "TAG-1", T));
+        process(read(2, "IN-R", "TAG-1", T + 2_000));                  // in
+        process(read(3, "IN-R", "TAG-1", T + 30_000));                 // and out again, seen at the inner reader first
+
+        assertEquals(2, world.movements.size());
+        assertEquals("OUT", world.movements.get(1).getDirection());
+        assertEquals("HALF_CROSSING", world.movements.get(1).getCrossingStatus());
+        process(read(4, "OUT-R", "TAG-1", T + 32_000));
+        assertEquals("COMPLETE", world.movements.get(1).getCrossingStatus());
+        assertEquals("OUT", world.movements.get(1).getDirection());
+        assertEquals(0, world.headcount.get("BARN-1"));
+        assertEquals(2, world.movements.size());
+    }
+
+    @Test
+    void aWrongBarnAlertIsRaisedOnceForAHalfCrossingAndNotAgainWhenItCompletes() {
+        world.animalBarn.put("A-1", "BARN-2");
+        process(read(1, "OUT-R", "TAG-1", T));
+        assertEquals(List.of("WRONG_BARN"), world.alertKinds());
+        process(read(2, "IN-R", "TAG-1", T + 2_000));
+        assertEquals(List.of("WRONG_BARN"), world.alertKinds());
+    }
+
+    @Test
+    void aHalfCrossingOfAReaderPairThatWasChangedIsNeverCompleted() {
+        process(read(1, "OUT-R", "TAG-1", T));
+        world.movements.get(0).setReaderSide(null);                    // what the portal does when the pair is changed
+        process(read(2, "IN-R", "TAG-1", T + 2_000));
+        assertEquals(2, world.movements.size());
+        assertEquals("HALF_CROSSING", world.movements.get(0).getCrossingStatus());
+        assertEquals("HALF_CROSSING", world.movements.get(1).getCrossingStatus());
+    }
+
+    @Test
+    void aOneWayGateNeverMakesAHalfCrossingEvenIfOldReaderRowsSayInnerAndOuter() {
+        world.pairedGate("G-OLD", "BARN-1", "OLD-IN", "OLD-OUT", "IN_ONLY");
+        process(read(1, "OLD-OUT", "TAG-1", T));
+        Movement m = world.movements.get(0);
+        assertEquals("ONE_WAY_GATE", m.getDetectionMethod());
+        assertEquals("COMPLETE", m.getCrossingStatus());
+        assertNull(m.getReaderSide());
+        assertEquals("IN", m.getDirection());
     }
 
     // --- one reader, or a one-way gate: one read is one crossing ---------------------------------------------------

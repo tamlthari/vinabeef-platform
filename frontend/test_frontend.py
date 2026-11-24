@@ -204,10 +204,11 @@ def test_the_alerts_badge_is_still_polled_from_the_menu():
 
 # ---- the reader page: what became of each read ---------------------------------------------------------------------
 # A cow was bound to tag 042FAC02AD1490 and walked through a gate with an inner reader (0ED4) and an outer reader
-# (C1C4). The two reads were 31.7 s apart, the gate pairs reads within 15 s, and both rows said "Unregistered Tag Read".
+# (C1C4). The two reads were 31.7 s apart and both rows said "Unregistered Tag Read". A read at one reader of a pair is
+# now recorded at once as a half crossing, and the other reader completes it however long that takes.
 READER = {"gate_id": "GATE-T-1", "barn_id": "BARN-DL-01", "farm_id": "FARM-1", "label": "Test pair", "reader_name": "0ED4",
           "outer_reader_name": "C1C4", "direction_mode": "BIDIRECTIONAL", "status": "ONLINE", "firmware_version": "1.0",
-          "barn_code": "DL-01", "farm_name": "Dak Lak", "pair_window_ms": 15000, "repeat_debounce_ms": 3000,
+          "barn_code": "DL-01", "farm_name": "Dak Lak", "repeat_debounce_ms": 3000,
           "in_count": 0, "out_count": 1, "today_in": 0, "today_out": 1, "passage_count": 1, "last_seen": "2026-11-24T11:50:41Z"}
 
 
@@ -216,7 +217,7 @@ def read(event_id, outcome, **kw):
            "gate_action": "ACCESS_GRANTED", "observed_at": "2026-11-24T11:50:10.130Z", "event_class": "CARD_READ",
            "read_source": "SAFETRUST", "source_device": None, "credential_identifier": None, "duplicate_of": None,
            "movement_id": None, "animal_id": "COW-T-1", "direction": None, "outcome": outcome, "half_side": None,
-           "other_delta_ms": None}
+           "crossing_gap_ms": None}
     row.update(kw)
     return row
 
@@ -234,38 +235,45 @@ def rows(html):
             for m in re.finditer(r'<tr class="tx-row[^"]*" data-outcome="([A-Z_]+)".*?>(.*?)</tr>', body, re.S)]
 
 
-def test_a_bound_tag_whose_two_reads_did_not_pair_is_a_half_crossing_not_an_unregistered_tag():
+def test_a_bound_tag_seen_by_one_reader_is_a_half_crossing_not_an_unregistered_tag():
     html = reader_page([
-        read("A-out", "HALF_CROSSING", reader_name="C1C4", observed_at="2026-11-24T11:50:41.823Z", half_side="OUTER", other_delta_ms=-31693),
-        read("A-in", "HALF_CROSSING", half_side="INNER", other_delta_ms=31693)])
+        read("A-out", "HALF_CROSSING", reader_name="C1C4", observed_at="2026-11-24T11:50:41.823Z", half_side="OUTER", direction="OUT"),
+        read("A-in", "HALF_CROSSING", half_side="INNER", direction="IN")])
     found = rows(html)
     assert [o for o, _ in found] == ["HALF_CROSSING", "HALF_CROSSING"]
     assert "Unregistered Tag Read" not in html and "Alert Raised" not in html
     inner_text, outer_text = found[1][1], found[0][1]
-    assert "Half crossing, waiting for the outer reader" in inner_text and "The outer reader saw this tag 31.7 s later" in inner_text
-    assert "Half crossing, waiting for the inner reader" in outer_text and "The inner reader saw this tag 31.7 s earlier" in outer_text
-    assert "longer than the 15 s pairing window" in inner_text and "no movement was recorded" in inner_text
+    assert "Half crossing IN, waiting for the outer reader" in inner_text
+    assert "Half crossing OUT, waiting for the inner reader" in outer_text
+    assert "Recorded as IN" in inner_text and "confirms or corrects the direction" in inner_text and "no time limit" in inner_text
     assert "COW-T-1" in inner_text and "Tag: 042FAC02AD1490" in inner_text          # the cow is named, so the binding is visible
-    assert "Waiting for the other reader" in inner_text
+    assert "Recorded, waiting for the other reader" in inner_text
 
 
-def test_the_hint_to_raise_the_window_is_only_for_people_who_may_change_it():
-    half = [read("A-in", "HALF_CROSSING", half_side="INNER", other_delta_ms=31693)]
-    assert "raise the window under" in reader_page(half, role="FARM_MANAGER")
-    assert "raise the window under" in reader_page(half, role="SYSTEM_ADMIN")
-    assert "raise the window under" not in reader_page(half, role="VETERINARIAN")
+def test_no_pairing_window_is_mentioned_or_offered_any_more():
+    html = reader_page([read("A-in", "HALF_CROSSING", half_side="INNER", direction="IN")])
+    assert "pairing window" not in html.lower() and "pair_window" not in html and "raise the window" not in html
+    assert 'name="pair_window_s"' not in html
 
 
-def test_a_gap_inside_the_window_is_not_blamed_on_the_window():
-    # window widened after the reads: they are still unpaired, but "longer than the window" would be wrong now
-    html = reader_page([read("A-in", "HALF_CROSSING", half_side="INNER", other_delta_ms=31693)], pair_window_ms=60000)
-    assert "The outer reader saw this tag 31.7 s later" in html and "longer than" not in html
+def test_a_half_crossing_whose_side_is_unknown_still_reads_sensibly():
+    # the reader pair was changed afterwards, so the half crossing has no side any more
+    html = reader_page([read("A-in", "HALF_CROSSING", half_side=None, direction="IN")])
+    assert "waiting for the other reader" in html and "Unregistered" not in html
 
 
-def test_a_read_that_is_still_waiting_says_which_reader_and_for_how_long():
-    html = reader_page([read("A-in", "HALF_CROSSING", half_side="OUTER", other_delta_ms=None)], pair_window_ms=45000)
-    assert "waiting for the inner reader" in html
-    assert "has not seen this tag within the 45 s pairing window" in html
+def test_both_ends_of_a_slow_crossing_say_how_far_apart_the_readers_saw_the_tag():
+    html = reader_page([
+        read("B-out", "PASSAGE", reader_name="C1C4", movement_id="M-1", direction="OUT", crossing_gap_ms=31693),
+        read("B-in", "CROSSING_FIRST", direction="OUT", crossing_gap_ms=31693)])
+    assert html.count("The two readers saw this tag 31.7 s apart.") == 2
+
+
+def test_a_read_left_over_from_the_old_pairing_is_labelled_and_never_an_alert():
+    html = reader_page([read("O", "UNPAIRED_OLD")])
+    text = dict(rows(html))["UNPAIRED_OLD"]
+    assert "Read from before half crossings were recorded" in text and "Not counted" in text
+    assert "Unregistered" not in html and "Alert Raised" not in html
 
 
 def test_both_reads_of_a_completed_crossing_are_counted_and_neither_is_flagged():
@@ -307,9 +315,8 @@ def test_the_filter_still_sorts_rows_into_gate_events_and_system_events():
 
 
 def test_a_backend_that_does_not_send_the_outcome_never_calls_a_registered_tag_unregistered():
-    old = lambda **kw: {k: v for k, v in read("X", None, **kw).items() if k not in ("outcome", "half_side", "other_delta_ms", "event_class", "duplicate_of")}
-    html = reader_page([old(movement_id="M-1", direction="IN"), old(), old(card_uuid=None, animal_id=None, gate_action="READER_HEARTBEAT")],
-                       pair_window_ms=None)
+    old = lambda **kw: {k: v for k, v in read("X", None, **kw).items() if k not in ("outcome", "half_side", "crossing_gap_ms", "event_class", "duplicate_of")}
+    html = reader_page([old(movement_id="M-1", direction="IN"), old(), old(card_uuid=None, animal_id=None, gate_action="READER_HEARTBEAT")])
     found = rows(html)
     assert [o for o, _ in found] == ["PASSAGE", "READ", "SYSTEM"]
     assert "Passage IN" in found[0][1] and "Tag read" in found[1][1] and "READER_HEARTBEAT" in found[2][1]
@@ -321,30 +328,69 @@ def test_text_from_a_tag_or_a_reader_is_never_run():
     assert "<script>alert(1)" not in html and "&lt;script&gt;alert(1)&lt;/script&gt;" in html
 
 
-def test_the_header_and_the_form_show_the_pairing_window_in_seconds():
-    html = reader_page([], pair_window_ms=31693, repeat_debounce_ms=2500)
-    assert "pairs reads within 31.693 s" in html
-    assert re.search(r'name="pair_window_s"[^>]*value="31.693"', html)
+def test_the_header_explains_half_crossings_and_the_form_shows_the_repeat_read_time_in_seconds():
+    html = reader_page([], repeat_debounce_ms=2500)
+    assert "recorded at once as a half crossing" in html and "however long that takes" in html
     assert re.search(r'name="repeat_debounce_s"[^>]*value="2.5"', html)
-    default = reader_page([])
-    assert "pairs reads within 15 s" in default and re.search(r'name="pair_window_s"[^>]*value="15"', default)
-    assert re.search(r'name="repeat_debounce_s"[^>]*value="3"', default)
-    # a backend that does not send the settings yet still gets the defaults, not an empty box
-    assert re.search(r'name="pair_window_s"[^>]*value="15"', reader_page([], pair_window_ms=None, repeat_debounce_ms=None))
+    assert re.search(r'name="repeat_debounce_s"[^>]*value="3"', reader_page([]))
+    # a backend that does not send the setting yet still gets the default, not an empty box
+    assert re.search(r'name="repeat_debounce_s"[^>]*value="3"', reader_page([], repeat_debounce_ms=None))
+
+
+# ---- half crossings in the dashboard stream, the passages report and the animal history ----------------------------
+def render_partial(name, **ctx):
+    return main.templates.env.get_template(name).render(request=_Req("/"), user={"username": "u", "role": "SYSTEM_ADMIN", "token": "t"}, **ctx)
+
+
+def movement(status, **kw):
+    m = {"movementId": "M-12345678", "animalId": "COW-T-1", "gateId": "GATE-T-1", "direction": "IN", "detectionMethod": "PAIRED_READERS",
+         "crossingStatus": status, "occurredAt": "2026-11-24T11:50:41Z", "gateLabel": "Test pair", "readerName": "C1C4", "barnCode": "DL-01"}
+    m.update(kw)
+    return m
+
+
+def test_the_dashboard_stream_marks_a_half_crossing_and_only_that():
+    half = render_partial("partials/movement_rows.html", movements=[movement("HALF_CROSSING")])
+    done = render_partial("partials/movement_rows.html", movements=[movement("COMPLETE")])
+    old = render_partial("partials/movement_rows.html", movements=[{k: v for k, v in movement(None).items() if k != "crossingStatus"}])
+    assert "half crossing" in half and "provisional" in half
+    assert "half crossing" not in done and "half crossing" not in old
+
+
+def passage_report(status):
+    row = {"occurred_at": "2026-11-24T11:50:41Z", "animal_id": "COW-T-1", "direction": "OUT", "detection_method": "PAIRED_READERS",
+           "crossing_status": status, "gate_id": "GATE-T-1", "gate_label": "Test pair", "gate_reader": "0ED4", "barn_code": "DL-01",
+           "farm_name": "Dak Lak"}
+    return render_partial("partials/report_content.html", report_type="passages", items=[row], total=1, in_count=0, out_count=1,
+                          sort="time", dir="desc", period_label="Today", tz="Asia/Ho_Chi_Minh", export_url=None, error=None,
+                          total_pages=1, page=1, start_item=1, end_item=1)
+
+
+def test_the_passages_report_marks_a_half_crossing_next_to_the_method():
+    half, done = passage_report("HALF_CROSSING"), passage_report("COMPLETE")
+    assert "paired readers" in half and "half crossing" in half
+    assert "paired readers" in done and "half crossing" not in done
+
+
+def test_the_passages_filter_offers_half_crossings():
+    html = main.templates.env.get_template("reports.html").render(
+        request=_Req("/reports"), user={"username": "u", "role": "SYSTEM_ADMIN", "token": "t"}, error="", farms=[], barns=[],
+        filters={}, report_type="passages")
+    assert 'value="HALF_CROSSING"' in html and 'value="PAIRED_READERS"' in html
 
 
 # ---- the seconds the form is typed in ------------------------------------------------------------------------------
 @pytest.mark.parametrize("text,ms", [("15", 15000), ("31.7", 31700), ("0,5", 500), (" 60 ", 60000), ("1e1", 10000),
                                      ("0.0004", 0), ("", None), ("   ", None), (None, None)])
 def test_seconds_become_milliseconds_and_empty_means_not_sent(text, ms):
-    assert main.seconds_to_ms(text, "The pairing window") == ms
+    assert main.seconds_to_ms(text, "The repeat-read time") == ms
 
 
 @pytest.mark.parametrize("text", ["abc", "nan", "inf", "-inf", "12 s"])
 def test_a_value_that_is_not_a_number_is_refused_with_a_message(text):
     with pytest.raises(ValueError) as e:
-        main.seconds_to_ms(text, "The pairing window")
-    assert "The pairing window must be a number of seconds" in str(e.value)
+        main.seconds_to_ms(text, "The repeat-read time")
+    assert "The repeat-read time must be a number of seconds" in str(e.value)
 
 
 class ReaderBackend(BaseHTTPRequestHandler):
@@ -383,7 +429,7 @@ def reader_portal(monkeypatch):
     main.app.dependency_overrides[main.get_current_user] = lambda: {"username": "admin", "role": "SYSTEM_ADMIN", "token": "t"}
     ReaderBackend.puts = []
     ReaderBackend.answer = (200, {"status": "UPDATED"})
-    ReaderBackend.page = {"reader": READER, "transactions": [read("A-in", "HALF_CROSSING", half_side="INNER", other_delta_ms=31693)]}
+    ReaderBackend.page = {"reader": READER, "transactions": [read("A-in", "HALF_CROSSING", half_side="INNER", direction="IN")]}
     yield TestClient(main.app, follow_redirects=False)
     main.app.dependency_overrides.clear()
     server.shutdown()
@@ -395,28 +441,33 @@ FORM = {"barn_id": "BARN-DL-01", "label": "Test pair", "direction_mode": "BIDIRE
 
 def test_the_reader_page_opens_and_explains_the_half_crossing(reader_portal):
     r = reader_portal.get("/readers/GATE-T-1")
-    assert r.status_code == 200 and "Half crossing, waiting for the outer reader" in r.text and "Unregistered Tag Read" not in r.text
+    assert r.status_code == 200 and "Half crossing IN, waiting for the outer reader" in r.text and "Unregistered Tag Read" not in r.text
 
 
-def test_saving_a_longer_window_sends_milliseconds(reader_portal):
-    r = reader_portal.post("/readers/GATE-T-1/update", data=dict(FORM, pair_window_s="60", repeat_debounce_s="3"))
+def test_saving_a_new_repeat_read_time_sends_milliseconds(reader_portal):
+    r = reader_portal.post("/readers/GATE-T-1/update", data=dict(FORM, repeat_debounce_s="5"))
     assert r.status_code == 303 and "notice=" in r.headers["location"]
     assert ReaderBackend.puts == [{"barnId": "BARN-DL-01", "label": "Test pair", "directionMode": "BIDIRECTIONAL", "firmwareVersion": "1.0",
-                                   "readerName": "0ED4", "outerReaderName": "C1C4", "pairWindowMs": 60000, "repeatDebounceMs": 3000}]
+                                   "readerName": "0ED4", "outerReaderName": "C1C4", "repeatDebounceMs": 5000}]
 
 
-def test_a_form_without_the_timing_fields_leaves_them_alone(reader_portal):
+def test_a_form_without_the_timing_field_leaves_it_alone(reader_portal):
     reader_portal.post("/readers/GATE-T-1/update", data=FORM)
-    assert "pairWindowMs" not in ReaderBackend.puts[0] and "repeatDebounceMs" not in ReaderBackend.puts[0]
+    assert "repeatDebounceMs" not in ReaderBackend.puts[0]
 
 
-def test_a_window_that_is_not_a_number_is_refused_before_anything_is_sent(reader_portal):
-    r = reader_portal.post("/readers/GATE-T-1/update", data=dict(FORM, pair_window_s="a minute"))
+def test_an_old_form_that_still_sends_a_pairing_window_does_not_send_it_on(reader_portal):
+    reader_portal.post("/readers/GATE-T-1/update", data=dict(FORM, pair_window_s="60", repeat_debounce_s="3"))
+    assert "pairWindowMs" not in ReaderBackend.puts[0] and ReaderBackend.puts[0]["repeatDebounceMs"] == 3000
+
+
+def test_a_repeat_read_time_that_is_not_a_number_is_refused_before_anything_is_sent(reader_portal):
+    r = reader_portal.post("/readers/GATE-T-1/update", data=dict(FORM, repeat_debounce_s="a minute"))
     assert r.status_code == 303 and "problem=" in r.headers["location"] and "number%20of%20seconds" in r.headers["location"]
     assert ReaderBackend.puts == []
 
 
-def test_the_reason_a_window_is_refused_by_the_backend_is_shown(reader_portal):
-    ReaderBackend.answer = (400, {"error": "The pairing window must be between 1 s and 300 s (it was 600 s)."})
-    r = reader_portal.post("/readers/GATE-T-1/update", data=dict(FORM, pair_window_s="600"))
-    assert r.status_code == 303 and "problem=" in r.headers["location"] and "between%201%20s%20and%20300%20s" in r.headers["location"]
+def test_the_reason_a_repeat_read_time_is_refused_by_the_backend_is_shown(reader_portal):
+    ReaderBackend.answer = (400, {"error": "The repeat-read time must be between 0.5 s and 60 s (it was 120 s)."})
+    r = reader_portal.post("/readers/GATE-T-1/update", data=dict(FORM, repeat_debounce_s="120"))
+    assert r.status_code == 303 and "problem=" in r.headers["location"] and "between%200.5%20s%20and%2060%20s" in r.headers["location"]

@@ -61,13 +61,15 @@ class ScriptedJdbc extends JdbcTemplate {
         if (sql.contains("'UNEXPECTED_TAG', 'HIGH'")) return "ALERT_UNEXPECTED_TAG";
         if (sql.contains("'WRONG_BARN'")) return "ALERT_WRONG_BARN";
         if (sql.contains("MISSING_CATTLE")) return "RESOLVE_MISSING";
+        if (sql.contains("daily_in_count - 1")) return "UNDO_DAILY_IN";
+        if (sql.contains("daily_out_count - 1")) return "UNDO_DAILY_OUT";
         if (sql.contains("daily_in_count")) return "DAILY_IN";
         if (sql.contains("daily_out_count")) return "DAILY_OUT";
         if (sql.contains("SELECT assigned_barn_id")) return "ASSIGNED_BARN";
         if (sql.contains("FROM animals WHERE animal_id")) return "LIVE_ANIMAL";
         if (sql.contains("ORDER BY hardware_timestamp, event_id")) return "UNMAPPED_IDS";
         if (sql.contains("SET card_uuid = ?")) return "RESOLVE_ROW";
-        if (sql.contains("FROM movements") && sql.contains("detection_method")) return "CROSSING_NEAR";
+        if (sql.contains("FROM movements") && sql.contains("crossing_status")) return "NEIGHBOURS";
         if (sql.contains("FROM movements")) return "MOVEMENT_NEAR";
         if (sql.contains("event_class = 'LOCAL_UNMAPPED'") && sql.contains("COUNT")) return "COUNT_UNMAPPED";
         if (sql.contains("FOR UPDATE") && sql.contains("LOCAL_UNMAPPED")) return "UNMAPPED_ROW";

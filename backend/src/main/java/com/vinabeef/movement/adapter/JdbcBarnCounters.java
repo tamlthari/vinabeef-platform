@@ -28,4 +28,14 @@ public class JdbcBarnCounters implements BarnCounters {
     public void countOut(String barnId) {
         jdbc.update("UPDATE barns SET daily_out_count = daily_out_count + 1 WHERE barn_id = ?", barnId);
     }
+
+    @Override
+    public void uncountIn(String barnId) {
+        jdbc.update("UPDATE barns SET daily_in_count = GREATEST(daily_in_count - 1, 0) WHERE barn_id = ?", barnId);
+    }
+
+    @Override
+    public void uncountOut(String barnId) {
+        jdbc.update("UPDATE barns SET daily_out_count = GREATEST(daily_out_count - 1, 0) WHERE barn_id = ?", barnId);
+    }
 }

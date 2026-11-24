@@ -96,6 +96,7 @@ class ListQueriesTest {
         assertTrue(all.sql().contains("sr.reader_name AS read_reader"), "the reader that completed the pass");
         assertTrue(all.sql().contains("fr.reader_name AS first_reader"), "the reader that saw the animal first");
         assertTrue(all.sql().contains("g.reader_name AS gate_reader") && all.sql().contains("g.label       AS gate_label"));
+        assertTrue(all.sql().contains("mv.crossing_status"), "so the stream can mark a half crossing");
         assertTrue(all.sql().contains("ORDER BY mv.occurred_at DESC, mv.movement_id DESC LIMIT ?"));
         assertEquals(List.of(15), all.params());
 
