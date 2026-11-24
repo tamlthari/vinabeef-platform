@@ -2,7 +2,7 @@
 
 ## Cloud server application hosted location
 
-The VinaBeef platform is publicly available for a limited duration before February 1, 2027 at [tamholthucwzr.men](tamholthucwzr.men).
+The VinaBeef platform is publicly available for a limited duration before February 1, 2027 at [tamholthucwzr.men](https://tamholthucwzr.men).
 
 ## 1. Prerequisites by Operating System
 
