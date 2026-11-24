@@ -1,14 +1,20 @@
 # Quick Container spin-up
+
+## Cloud server application hosted location
+
+The VinaBeef platform is publicly available for a limited duration before February 1, 2027 at `tamholthucwzr.men`.
+
 ## 1. Prerequisites by Operating System
 
 Ensure **Git** and **Docker Compose v2** (`docker compose`) are installed before cloning the repository.
+
 ```bash
 sudo apt update && sudo apt install -y docker.io docker-compose-v2 git
 sudo usermod -aG docker $USER && newgrp docker
 
 ```
 
-* **Windows (10/11):** Enable WSL 2 (`wsl --install` in an Administrator PowerShell, followed by a reboot), install [Git for Windows](https://git-scm.com/download/win), and install [Docker Desktop for Windows](https://www.docker.com/products/docker-desktop/) with **Use the WSL 2 based engine** checked in Settings.
+- **Windows (10/11):** Enable WSL 2 (`wsl --install` in an Administrator PowerShell, followed by a reboot), install [Git for Windows](https://git-scm.com/download/win), and install [Docker Desktop for Windows](https://www.docker.com/products/docker-desktop/) with **Use the WSL 2 based engine** checked in Settings.
 
 ---
 
@@ -41,10 +47,9 @@ services:
   frontend:
     ports:
       - "3000:3000"
-
 ```
 
-*(Because `docker-compose.override.yml` is automatically merged by `docker compose`, you do not need to modify the production `docker-compose.yml`.)*
+_(Because `docker-compose.override.yml` is automatically merged by `docker compose`, you do not need to modify the production `docker-compose.yml`.)_
 
 ---
 
@@ -72,22 +77,21 @@ Press `Ctrl + C` once startup completes.
 
 Import `scripts/seed_25k_cattle.sql` into PostgreSQL, then restart `vinabeef-backend` so `RbacScopeService` links the demo supervisor accounts to the seeded barns[cite: 3, 8]:
 
-* **macOS & Linux (Bash / Zsh):**
+- **macOS & Linux (Bash / Zsh):**
+
 ```bash
 docker exec -i vinabeef-postgres psql -U vinabeef_user -d vinabeef_db < scripts/seed_25k_cattle.sql
 docker restart vinabeef-backend
 
 ```
 
+- **Windows (PowerShell):**
 
-* **Windows (PowerShell):**
 ```powershell
 Get-Content -Raw scripts\seed_25k_cattle.sql | docker exec -i vinabeef-postgres psql -U vinabeef_user -d vinabeef_db
 docker restart vinabeef-backend
 
 ```
-
-
 
 ---
 
@@ -112,12 +116,12 @@ Verify the gateway health and SQLite outbox queue status at `http://localhost:80
 
 Open **`http://localhost:3000/login`** (FastAPI portal) or query **`http://localhost:8080/api/v1`** (Spring Boot REST API) using any of the pre-seeded accounts (password for all accounts is **`password123`**):
 
-| Username | Role | Facility / Barn Scope |
-| --- | --- | --- |
-| **`admin`** | `SYSTEM_ADMIN` | Global access across all 3 farms, 120 barns, 125 readers, and 25,000 cattle[cite: 3, 8] |
-| **`manager_daklak`** | `FARM_MANAGER` | Dak Lak Cattle Station (`FARM-DAK-LAK` — 40 barns) |
-| **`manager_gialai`** | `FARM_MANAGER` | Gia Lai Grazing Facility (`FARM-GIA-LAI` — 40 barns) |
-| **`manager_dongnai`** | `FARM_MANAGER` | Dong Nai Feedlot (`FARM-DONG-NAI` — 40 barns) |
-| **`supervisor_daklak`** | `BARN_SUPERVISOR` | Scoped to 3 assigned barns in `FARM-DAK-LAK` |
-| **`supervisor_gialai_2barns`** | `BARN_SUPERVISOR` | Scoped to 2 assigned barns in `FARM-GIA-LAI` |
-| **`executive`** | `EXECUTIVE` | Global read-only analytics and regulatory reporting |
+| Username                       | Role              | Facility / Barn Scope                                                                   |
+| ------------------------------ | ----------------- | --------------------------------------------------------------------------------------- |
+| **`admin`**                    | `SYSTEM_ADMIN`    | Global access across all 3 farms, 120 barns, 125 readers, and 25,000 cattle[cite: 3, 8] |
+| **`manager_daklak`**           | `FARM_MANAGER`    | Dak Lak Cattle Station (`FARM-DAK-LAK` — 40 barns)                                      |
+| **`manager_gialai`**           | `FARM_MANAGER`    | Gia Lai Grazing Facility (`FARM-GIA-LAI` — 40 barns)                                    |
+| **`manager_dongnai`**          | `FARM_MANAGER`    | Dong Nai Feedlot (`FARM-DONG-NAI` — 40 barns)                                           |
+| **`supervisor_daklak`**        | `BARN_SUPERVISOR` | Scoped to 3 assigned barns in `FARM-DAK-LAK`                                            |
+| **`supervisor_gialai_2barns`** | `BARN_SUPERVISOR` | Scoped to 2 assigned barns in `FARM-GIA-LAI`                                            |
+| **`executive`**                | `EXECUTIVE`       | Global read-only analytics and regulatory reporting                                     |
