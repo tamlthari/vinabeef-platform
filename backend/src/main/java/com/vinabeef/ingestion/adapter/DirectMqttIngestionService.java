@@ -20,6 +20,8 @@ import javax.net.ssl.*;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -70,6 +72,8 @@ public class DirectMqttIngestionService implements MqttCallbackExtended {
         return t;
     });
     private final AtomicInteger connectAttempts = new AtomicInteger();
+    /** The kinds of payload repair already reported, so the log says each once instead of once per message. */
+    private final Set<String> repairsReported = ConcurrentHashMap.newKeySet();
 
     @PostConstruct
     public void start() {
@@ -207,7 +211,11 @@ public class DirectMqttIngestionService implements MqttCallbackExtended {
         String jsonString = null;
         Long eventKey = null;
         try {
-            jsonString = PayloadDecoder.decode(message.getPayload(), token);
+            PayloadDecoder.Decoded decoded = PayloadDecoder.decodeWithNote(message.getPayload(), token);
+            jsonString = decoded.json();
+            if (decoded.repair() != null) {
+                reportRepair(topic, decoded.repair());
+            }
 
             SafetrustEventDto dto = objectMapper.readValue(jsonString, SafetrustEventDto.class);
             dto.setRawPayload(jsonString);
@@ -227,6 +235,15 @@ public class DirectMqttIngestionService implements MqttCallbackExtended {
                     topic, eventKey, ex.getMessage(), ex);
             keepDeadLetter(eventKey, ex.getMessage(),
                     jsonString != null ? jsonString : new String(message.getPayload(), StandardCharsets.UTF_8));
+        }
+    }
+
+    /** Safetrust's text was not quite standard Base64 but was readable: say so once per kind (at most 20 kinds), then stay quiet. */
+    private void reportRepair(String topic, String repair) {
+        if (repairsReported.size() < 20 && repairsReported.add(repair)) {
+            log.info("[PRIMARY_DIRECT_MQTT] Message on {} was read after tolerating: {}. Logged once for this kind.", topic, repair);
+        } else {
+            log.debug("[PRIMARY_DIRECT_MQTT] Message on {} was read after tolerating: {}", topic, repair);
         }
     }
 
