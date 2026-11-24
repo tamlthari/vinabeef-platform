@@ -1,7 +1,8 @@
-package com.vinabeef.movement;
+package com.vinabeef.movement.adapter;
 
 import com.vinabeef.movement.GateCrossingResolver.Side;
 import com.vinabeef.movement.GateCrossingResolver.Sighting;
+import com.vinabeef.movement.port.GateCrossingStore;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
@@ -12,23 +13,19 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Database access for the inner/outer reader pairing: which reader sits on which side of which gate, the
- * unpaired sightings waiting for the other reader, and reader status.
+ * JDBC implementation of the {@link GateCrossingStore} port.
  *
  * <p>All methods join the caller's transaction. They use {@link JdbcTemplate} because the rows they touch
  * point at {@code rfid_read_events} rows that were inserted with JDBC in the same transaction.
  */
 @Component
 @RequiredArgsConstructor
-class GateCrossingStore {
+public class JdbcGateCrossingStore implements GateCrossingStore {
 
     private final JdbcTemplate jdbc;
 
-    /** A reader that belongs to a gate, and the side of the gate it is mounted on. */
-    record ReaderBinding(String readerName, String gateId, Side side) {
-    }
-
-    Optional<ReaderBinding> findReader(String readerName) {
+    @Override
+    public Optional<ReaderBinding> findReader(String readerName) {
         if (readerName == null) {
             return Optional.empty();
         }
@@ -38,17 +35,14 @@ class GateCrossingStore {
                 readerName).stream().findFirst();
     }
 
-    /**
-     * Serialises concurrent events for one tag at one gate (for example a live MQTT message and an edge replay
-     * batch arriving together) until the transaction ends.
-     */
-    void lockCrossing(String tagEpc, String gateId) {
+    @Override
+    public void lockCrossing(String tagEpc, String gateId) {
         jdbc.query("SELECT pg_advisory_xact_lock(hashtext(?))", rs -> {
         }, tagEpc + "|" + gateId);
     }
 
-    /** Sightings of this tag at this gate that have no partner yet, with event time in [fromMs, toMs]. */
-    List<Sighting> findUnpaired(String tagEpc, String gateId, long fromMs, long toMs) {
+    @Override
+    public List<Sighting> findUnpaired(String tagEpc, String gateId, long fromMs, long toMs) {
         return jdbc.query("""
                         SELECT side, seen_ms, event_id
                         FROM gate_crossing_candidates
@@ -59,7 +53,8 @@ class GateCrossingStore {
                 tagEpc, gateId, fromMs, toMs);
     }
 
-    void addUnpaired(String tagEpc, String gateId, Sighting sighting) {
+    @Override
+    public void addUnpaired(String tagEpc, String gateId, Sighting sighting) {
         jdbc.update("""
                 INSERT INTO gate_crossing_candidates (event_id, tag_epc, gate_id, side, seen_ms)
                 VALUES (?, ?, ?, ?, ?)
@@ -67,11 +62,8 @@ class GateCrossingStore {
                 """, sighting.eventId(), tagEpc, gateId, sighting.side().name(), sighting.eventMs());
     }
 
-    /**
-     * Removes the paired sighting and the other unpaired reads that led up to the same pass (earlier than the
-     * later sighting and within the window), so a tag that lingers between the readers is counted once.
-     */
-    void consume(String tagEpc, String gateId, String partnerEventId, long laterMs, long windowMs) {
+    @Override
+    public void consume(String tagEpc, String gateId, String partnerEventId, long laterMs, long windowMs) {
         jdbc.update("""
                 DELETE FROM gate_crossing_candidates
                 WHERE tag_epc = ? AND gate_id = ?
@@ -79,14 +71,14 @@ class GateCrossingStore {
                 """, tagEpc, gateId, partnerEventId, laterMs - windowMs, laterMs);
     }
 
-    /** Forgets unpaired sightings of this tag at this gate that are older than {@code beforeMs}. */
-    void pruneBefore(String tagEpc, String gateId, long beforeMs) {
+    @Override
+    public void pruneBefore(String tagEpc, String gateId, long beforeMs) {
         jdbc.update("DELETE FROM gate_crossing_candidates WHERE tag_epc = ? AND gate_id = ? AND seen_ms < ?",
                 tagEpc, gateId, beforeMs);
     }
 
-    /** True when a paired-reader movement of this animal at this gate happened within {@code debounceMs} of {@code eventMs}. */
-    boolean crossingCompletedNear(String animalId, String gateId, long eventMs, long debounceMs) {
+    @Override
+    public boolean crossingCompletedNear(String animalId, String gateId, long eventMs, long debounceMs) {
         Integer n = jdbc.queryForObject("""
                 SELECT COUNT(*) FROM movements
                 WHERE animal_id = ? AND gate_id = ? AND detection_method = 'PAIRED_READERS'
@@ -95,12 +87,8 @@ class GateCrossingStore {
         return n != null && n > 0;
     }
 
-    /**
-     * True when this animal already has a movement at this gate within {@code debounceMs} of {@code eventMs}, by any
-     * method. Used for gates without a reader pair, where an animal standing at the reader reports several times.
-     * It compares event time, so a replayed backlog gives the same answer as live ingestion.
-     */
-    boolean movementNear(String animalId, String gateId, long eventMs, long debounceMs) {
+    @Override
+    public boolean movementNear(String animalId, String gateId, long eventMs, long debounceMs) {
         if (debounceMs <= 0) {
             return false;
         }
@@ -112,8 +100,8 @@ class GateCrossingStore {
         return n != null && n > 0;
     }
 
-    /** Remembers that a registered reader produced an event at {@code eventMs} (hardware time). */
-    void touchReader(String readerName, long eventMs) {
+    @Override
+    public void touchReader(String readerName, long eventMs) {
         if (readerName == null) {
             return;
         }
@@ -124,11 +112,8 @@ class GateCrossingStore {
                 """, ts(eventMs), ts(eventMs), readerName);
     }
 
-    /**
-     * Applies a reader connect or disconnect. An older event never overwrites a newer status, so an edge
-     * replay that delivers a stale "connected" after a fresh "disconnected" is harmless.
-     */
-    void setConnection(String readerName, String status, String ipAddress, long eventMs) {
+    @Override
+    public void setConnection(String readerName, String status, String ipAddress, long eventMs) {
         if (readerName == null) {
             return;
         }

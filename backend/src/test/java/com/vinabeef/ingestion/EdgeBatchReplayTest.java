@@ -34,6 +34,22 @@ class EdgeBatchReplayTest {
                 throw new IllegalStateException("database down for " + dto.getEventKey());
             }
         }
+
+        // The replay needs none of the unmapped-read operations; a stand-in that is asked for them has been wired wrongly.
+        @Override
+        public boolean reprocessUnmappedLocalRead(String eventId) {
+            throw new UnsupportedOperationException("the replay never retries unmapped reads");
+        }
+
+        @Override
+        public List<String> unmappedLocalReadIds(int limit) {
+            throw new UnsupportedOperationException("the replay never lists unmapped reads");
+        }
+
+        @Override
+        public int countUnmappedLocalReads() {
+            throw new UnsupportedOperationException("the replay never counts unmapped reads");
+        }
     }
 
     private static SafetrustEventDto event(Long key, Long timestamp) {

@@ -1,4 +1,4 @@
-package com.vinabeef.ingestion;
+package com.vinabeef.ingestion.adapter;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;

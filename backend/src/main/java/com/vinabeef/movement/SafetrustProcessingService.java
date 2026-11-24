@@ -1,29 +1,35 @@
 package com.vinabeef.movement;
 
-import com.vinabeef.cattle.TagAssignmentRepository;
-import com.vinabeef.facilities.BarnRepository;
 import com.vinabeef.facilities.Gate;
 import com.vinabeef.facilities.GateDirectionMode;
-import com.vinabeef.facilities.GateRepository;
 import com.vinabeef.ingestion.IngestionBenchmarkService;
 import com.vinabeef.ingestion.SafetrustEventDto;
 import com.vinabeef.ingestion.TelemetryEventProcessor;
 import com.vinabeef.movement.GateCrossingResolver.Decision;
 import com.vinabeef.movement.GateCrossingResolver.Sighting;
-import com.vinabeef.movement.GateCrossingStore.ReaderBinding;
+import com.vinabeef.movement.port.AlertSink;
+import com.vinabeef.movement.port.AnimalRegistry;
+import com.vinabeef.movement.port.BarnCounters;
+import com.vinabeef.movement.port.GateCrossingStore;
+import com.vinabeef.movement.port.GateCrossingStore.ReaderBinding;
+import com.vinabeef.movement.port.GateLookup;
+import com.vinabeef.movement.port.MovementBook;
+import com.vinabeef.movement.port.ReadEventLog;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
+/**
+ * The movement use case: turns one reader event into a stored raw read and, for a card read, into a movement. It
+ * knows the rules (which reader pairs with which, which direction, when a read is a repeat, which alert) and nothing
+ * about how anything is stored: every read and write goes through a port in {@code movement.port}.
+ */
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -32,14 +38,14 @@ public class SafetrustProcessingService implements TelemetryEventProcessor {
     /** Unpaired sightings older than this (event time) can no longer find a partner and are dropped. */
     private static final long UNPAIRED_RETENTION_MS = 3_600_000L;
 
-    private final TagAssignmentRepository tagAssignmentRepo;
-    private final GateRepository gateRepo;
-    private final MovementRepository movementRepo;
-    private final PresenceStateRepository presenceRepo;
-    private final BarnRepository barnRepo;
-    private final IngestionBenchmarkService benchmarkService;
-    private final JdbcTemplate jdbcTemplate;
+    private final AnimalRegistry animals;
+    private final GateLookup gates;
+    private final MovementBook book;
+    private final BarnCounters barns;
+    private final AlertSink alerts;
+    private final ReadEventLog eventLog;
     private final GateCrossingStore crossingStore;
+    private final IngestionBenchmarkService benchmarkService;
     private final CredentialCardResolver credentialResolver;
     private final CrossSourceMatcher crossSourceMatcher;
 
@@ -64,7 +70,7 @@ public class SafetrustProcessingService implements TelemetryEventProcessor {
 
         // 1. Keep every event exactly once. EVENT_KEY is the idempotency key, so a replay of the same event
         //    (edge outbox, second subscriber, Safetrust redelivery) is a no-op instead of an error.
-        if (!storeRawEvent(eventId, dto, eventClass, hardwareMs, ingressMode, resolvedBy)) {
+        if (!eventLog.storeIfNew(eventId, dto, eventClass, hardwareMs, ingressMode, resolvedBy)) {
             log.info("[{}] Idempotent duplicate EVENT_KEY {} skipped.", ingressMode, metricKey);
             return;
         }
@@ -94,44 +100,37 @@ public class SafetrustProcessingService implements TelemetryEventProcessor {
     @Override
     @Transactional
     public boolean reprocessUnmappedLocalRead(String eventId) {
-        LocalReadSql.Query load = LocalReadSql.unmappedRow(eventId);
-        List<Map<String, Object>> rows = jdbcTemplate.queryForList(load.sql(), load.params().toArray());
-        if (rows.isEmpty()) {
+        Optional<ReadEventLog.UnmappedRead> stored = eventLog.findUnmapped(eventId);
+        if (stored.isEmpty()) {
             return false;
         }
-        Map<String, Object> row = rows.get(0);
-        String credential = row.get("credential_identifier") == null ? null : String.valueOf(row.get("credential_identifier"));
-        Optional<CredentialCardResolver.Resolution> found = credentialResolver.resolve(credential);
+        ReadEventLog.UnmappedRead row = stored.get();
+        Optional<CredentialCardResolver.Resolution> found = credentialResolver.resolve(row.credential());
         if (found.isEmpty()) {
             return false;
         }
-        LocalReadSql.Query resolve = LocalReadSql.resolveRow(eventId, found.get().cardUuid(), found.get().resolvedBy());
-        jdbcTemplate.update(resolve.sql(), resolve.params().toArray());
+        eventLog.markResolved(eventId, found.get().cardUuid(), found.get().resolvedBy());
 
         SafetrustEventDto dto = new SafetrustEventDto();
-        dto.setEventKey(row.get("event_key") == null ? null : ((Number) row.get("event_key")).longValue());
-        dto.setReaderName(String.valueOf(row.get("reader_name")));
-        dto.setCredentialIdentifier(credential);
+        dto.setEventKey(row.eventKey());
+        dto.setReaderName(row.readerName());
+        dto.setCredentialIdentifier(row.credential());
         dto.setCardUuid(found.get().cardUuid());
-        long hardwareMs = ((Number) row.get("hardware_timestamp")).longValue();
-        dto.setTimestamp(hardwareMs);
+        dto.setTimestamp(row.hardwareMs());
         dto.setEdgeSource(SafetrustEventDto.SOURCE_LOCAL_USB);
-        dto.setEdgeDevice(row.get("source_device") == null ? null : String.valueOf(row.get("source_device")));
-        processCardRead(dto, "REPROCESS", System.nanoTime(), dto.getEventKey() != null ? dto.getEventKey() : 0L, hardwareMs, eventId);
+        dto.setEdgeDevice(row.sourceDevice());
+        processCardRead(dto, "REPROCESS", System.nanoTime(), dto.getEventKey() != null ? dto.getEventKey() : 0L, row.hardwareMs(), eventId);
         return true;
     }
 
     @Override
     public List<String> unmappedLocalReadIds(int limit) {
-        LocalReadSql.Query q = LocalReadSql.unmappedIds(limit);
-        return jdbcTemplate.queryForList(q.sql(), String.class, q.params().toArray());
+        return eventLog.unmappedIds(limit);
     }
 
     @Override
     public int countUnmappedLocalReads() {
-        Integer n = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM rfid_read_events WHERE event_class = 'LOCAL_UNMAPPED'", Integer.class);
-        return n == null ? 0 : n;
+        return eventLog.countUnmapped();
     }
 
     /** A USB read whose credential number is not known: stored (already), shown on the Raw reads page, and one alert for the barn. */
@@ -141,7 +140,7 @@ public class SafetrustProcessingService implements TelemetryEventProcessor {
         log.warn("[{}] ANOMALY: credential {} from USB reader '{}' maps to no card yet; the read is kept as LOCAL_UNMAPPED.",
                 ingressMode, dto.getCredentialNumber(), readerName);
         if (gate.isPresent()) {
-            raiseUnmappedCredentialAlert(gate.get().getBarnId(), dto.getCredentialNumber(), readerName,
+            alerts.raiseUnmappedCredential(gate.get().getBarnId(), dto.getCredentialNumber(), readerName,
                     gate.get().getGateId(), metricKey);
         } else {
             log.warn("[{}] No gate is registered for reader '{}': no alert raised for the unmapped credential.", ingressMode, readerName);
@@ -152,8 +151,8 @@ public class SafetrustProcessingService implements TelemetryEventProcessor {
         if (readerName == null) {
             return Optional.empty();
         }
-        Optional<Gate> viaPair = crossingStore.findReader(readerName).flatMap(b -> gateRepo.findById(b.gateId()));
-        Optional<Gate> gate = viaPair.isPresent() ? viaPair : gateRepo.findByReaderNameAndRetiredAtIsNull(readerName);
+        Optional<Gate> viaPair = crossingStore.findReader(readerName).flatMap(b -> gates.byId(b.gateId()));
+        Optional<Gate> gate = viaPair.isPresent() ? viaPair : gates.activeByReaderName(readerName);
         return gate.filter(g -> g.getRetiredAt() == null);
     }
 
@@ -179,30 +178,26 @@ public class SafetrustProcessingService implements TelemetryEventProcessor {
         }
 
         Gate found = binding
-                .flatMap(b -> gateRepo.findById(b.gateId()))
-                .orElseGet(() -> readerName == null ? null : gateRepo.findByReaderNameAndRetiredAtIsNull(readerName).orElse(null));
+                .flatMap(b -> gates.byId(b.gateId()))
+                .orElseGet(() -> readerName == null ? null : gates.activeByReaderName(readerName).orElse(null));
         // a retired reader is no longer part of the farm: its reads raise the "unregistered reader" alert
         final Gate gate = found != null && found.getRetiredAt() == null ? found : null;
         if (gate == null) {
             log.warn("[{}] ANOMALY: Unregistered Gate Reader '{}'", ingressMode, readerName);
-            raiseUnregisteredReaderAlert(readerName, card, metricKey);
+            alerts.raiseUnregisteredReader(readerName, card, metricKey);
             return;
         }
 
         // 4. Strict animal identity resolution (never invent an animal identity)
-        String animalId = tagAssignmentRepo.findActiveAnimalByTagEpc(card).orElse(null);
-        if (animalId == null && dto.getUserName() != null) {
-            Integer count = jdbcTemplate.queryForObject(
-                    "SELECT COUNT(*) FROM animals WHERE animal_id = ? AND lifecycle_status <> 'ARCHIVED'", Integer.class, dto.getUserName());
-            if (count != null && count > 0) {
-                animalId = dto.getUserName();
-            }
+        String animalId = animals.activeAnimalForTag(card).orElse(null);
+        if (animalId == null && dto.getUserName() != null && animals.isLiveAnimal(dto.getUserName())) {
+            animalId = dto.getUserName();
         }
 
         if (animalId == null) {
             log.warn("[{}] ANOMALY [UNEXPECTED_TAG]: Unregistered Tag '{}' at Gate '{}' ({})",
                     ingressMode, card, gate.getGateId(), readerName);
-            raiseUnexpectedTagAlert(gate.getBarnId(), card,
+            alerts.raiseUnexpectedTag(gate.getBarnId(), card,
                     dto.getUserName() != null ? dto.getUserName() : "UNKNOWN",
                     readerName, gate.getGateId(), metricKey);
             benchmarkService.recordMetric(ingressMode, metricKey, tIngressNano, System.nanoTime(), System.nanoTime(), hardwareMs);
@@ -210,7 +205,7 @@ public class SafetrustProcessingService implements TelemetryEventProcessor {
         }
 
         final String resolvedAnimalId = animalId;
-        PresenceState state = presenceRepo.findById(resolvedAnimalId).orElseGet(() -> {
+        PresenceState state = book.presenceOf(resolvedAnimalId).orElseGet(() -> {
             PresenceState s = new PresenceState();
             s.setAnimalId(resolvedAnimalId);
             s.setCurrentBarnId(gate.getBarnId());
@@ -284,25 +279,16 @@ public class SafetrustProcessingService implements TelemetryEventProcessor {
         String nextPresence = GateDirectionPolicy.presenceAfter(direction);
 
         // 6. WRONG_BARN: the animal is assigned to another barn
-        List<String> assignedBarns = jdbcTemplate.queryForList(
-                "SELECT assigned_barn_id FROM animals WHERE animal_id = ?", String.class, resolvedAnimalId);
-        String assignedBarnId = assignedBarns.isEmpty() ? null : assignedBarns.get(0);
+        String assignedBarnId = animals.assignedBarn(resolvedAnimalId).orElse(null);
         if (assignedBarnId != null && !assignedBarnId.equals(gate.getBarnId())) {
             log.warn("[{}] ANOMALY [WRONG_BARN]: Animal '{}' (assigned: {}) scanned at Gate '{}' (barn: {})",
                     ingressMode, resolvedAnimalId, assignedBarnId, gate.getGateId(), gate.getBarnId());
-            raiseWrongBarnAlert(resolvedAnimalId, assignedBarnId, gate.getBarnId(), readerName, direction);
+            alerts.raiseWrongBarn(resolvedAnimalId, assignedBarnId, gate.getBarnId(), readerName, direction);
         }
 
         // 7. An animal that comes back IN resolves its open MISSING_CATTLE alert
         if ("IN".equals(direction)) {
-            jdbcTemplate.update("""
-                UPDATE alerts
-                SET state = 'RESOLVED',
-                    resolved_by = 'SYSTEM_AUTO',
-                    resolved_at = CURRENT_TIMESTAMP,
-                    resolution_note = 'Animal detected returning IN via gate ' || ?
-                WHERE animal_id = ? AND type = 'MISSING_CATTLE' AND state IN ('OPEN', 'ACKNOWLEDGED')
-            """, readerName, resolvedAnimalId);
+            alerts.resolveMissingCattle(resolvedAnimalId, readerName);
         }
 
         // 8. Movement
@@ -317,14 +303,14 @@ public class SafetrustProcessingService implements TelemetryEventProcessor {
         movement.setDetectionMethod(method);
         movement.setFirstEventId(firstEventId);
         movement.setCrossingStartedAt(crossingStartedAt);
-        movementRepo.save(movement);
+        book.saveMovement(movement);
 
         // 9. Presence and barn counters
         state.setPresenceStatus(nextPresence);
         state.setCurrentBarnId(gate.getBarnId());
         state.setLastMovementId(movementId);
         state.setUpdatedAt(Instant.now());
-        presenceRepo.save(state);
+        book.savePresence(state);
 
         // Headcount: only a real change between "in a barn" and "not in a barn" moves it, whatever the method.
         List<GateDirectionPolicy.HeadcountMove> moves =
@@ -334,12 +320,12 @@ public class SafetrustProcessingService implements TelemetryEventProcessor {
                     ingressMode, resolvedAnimalId, direction, previousStatus, previousBarnId);
         }
         for (GateDirectionPolicy.HeadcountMove move : moves) {
-            barnRepo.adjustHeadcount(move.barnId(), move.delta());
+            barns.adjustHeadcount(move.barnId(), move.delta());
         }
         if ("IN".equals(direction)) {
-            jdbcTemplate.update("UPDATE barns SET daily_in_count = daily_in_count + 1 WHERE barn_id = ?", gate.getBarnId());
+            barns.countIn(gate.getBarnId());
         } else {
-            jdbcTemplate.update("UPDATE barns SET daily_out_count = daily_out_count + 1 WHERE barn_id = ?", gate.getBarnId());
+            barns.countOut(gate.getBarnId());
         }
 
         long tDbDoneNano = System.nanoTime();
@@ -360,69 +346,5 @@ public class SafetrustProcessingService implements TelemetryEventProcessor {
         }
         log.info("[{}] {} event {} at reader '{}' (action: {}) stored.",
                 ingressMode, dto.getEventClass(), dto.getEventKey(), readerName, dto.getGateAction());
-    }
-
-    /** Inserts the raw event. Returns false when an event with the same EVENT_KEY is already stored. */
-    private boolean storeRawEvent(String eventId, SafetrustEventDto dto, String eventClass,
-                                  long hardwareMs, String ingressMode, String cardResolvedBy) {
-        String payload = dto.getRawPayload() != null && !dto.getRawPayload().isBlank() ? dto.getRawPayload() : "{}";
-        String readerName = dto.getReaderName() != null ? dto.getReaderName() : "UNKNOWN";
-        int rows = jdbcTemplate.update("""
-                INSERT INTO rfid_read_events (
-                    event_id, event_key, transaction_id, device_key, company_key, reader_name, card_uuid,
-                    credential_identifier, user_name, gate_action, hardware_timestamp, observed_at, raw_payload,
-                    ingress_source, event_class, reader_key, user_key, building_access_key, credential_type,
-                    sensor_type, cloud_modified_ms, read_source, source_device, time_source, card_resolved_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (event_key) DO NOTHING
-                """,
-                eventId, dto.getEventKey(), dto.getTransactionId(), dto.getDeviceKey(), dto.getCompanyKey(),
-                readerName, dto.getCardUuid(), dto.getCredentialIdentifier(), dto.getUserName(),
-                dto.getGateAction(), hardwareMs, Timestamp.from(Instant.ofEpochMilli(hardwareMs)), payload,
-                ingressMode, eventClass, dto.getReaderKey(), dto.getUserKey(), dto.getBuildingAccessKey(),
-                dto.getCredentialType(), dto.getSensorType(), dto.getModified(),
-                dto.getReadSource(), dto.getEdgeDevice(), dto.getEdgeTimeSource(), cardResolvedBy);
-        return rows == 1;
-    }
-
-    private void raiseUnexpectedTagAlert(String barnId, String tagEpc, String userName, String readerName, String gateId, long eventKey) {
-        jdbcTemplate.update("""
-            INSERT INTO alerts (alert_id, type, severity, animal_id, barn_id, state, evidence, raised_at)
-            VALUES (?, 'UNEXPECTED_TAG', 'HIGH', NULL, ?, 'OPEN',
-                    jsonb_build_object('tagEpc', ?, 'userName', ?, 'readerName', ?, 'gateId', ?, 'eventKey', ?),
-                    CURRENT_TIMESTAMP)
-        """, "ALT-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase(),
-                barnId, tagEpc, userName, readerName, gateId, eventKey);
-    }
-
-    private void raiseUnmappedCredentialAlert(String barnId, String credential, String readerName, String gateId, long eventKey) {
-        jdbcTemplate.update("""
-            INSERT INTO alerts (alert_id, type, severity, animal_id, barn_id, state, evidence, raised_at)
-            VALUES (?, 'UNEXPECTED_TAG', 'MEDIUM', NULL, ?, 'OPEN',
-                    jsonb_build_object('credential', ?, 'readerName', ?, 'gateId', ?, 'eventKey', ?,
-                                       'reason', 'Credential number from a USB reader that matches no known card'),
-                    CURRENT_TIMESTAMP)
-        """, "ALT-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase(),
-                barnId, credential, readerName, gateId, eventKey);
-    }
-
-    private void raiseWrongBarnAlert(String animalId, String assignedBarn, String detectedBarn, String readerName, String direction) {
-        jdbcTemplate.update("""
-            INSERT INTO alerts (alert_id, type, severity, animal_id, barn_id, state, evidence, raised_at)
-            VALUES (?, 'WRONG_BARN', 'MEDIUM', ?, ?, 'OPEN',
-                    jsonb_build_object('assignedBarn', ?, 'detectedBarn', ?, 'readerName', ?, 'direction', ?),
-                    CURRENT_TIMESTAMP)
-        """, "ALT-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase(),
-                animalId, detectedBarn, assignedBarn, detectedBarn, readerName, direction);
-    }
-
-    private void raiseUnregisteredReaderAlert(String readerName, String cardUuid, long eventKey) {
-        jdbcTemplate.update("""
-            INSERT INTO alerts (alert_id, type, severity, animal_id, barn_id, state, evidence, raised_at)
-            VALUES (?, 'UNEXPECTED_TAG', 'MEDIUM', NULL, 'BARN-DL-01', 'OPEN',
-                    jsonb_build_object('readerName', ?, 'tagEpc', ?, 'eventKey', ?, 'reason', 'Unregistered gate reader'),
-                    CURRENT_TIMESTAMP)
-        """, "ALT-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase(),
-                readerName, cardUuid, eventKey);
     }
 }

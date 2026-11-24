@@ -1,4 +1,4 @@
-package com.vinabeef.movement;
+package com.vinabeef.movement.adapter;
 
 import java.util.List;
 

@@ -1,8 +1,12 @@
-package com.vinabeef.ingestion;
+package com.vinabeef.ingestion.adapter;
 
 // import com.fasterxml.jackson.databind.ObjectMapper;
 import tools.jackson.databind.ObjectMapper;
 // import com.vinabeef.movement.SafetrustProcessingService;
+import com.vinabeef.ingestion.DeadLetterService;
+import com.vinabeef.ingestion.IngestionHealthService;
+import com.vinabeef.ingestion.SafetrustEventDto;
+import com.vinabeef.ingestion.TelemetryEventProcessor;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;

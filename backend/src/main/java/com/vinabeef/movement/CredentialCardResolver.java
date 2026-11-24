@@ -1,7 +1,7 @@
 package com.vinabeef.movement;
 
+import com.vinabeef.movement.port.CredentialLookup;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -30,10 +30,10 @@ public class CredentialCardResolver {
     public record Resolution(String cardUuid, String resolvedBy) {
     }
 
-    private final JdbcTemplate jdbc;
+    private final CredentialLookup lookup;
 
-    public CredentialCardResolver(JdbcTemplate jdbc) {
-        this.jdbc = jdbc;
+    public CredentialCardResolver(CredentialLookup lookup) {
+        this.lookup = lookup;
     }
 
     public Optional<Resolution> resolve(String credential) {
@@ -42,8 +42,7 @@ public class CredentialCardResolver {
         }
         String number = credential.trim();
 
-        LocalReadSql.Query history = LocalReadSql.cardByHistory(number);
-        List<String> seen = jdbc.queryForList(history.sql(), String.class, history.params().toArray());
+        List<String> seen = lookup.cardsByHistory(number);
         if (seen.size() == 1) {
             return Optional.of(new Resolution(seen.get(0).trim().toUpperCase(), BY_HISTORY));
         }
@@ -52,8 +51,7 @@ public class CredentialCardResolver {
             return Optional.empty();
         }
 
-        LocalReadSql.Query register = LocalReadSql.cardByRegister(number);
-        List<String> tags = jdbc.queryForList(register.sql(), String.class, register.params().toArray());
+        List<String> tags = lookup.cardsByRegister(number);
         if (tags.size() == 1) {
             return Optional.of(new Resolution(tags.get(0).trim().toUpperCase(), BY_REGISTER));
         }

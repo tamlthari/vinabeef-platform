@@ -1,50 +1,45 @@
 package com.vinabeef.security;
 
+import com.vinabeef.security.port.AuthenticatedUser;
+import com.vinabeef.security.port.ScopeDirectory;
 import lombok.RequiredArgsConstructor;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
-import java.util.*;
+import java.util.List;
+import java.util.Optional;
 
 /**
  * Reads the signed-in person's scope and answers whether they may act on a barn. Controllers depend on the two
- * small interfaces, {@link CurrentScopeProvider} and {@link BarnAccessPolicy}, not on this class.
+ * small interfaces, {@link CurrentScopeProvider} and {@link BarnAccessPolicy}, not on this class; this class
+ * depends on two ports, not on the security framework or the database.
  */
 @Service
 @RequiredArgsConstructor
 public class RbacScopeService implements CurrentScopeProvider, BarnAccessPolicy {
 
-    private final JdbcTemplate jdbcTemplate;
+    private final AuthenticatedUser signedIn;
+    private final ScopeDirectory directory;
 
     @Override
     public UserScope getCurrentScope() {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getPrincipal())) {
+        Optional<String> who = signedIn.username();
+        if (who.isEmpty()) {
             return new UserScope("anonymous", "NONE", null, List.of());
         }
 
-        String username = auth.getName();
-        var rows = jdbcTemplate.queryForList(
-                "SELECT username, role, farm_id FROM users WHERE username = ?", username);
-
-        if (rows.isEmpty()) {
+        String username = who.get();
+        Optional<ScopeDirectory.Account> account = directory.findAccount(username);
+        if (account.isEmpty()) {
             return new UserScope(username, "NONE", null, List.of());
         }
 
-        String role = String.valueOf(rows.get(0).get("role"));
-        Object rawFarm = rows.get(0).get("farm_id");
-        String farmId = rawFarm != null ? String.valueOf(rawFarm) : null;
-
+        String role = account.get().role();
         List<String> barnIds = List.of();
         if ("BARN_SUPERVISOR".equals(role)) {
-            barnIds = jdbcTemplate.queryForList(
-                    "SELECT barn_id FROM user_barn_assignments WHERE username = ? ORDER BY barn_id",
-                    String.class, username);
+            barnIds = directory.barnsAssignedTo(username);
         }
 
-        return new UserScope(username, role, farmId, barnIds);
+        return new UserScope(username, role, account.get().farmId(), barnIds);
     }
 
     @Override
@@ -55,9 +50,8 @@ public class RbacScopeService implements CurrentScopeProvider, BarnAccessPolicy 
             return scope.barnIds().contains(barnId);
         }
         if (scope.isFarmScoped()) {
-            var farms = jdbcTemplate.queryForList(
-                    "SELECT farm_id FROM barns WHERE barn_id = ?", String.class, barnId);
-            return !farms.isEmpty() && farms.get(0).equals(scope.farmId());
+            Optional<String> farm = directory.farmOfBarn(barnId);
+            return farm.isPresent() && farm.get().equals(scope.farmId());
         }
         return false;
     }

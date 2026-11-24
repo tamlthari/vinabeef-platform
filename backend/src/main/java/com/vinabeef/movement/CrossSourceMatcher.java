@@ -1,8 +1,8 @@
 package com.vinabeef.movement;
 
+import com.vinabeef.movement.port.ReadTwinStore;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -22,14 +22,14 @@ import java.util.Optional;
 @Slf4j
 public class CrossSourceMatcher {
 
-    private final JdbcTemplate jdbc;
+    private final ReadTwinStore twins;
     private final boolean enabled;
     private final long windowMs;
 
-    public CrossSourceMatcher(JdbcTemplate jdbc,
+    public CrossSourceMatcher(ReadTwinStore twins,
                               @Value("${ingestion.cross-source.enabled:true}") boolean enabled,
                               @Value("${ingestion.cross-source.window-ms:10000}") long windowMs) {
-        this.jdbc = jdbc;
+        this.twins = twins;
         this.enabled = enabled;
         this.windowMs = Math.max(0, windowMs);
     }
@@ -50,23 +50,18 @@ public class CrossSourceMatcher {
         if (!enabled || card == null || readerName == null) {
             return Optional.empty();
         }
-        LocalReadSql.Query lock = LocalReadSql.lock(card, readerName);
-        jdbc.query(lock.sql(), rs -> {
-        }, lock.params().toArray());
+        twins.lock(card, readerName);
 
-        LocalReadSql.Query find = LocalReadSql.findTwin(eventId, readerName, card, readSource, hardwareMs, windowMs);
-        List<String> found = jdbc.queryForList(find.sql(), String.class, find.params().toArray());
+        List<String> found = twins.findTwin(eventId, readerName, card, readSource, hardwareMs, windowMs);
         if (found.isEmpty()) {
             return Optional.empty();
         }
         String first = found.get(0);
 
-        LocalReadSql.Query primary = LocalReadSql.markPrimary(first, eventId);
-        if (jdbc.update(primary.sql(), primary.params().toArray()) != 1) {
+        if (!twins.markPrimary(first, eventId)) {
             return Optional.empty();           // it was paired with another copy a moment ago
         }
-        LocalReadSql.Query copy = LocalReadSql.markDuplicate(eventId, first);
-        jdbc.update(copy.sql(), copy.params().toArray());
+        twins.markDuplicate(eventId, first);
         log.info("Read {} of tag '{}' at reader '{}' ({}) is the second copy of read {}: no second movement.",
                 eventId, card, readerName, readSource, first);
         return Optional.of(first);
