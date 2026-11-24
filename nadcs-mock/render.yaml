@@ -1,5 +1,12 @@
 # Render Blueprint. Put this file in the ROOT of the repository Render deploys from.
 # If nadcs-mock/ is a folder inside the VinaBeef repo, keep `rootDir`; if you made a repo of its own, delete the rootDir line.
+#
+# HISTORY OF PAST TRANSMISSIONS. The page at /ui lists every transmission VinaBeef has sent, with the status of each attempt.
+# By default that list is in memory, so on the FREE plan it is empty again after every spin-down (15 min idle) or restart.
+# Render only lets PAID instance types attach a persistent disk (https://render.com/docs/disks). To keep the history:
+#   1. change `plan: free` to `plan: starter` (or larger),
+#   2. uncomment the `disk` block and the NADCS_MOCK_DB variable below.
+# The server then saves the last 200 submissions to that file and reads them back at start-up.
 services:
   - type: web
     name: nadcs-mock
@@ -9,8 +16,14 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
+    # disk:                    # paid plans only
+    #   name: nadcs-history
+    #   mountPath: /var/data
+    #   sizeGB: 1
     envVars:
       - key: NADCS_MOCK_API_KEYS
         generateValue: true    # Render generates a secret; copy it from the dashboard into the VinaBeef backend as NADCS_API_KEY
       - key: PYTHON_VERSION
         value: 3.12.7
+      # - key: NADCS_MOCK_DB   # paid plans with the disk above: keeps the receipt history across restarts
+      #   value: /var/data/nadcs-mock.db

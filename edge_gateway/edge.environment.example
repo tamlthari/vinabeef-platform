@@ -11,8 +11,9 @@ MQTT_USERNAME=728589
 # Safetrust wants the literal prefix "token/" followed by the API token
 MQTT_PASSWORD=token/PASTE_THE_SAFETRUST_API_TOKEN_HERE
 MQTT_TOPICS=Web/475/Monitoring/728589
-# Every running copy needs its own client id, or the broker disconnects the other one. Keep the Web_ prefix.
-MQTT_CLIENT_ID=Web_Edge_barn1
+# The client id has the shape of the cloud's own: Web_Direct_728589 (backend), Web_Standby_728589 (standby adapter), so
+# Web_<name>_<device key>[_<suffix>]. Every running copy needs its own, or the broker disconnects the other one.
+MQTT_CLIENT_ID=Web_Edge_728589_barn1
 # A broker on the barn LAN would look like:  MQTT_URL=mqtt://192.168.2.10:1883  (no username needed)
 
 # --- optional ----------------------------------------------------------------------------------------
@@ -22,7 +23,8 @@ MQTT_CLIENT_ID=Web_Edge_barn1
 # EDGE_INGEST_TOKEN=change-me          # if set, POST needs the header  X-Edge-Token: change-me
 # EDGE_CONSOLE_TOKEN=change-me         # password for the read-only web console (http://<gateway>:8090/). Empty = open to the barn LAN
 # MQTT_CLEAN_SESSION=true              # false asks the broker to keep messages while this gateway is off
-# MQTT_QOS=1
+# MQTT_QOS=2                           # what the backend and the standby adapter ask Safetrust for (the default)
+# MQTT_TOKEN_TOPIC=auto                # they also subscribe to token/<API token>; auto does the same when the password starts with token/
 # MQTT_TLS_INSECURE=true               # the Safetrust demo broker needs this; use false with a real CA
 # EDGE_MAX_QUEUE_ROWS=200000
 

@@ -1,3 +1,7 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+# the history file (NADCS_MOCK_DB) and its SQLite side files
+*.db
+*.db-shm
+*.db-wal

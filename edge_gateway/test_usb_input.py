@@ -312,3 +312,42 @@ def test_the_stdin_source_turns_typed_lines_into_swipes_and_ends_at_end_of_input
     src.start(); src.join(2)
     assert sink.items == [("DrC0F8", "stdin", "38", 9), ("DrC0F8", "stdin", "1005", 9), ("DrC0F8", "stdin", "abc", 9)]
     assert not src.connected
+
+
+# ---- a reader that cannot be listened to says why (found on a Mac: kbd: reads /dev/input, which is Linux only) ----------
+def test_keyboard_source_on_a_mac_says_it_is_linux_only_and_does_not_retry_forever(monkeypatch, caplog):
+    import usb_input
+    monkeypatch.setattr(usb_input.sys, "platform", "darwin")
+    seen = []
+    src = usb_input.KeyboardSource("kbd-event5", "F9E2", lambda *a: seen.append(a), path="/dev/input/event5")
+    src.run()                                                       # returns at once instead of retrying every 5 s
+    assert src.connected is False and "Linux only" in src.note and "macOS" in src.note and "stdin=" in src.note
+    assert "serial:" in src.note and "cu.usbmodem" in src.note
+    assert any("USB input kbd-event5" in r.message for r in caplog.records)
+
+
+def test_keyboard_source_on_linux_explains_a_missing_device(monkeypatch):
+    import usb_input
+    monkeypatch.setattr(usb_input.sys, "platform", "linux")
+    src = usb_input.KeyboardSource("kbd-x", "F9E2", lambda *a: None, path="/dev/input/by-id/does-not-exist", retry_s=0.01)
+    t = threading.Thread(target=src.run, daemon=True)
+    t.start()
+    time.sleep(0.2)
+    src.close()
+    t.join(2)
+    assert src.connected is False and "by-id/does-not-exist" in src.note and "ls -l /dev/input/by-id/" in src.note
+
+
+def test_serial_source_names_the_missing_port():
+    import usb_input
+
+    def opener(path, baud):
+        raise OSError(2, "No such file or directory")
+
+    src = usb_input.SerialSource("serial-x", "F9E2", lambda *a: None, "/dev/cu.usbmodem1101", 9600, retry_s=0.01, opener=opener)
+    t = threading.Thread(target=src.run, daemon=True)
+    t.start()
+    time.sleep(0.2)
+    src.close()
+    t.join(2)
+    assert "cu.usbmodem1101" in src.note and "not available" in src.note

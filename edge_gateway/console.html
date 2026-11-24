@@ -876,11 +876,11 @@ function renderSync(ov) {
     ...(total || ov.local.inputs.length ? [h('div', null, h('dt', { text: 'USB swipes taken' }), h('dd', { text: num(c.localReceived) })),
       h('div', null, h('dt', { text: 'USB swipes matched to a reader copy' }), h('dd', { text: num(ov.local.shadow ?? c.localShadow) }))] : []));
   const note = $('#usbnote');
+  note.hidden = false;
   if (ov.local.inputs.length) {
-    note.hidden = false;
-    note.textContent = `USB readers: ${ov.local.inputs.map((i) => `${i.reader} on ${i.device} (${i.connected ? 'connected' : 'not connected'})`).join('; ')}.` +
+    note.textContent = `USB readers: ${ov.local.inputs.map((i) => `${i.reader} on ${i.device} (${i.connected ? 'connected' : 'not connected'}${i.note ? `: ${i.note}` : ''})`).join('; ')}.` +
       (ov.local.mappedCredentials ? ` ${plural(ov.local.mappedCredentials, 'typed number is', 'typed numbers are')} mapped to a card on this gateway.` : '');
-  } else note.hidden = true;
+  } else note.textContent = 'USB readers: none. LOCAL_INPUTS is empty on this gateway, so nothing listens for a USB reader or typed numbers (set it, for example stdin=F9E2).';
   renderLog(ov);
   drawChart();
 }

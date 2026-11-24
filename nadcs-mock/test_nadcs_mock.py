@@ -411,3 +411,164 @@ def test_the_page_never_builds_markup_from_received_text():
 
 def test_the_page_is_listed_on_the_index(client):
     assert any("/ui" in e for e in client.get("/").json()["endpoints"])
+
+
+# ----------------------------------------------------------------------------------------- receipt status history
+def _tx(client, ref, body=None, **kw):
+    return post(client, body if body is not None else good(), headers={**KEY, "X-Client-Reference": ref, **kw})
+
+
+def test_a_transmission_that_failed_and_was_retried_shows_every_attempt_in_order(client):
+    client.post("/admin/behavior", json={"mode": "unavailable"}, headers=KEY)
+    assert _tx(client, "TX-RETRY1").status_code == 503
+    client.post("/admin/behavior", json={"mode": "normal"}, headers=KEY)
+    bad = good(); bad["records"][0]["total_cattle"] = -5
+    assert _tx(client, "TX-RETRY1", bad).status_code == 422
+    ok = _tx(client, "TX-RETRY1")
+    assert ok.status_code == 202
+    other = _tx(client, "TX-OTHER", good("OUTBREAK_SURVEILLANCE"))              # another transmission is not mixed in
+    d = client.get("/v2/surveillance/submissions/TX-RETRY1", headers=KEY).json()
+    assert d["submissionId"] == ok.json()["submissionId"], "the newest attempt is the one opened"
+    assert [(a["outcome"], a["httpStatus"]) for a in d["history"]] == [("ERROR", 503), ("REJECTED", 422), ("ACCEPTED", 202)]
+    assert d["history"][-1]["receiptId"] == ok.json()["receiptId"] and other.json()["submissionId"] not in str(d["history"])
+    t = client.get("/v2/surveillance/transmissions", headers=KEY).json()
+    mine = next(g for g in t["items"] if g["clientRef"] == "TX-RETRY1")
+    assert mine["attempts"] == 3 and mine["latestOutcome"] == "ACCEPTED" and mine["receiptId"] == ok.json()["receiptId"]
+    assert [h["outcome"] for h in mine["history"]] == ["ERROR", "REJECTED", "ACCEPTED"]
+    assert t["kept"] == 2 and t["submissionsKept"] == 4 and t["counts"] == {"ACCEPTED": 2, "REJECTED": 0, "ERROR": 0}
+    assert [g["clientRef"] for g in t["items"]] == ["TX-OTHER", "TX-RETRY1"], "newest activity first"
+
+
+def test_a_failed_transmission_has_no_receipt_and_the_filter_follows_the_latest_attempt(client):
+    client.post("/admin/behavior", json={"mode": "server_error"}, headers=KEY)
+    _tx(client, "TX-DOWN1"); _tx(client, "TX-DOWN1")
+    client.post("/admin/behavior", json={"mode": "normal"}, headers=KEY)
+    _tx(client, "TX-FINE1")
+    t = client.get("/v2/surveillance/transmissions", headers=KEY).json()
+    down = next(g for g in t["items"] if g["clientRef"] == "TX-DOWN1")
+    assert down["attempts"] == 2 and down["latestOutcome"] == "ERROR" and down["latestHttpStatus"] == 500 and down["receiptId"] is None
+    assert [g["clientRef"] for g in client.get("/v2/surveillance/transmissions?outcome=error", headers=KEY).json()["items"]] == ["TX-DOWN1"]
+    assert client.get("/v2/surveillance/transmissions?limit=1", headers=KEY).json()["count"] == 1
+    assert client.get("/v2/surveillance/transmissions").status_code == 401
+
+
+def test_a_submission_without_a_reference_is_its_own_history(client):
+    sid = post(client, good()).json()["submissionId"]
+    d = client.get(f"/v2/surveillance/submissions/{sid}", headers=KEY).json()
+    assert [a["submissionId"] for a in d["history"]] == [sid]
+    g = client.get("/v2/surveillance/transmissions", headers=KEY).json()["items"][0]
+    assert g["clientRef"] is None and g["attempts"] == 1 and g["key"] == sid
+
+
+def test_every_submission_records_when_it_was_answered(client, monkeypatch):
+    monkeypatch.setitem(main.STATE, "slow_seconds", 0.2)
+    client.post("/admin/behavior", json={"mode": "slow", "slowSeconds": 0.2}, headers=KEY)
+    d = client.get(f"/v2/surveillance/submissions/{post(client, good()).json()['submissionId']}", headers=KEY).json()
+    assert d["answeredAt"] >= d["receivedAt"] and d["durationMs"] >= 150
+
+
+def test_a_browser_opening_the_address_lands_on_the_page_and_other_clients_get_json(client):
+    r = client.get("/", headers={"Accept": "text/html,application/xhtml+xml,*/*;q=0.8"}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/ui"
+    assert client.get("/", headers={"Accept": "application/json"}).json()["mock"] is True
+    assert client.get("/").json()["mock"] is True                       # curl and the test client send */*
+
+
+# ------------------------------------------------------------------------------------------------ the history file
+@pytest.fixture()
+def saved(client, tmp_path, monkeypatch):
+    db = tmp_path / "nested" / "history.db"
+    monkeypatch.setenv("NADCS_MOCK_DB", str(db))
+    yield db
+    monkeypatch.delenv("NADCS_MOCK_DB", raising=False)
+    main.history_status()                                              # closes the file and returns to memory-only
+
+
+def restart():
+    """What a restart does: the process memory is gone, then the module reads the file back."""
+    main.SUBMISSIONS.clear(); main.SEEN_CONTENT.clear()
+    return main.load_history()
+
+
+def test_with_a_history_file_past_transmissions_survive_a_restart(client, saved):
+    assert main.history_status()["persistent"] is True and client.get("/health").json()["history"]["persistent"] is True
+    ok = _tx(client, "TX-KEEP1").json()
+    bad = good(); bad["records"][0]["total_cattle"] = -5
+    _tx(client, "TX-KEEP2", bad)
+    before = client.get("/v2/surveillance/transmissions", headers=KEY).json()["items"]
+    assert restart() == 2
+    after = client.get("/v2/surveillance/transmissions", headers=KEY).json()
+    assert after["items"] == before and after["persistent"] is True and "kept across restarts" in after["note"]
+    d = client.get("/v2/surveillance/submissions/TX-KEEP1", headers=KEY).json()
+    assert d["receiptId"] == ok["receiptId"] and d["payload"] and d["sha256"] and d["answeredAt"]
+
+
+def test_a_restart_remembers_which_content_was_already_accepted(client, saved):
+    first = _tx(client, "TX-DUP1").json()
+    restart()
+    again = _tx(client, "TX-DUP2").json()
+    assert again["warningCount"] == 1 and first["receiptId"] in client.get("/v2/surveillance/submissions/TX-DUP2", headers=KEY).json()["warnings"][0]["message"]
+
+
+def test_the_history_file_keeps_only_the_newest_200(client, saved, monkeypatch):
+    monkeypatch.setattr(main, "KEEP_SUBMISSIONS", 5)
+    monkeypatch.setattr(main, "SUBMISSIONS", main.deque(maxlen=5))
+    for i in range(8):
+        _tx(client, f"TX-N{i}", good("OUTBREAK_SURVEILLANCE") | {"recordCount": 9})
+    assert restart() == 5
+    assert [e["clientRef"] for e in main.SUBMISSIONS] == [f"TX-N{i}" for i in (7, 6, 5, 4, 3)]
+
+
+def test_without_the_setting_nothing_is_written_and_the_page_says_memory_only(client, tmp_path):
+    _tx(client, "TX-MEM1")
+    assert main.history_status() == {"persistent": False, "file": None, "error": None, "writeErrors": 0}
+    note = client.get("/v2/surveillance/submissions", headers=KEY).json()
+    assert note["persistent"] is False and "In memory only" in note["note"] and not list(tmp_path.iterdir())
+
+
+def test_a_history_file_that_cannot_be_used_never_stops_a_report_being_received(client, tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("NADCS_MOCK_DB", str(tmp_path))                 # a directory cannot be opened as a database
+    try:
+        r = _tx(client, "TX-NODISK")
+        assert r.status_code == 202 and client.get("/v2/surveillance/submissions/TX-NODISK", headers=KEY).status_code == 200
+        st = main.history_status()
+        assert st["persistent"] is False and st["error"] and "cannot open" in st["error"]
+        assert capsys.readouterr().err.count("Carrying on in memory only") == 1, "said once, not on every report"
+    finally:
+        monkeypatch.delenv("NADCS_MOCK_DB", raising=False)
+        main.history_status()
+
+
+def test_a_damaged_history_file_does_not_stop_the_server_starting(client, tmp_path, monkeypatch):
+    db = tmp_path / "bad.db"
+    db.write_bytes(b"this is not a sqlite database" * 50)
+    monkeypatch.setenv("NADCS_MOCK_DB", str(db))
+    try:
+        assert main.load_history() == 0
+        assert _tx(client, "TX-AFTERBAD").status_code == 202
+    finally:
+        monkeypatch.delenv("NADCS_MOCK_DB", raising=False)
+        main.history_status()
+
+
+def test_the_history_file_is_not_exposed_through_the_api(client, saved):
+    _tx(client, "TX-PRIV1")
+    blob = json.dumps(client.get("/v2/surveillance/submissions/TX-PRIV1", headers=KEY).json()) + client.get("/health").text + client.get("/").text
+    assert str(saved.parent) not in blob and "contentHash" not in blob
+
+
+def test_the_page_has_the_receipt_history_view_and_reads_it_from_the_api(client):
+    html = client.get("/ui").text
+    for hook in ('id="wrap-tx"', 'id="txrows"', 'id="viewseg"', "/v2/surveillance/transmissions", "Status history", "Status of each attempt, oldest first"):
+        assert hook in html, hook
+    assert 'data-v="tx" aria-pressed="true"' in html, "the receipt history is what opens first"
+
+
+def test_the_page_keeps_a_deep_link_while_the_login_is_shown():
+    """A link from VinaBeef (/ui#TX-...) opens in a new tab that has no key yet. Showing the login must not drop the #TX-...,
+    or the link lands on the list instead of on the transmission (the address is cleaned only when a drawer was open)."""
+    import ui
+    html = ui.page("N")
+    body = html.split("function closeDrawer()")[1].split("}")[0] + "}"
+    assert "wasOpen" in body and "history.replaceState" in body
+    assert body.index("wasOpen &&") < body.index("history.replaceState"), "only an open drawer clears the fragment"

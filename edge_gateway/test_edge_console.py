@@ -1,6 +1,7 @@
 """Tests for the read-only web console: what the forwarder records for it, what the API returns, how it is protected,
 and that it can never change the store.  Run with:  python -m pytest -q edge_gateway"""
 import json
+import logging
 import os
 import re
 import shutil
@@ -20,7 +21,8 @@ import pytest
 sys.path.insert(0, os.path.dirname(__file__))
 import barn_edge_gateway as edge  # noqa: E402
 import edge_console  # noqa: E402
-from edge_console import ConsoleApi, SyncJournal, run_probe  # noqa: E402
+from barn_edge_gateway import Config, _Redact  # noqa: E402
+from edge_console import TOKEN_NOTICES, ConsoleApi, SyncJournal, run_probe  # noqa: E402
 
 HERE = Path(__file__).parent
 BASE = "http://backend.test/api/v1"
@@ -597,8 +599,8 @@ class FakeSubscribe:
     def __init__(self):
         self.calls = []
 
-    def __call__(self, topic, qos=0):
-        self.calls.append((topic, qos))
+    def __call__(self, topics, qos=0):
+        self.calls.append(list(topics))                    # one SUBSCRIBE request: [(topic, qos), ...]
         return 0, len(self.calls)
 
 
@@ -682,14 +684,50 @@ def test_journal_three_losses_within_five_minutes_count_as_flapping():
     assert feed(j)["flapping"] is False                          # the old losses age out
 
 
+def test_journal_a_broker_that_hangs_up_before_answering_the_subscription_is_called_out_until_it_answers():
+    clock = Clock(1000.0)
+    j = SyncJournal(clock)
+    j.mqtt_setup(["a/1"])
+    for _ in range(2):
+        j.mqtt_up()
+        clock.now += 0.25
+        j.mqtt_down(7, "lost")
+        clock.now += 2
+    f = feed(j)
+    assert f["earlyDrops"] == 2 and f["earlyDropMs"] == 250
+    j.mqtt_up()
+    j.mqtt_subscribed("a/1", 2)                                   # this time the broker answers
+    assert feed(j)["earlyDrops"] == 0
+    clock.now += 60
+    j.mqtt_down(7, "lost")                                        # a later loss is an ordinary loss
+    assert feed(j)["earlyDrops"] == 0
+
+
+def test_journal_nothing_subscribed_means_no_early_drop_to_report():
+    j = SyncJournal(Clock(1000.0))
+    j.mqtt_setup([])
+    j.mqtt_up()
+    j.mqtt_down(7, "lost")
+    assert feed(j)["earlyDrops"] == 0
+
+
+def test_overview_names_a_broker_that_hangs_up_right_after_login_and_points_to_the_probe(tmp_path):
+    gw, sub = mqtt_gateway(tmp_path), FakeSubscribe()
+    for _ in range(3):                                            # the log in the field: connect, hang-up, connect, hang-up...
+        gw.mqtt_on_connect(0, sub)
+        gw.mqtt_on_disconnect(7)
+    m = ConsoleApi(gw).overview()["mqtt"]
+    assert "hangs up" in m["warning"] and "mqtt_probe.py" in m["warning"] and "QoS 2" in m["warning"]
+    assert "MQTT_CLIENT_ID" not in m["warning"] or "takes over" not in m["warning"]    # not the 'same client id' advice
+
+
 def test_gateway_login_and_subscription_follow_the_brokers_answers(tmp_path):
     gw, sub = mqtt_gateway(tmp_path), FakeSubscribe()
     assert gw.mqtt_connected is False and feed(gw)["state"] == "CONNECTING"
     gw.mqtt_on_connect(0, sub)
     assert gw.mqtt_connected is True and feed(gw)["state"] == "CONNECTED"
-    assert sub.calls == [("a/1", 1), ("b/2", 1)]
-    gw.mqtt_on_subscribe(1, [1], sub)
-    gw.mqtt_on_subscribe(2, [1], sub)
+    assert sub.calls == [[("a/1", 1), ("b/2", 1)]]              # both topics in ONE request, like the cloud's own clients
+    gw.mqtt_on_subscribe(1, [1, 1], sub)
     assert [(t["topic"], t["state"], t["qos"]) for t in feed(gw)["topics"]] == [("a/1", "granted", 1), ("b/2", "granted", 1)]
 
 
@@ -717,18 +755,64 @@ def test_gateway_a_lost_connection_is_reported_and_releases_held_usb_swipes(tmp_
 
 def test_gateway_qos_fallback_asks_again_for_that_topic_and_only_a_final_refusal_is_reported(tmp_path):
     gw, sub = mqtt_gateway(tmp_path), FakeSubscribe()
-    gw.mqtt_on_connect(0, sub)                                   # requests 1 and 2: a/1 and b/2 at QoS 1
-    gw.mqtt_on_subscribe(1, [128], sub)                          # a/1 refused at QoS 1: ask again at QoS 0, say nothing yet
-    assert sub.calls[2:] == [("a/1", 0)]
-    assert [t["state"] for t in feed(gw)["topics"]] == ["pending", "pending"]
-    gw.mqtt_on_subscribe(3, [0], sub)
+    gw.mqtt_on_connect(0, sub)                                   # request 1: a/1 and b/2 at QoS 1
+    gw.mqtt_on_subscribe(1, [128, 1], sub)                       # a/1 refused at QoS 1: ask again for a/1 only, at QoS 0
+    assert sub.calls[1:] == [[("a/1", 0)]]
+    assert [t["state"] for t in feed(gw)["topics"]] == ["pending", "granted"]
+    gw.mqtt_on_subscribe(2, [0], sub)
     assert feed(gw)["topics"][0] == {"topic": "a/1", "state": "granted", "qos": 0}
-    gw.mqtt_on_subscribe(2, [128], sub)                          # b/2 refused at QoS 1 too
-    gw.mqtt_on_subscribe(4, [128], sub)                          # and refused at QoS 0: final. It must not be asked for again.
-    assert len(sub.calls) == 4
+
+
+def test_gateway_a_topic_refused_even_at_qos_0_is_final_and_not_asked_for_again(tmp_path):
+    gw, sub = mqtt_gateway(tmp_path), FakeSubscribe()
+    gw.mqtt_on_connect(0, sub)
+    gw.mqtt_on_subscribe(1, [128, 128], sub)                     # both refused at QoS 1: one more request, both at QoS 0
+    assert sub.calls[1:] == [[("a/1", 0), ("b/2", 0)]]
+    gw.mqtt_on_subscribe(2, [0, 128], sub)                       # a/1 fine at QoS 0, b/2 refused again: final
+    assert len(sub.calls) == 2
     assert feed(gw)["topics"][1] == {"topic": "b/2", "state": "refused", "qos": None}
     warning = ConsoleApi(gw).overview()["mqtt"]["warning"]
     assert "b/2" in warning and "refused" in warning
+
+
+def test_gateway_subscribes_like_the_clouds_own_clients_token_topic_first_in_one_request_and_never_shows_the_token(tmp_path):
+    gw, sub = mqtt_gateway(tmp_path, mqtt_password="token/SECRET123", mqtt_qos=2), FakeSubscribe()
+    gw.mqtt_on_connect(0, sub)
+    assert sub.calls == [[("token/SECRET123", 2), ("a/1", 2), ("b/2", 2)]]
+    gw.mqtt_on_subscribe(1, [2, 2, 2], sub)
+    m = ConsoleApi(gw).overview()["mqtt"]
+    assert [(t["topic"], t["state"], t["qos"]) for t in m["topics"]] == [
+        (TOKEN_NOTICES, "granted", 2), ("a/1", "granted", 2), ("b/2", "granted", 2)]
+    assert "SECRET123" not in json.dumps(m) and "SECRET123" not in json.dumps(gw.journal.snapshot())
+
+
+def test_gateway_a_refused_token_subscription_is_reported_without_the_token(tmp_path):
+    gw, sub = mqtt_gateway(tmp_path, mqtt_password="token/SECRET123", mqtt_qos=2), FakeSubscribe()
+    gw.mqtt_on_connect(0, sub)
+    gw.mqtt_on_subscribe(1, [128, 2, 2], sub)                    # token topic refused at QoS 2: asked again at QoS 0, alone
+    assert sub.calls[1:] == [[("token/SECRET123", 0)]]
+    gw.mqtt_on_subscribe(2, [128], sub)
+    m = ConsoleApi(gw).overview()["mqtt"]
+    assert "token subscription" in m["warning"] and "MQTT_TOKEN_TOPIC=false" in m["warning"] and "SECRET123" not in json.dumps(m)
+
+
+def test_config_token_topic_modes_and_default_client_id():
+    cfg = lambda **kw: Config(**kw)
+    assert cfg(mqtt_password="token/abc").token_topic() == "token/abc"                       # auto + token/ prefix
+    assert cfg(mqtt_password="plain").token_topic() == ""                                    # auto, not a token
+    assert cfg(mqtt_password="plain", mqtt_token_topic="true").token_topic() == "plain"
+    assert cfg(mqtt_password="token/abc", mqtt_token_topic="false").token_topic() == ""
+    assert cfg(mqtt_password="", mqtt_token_topic="true").token_topic() == ""
+    assert cfg(mqtt_username="728589").client_id() == "Web_Edge_728589"                      # like Web_Direct_728589
+    assert cfg(mqtt_username="728589", mqtt_client_id="Web_Edge_728589_barn1").client_id() == "Web_Edge_728589_barn1"
+    assert cfg().client_id() == "Web_Edge_gateway" and cfg().mqtt_qos == 2
+
+
+def test_redact_filter_masks_the_token_in_paho_debug_lines():
+    rec = logging.LogRecord("paho.mqtt", logging.DEBUG, __file__, 1, "Sending SUBSCRIBE (d0, m1) %s", ([(b"token/SECRET123", 2)],), None)
+    rec.args = ([("token/SECRET123", 2)],)
+    assert _Redact("token/SECRET123").filter(rec) is True
+    assert "SECRET123" not in rec.getMessage() and "token/***" in rec.getMessage()
 
 
 def test_gateway_counts_mqtt_messages_and_reader_events_apart(tmp_path):
@@ -768,13 +852,16 @@ def test_overview_reader_feed_warns_when_nothing_is_subscribed(tmp_path):
 
 
 def test_overview_reader_feed_warns_about_a_client_id_that_keeps_being_taken_over(tmp_path):
+    """A takeover happens to a feed that WAS working: the broker had answered the subscription before it dropped us."""
     gw, sub = mqtt_gateway(tmp_path), FakeSubscribe()
-    for _ in range(3):
+    for i in range(3):
         gw.mqtt_on_connect(0, sub)
+        gw.mqtt_on_subscribe(i + 1, [1, 1], sub)
         gw.mqtt_on_disconnect(7)
     gw.mqtt_on_connect(0, sub)
     m = ConsoleApi(gw).overview()["mqtt"]
     assert m["state"] == "CONNECTED" and "MQTT_CLIENT_ID" in m["warning"] and m["drops5min"] == 3
+    assert "hangs up" not in m["warning"]
 
 
 def test_overview_reader_feed_state_follows_the_gateways_own_flag(tmp_path):
@@ -914,3 +1001,110 @@ def test_the_page_has_one_card_for_the_cloud_and_one_for_the_reader_feed():
     for needle in ('id="conn-cloud"', 'id="conn-mqtt"', 'id="cloud-pill"', 'id="mqtt-pill"', 'id="probe-btn"', 'id="mqtt-probe-btn"',
                    "/api/probe?target=", "renderConnections"):
         assert needle in html, needle
+
+
+# ---- a broker that hangs up on a subscription it does not like (what Safetrust did to the gateway) --------------------
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "drill"))
+from strict_broker import StrictBroker  # noqa: E402
+
+
+def wait_for(cond, seconds=12.0):
+    end = time.time() + seconds
+    while time.time() < end:
+        if cond():
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def strict_gateway(tmp_path, broker, **cfg):
+    base = dict(mqtt_url=f"mqtt://127.0.0.1:{broker.port}", mqtt_username="728589", mqtt_password="token/SECRET123",
+                mqtt_topics="Web/475/Monitoring/728589")
+    base.update(cfg)
+    return make_gateway(tmp_path, **base)
+
+
+def test_real_client_the_defaults_survive_a_broker_that_wants_token_topic_qos_2_and_the_device_key_in_the_id(tmp_path):
+    broker = StrictBroker(need_token_topic=True, min_qos=2, key_in_client_id="728589")
+    gw = strict_gateway(tmp_path, broker)
+    client = gw.start_mqtt()
+    try:
+        assert wait_for(lambda: feed(gw)["state"] == "CONNECTED" and all(t["state"] == "granted" for t in feed(gw)["topics"]))
+        assert [t["qos"] for t in feed(gw)["topics"]] == [2, 2] and feed(gw)["earlyDrops"] == 0
+        assert broker.publish("Web/475/Monitoring/728589", json.dumps(card_event(901, int(time.time() * 1000))).encode()) == 1
+        assert wait_for(lambda: feed(gw)["events"] == 1)
+    finally:
+        client.loop_stop()
+        client.disconnect()
+        broker.close()
+
+
+def test_real_client_the_old_subscription_is_hung_up_on_and_the_card_says_so(tmp_path):
+    broker = StrictBroker(need_token_topic=True, min_qos=2, key_in_client_id="728589")
+    gw = strict_gateway(tmp_path, broker, mqtt_token_topic="false", mqtt_qos=1, mqtt_client_id="Web_Edge_demo1")
+    client = gw.start_mqtt()
+    try:
+        assert wait_for(lambda: feed(gw)["earlyDrops"] >= 2)
+        m = ConsoleApi(gw).overview()["mqtt"]
+        assert "hangs up" in m["warning"] and "mqtt_probe.py" in m["warning"]
+        assert all(t["state"] == "pending" for t in m["topics"])
+    finally:
+        client.loop_stop()
+        client.disconnect()
+        broker.close()
+
+
+def test_probe_finds_the_variant_the_broker_accepts_and_never_prints_the_token(tmp_path, monkeypatch, capsys):
+    import mqtt_probe
+    broker = StrictBroker(need_token_topic=True, min_qos=2, key_in_client_id="728589")
+    for k, v in dict(MQTT_URL=f"mqtt://127.0.0.1:{broker.port}", MQTT_USERNAME="728589", MQTT_PASSWORD="token/SECRET123",
+                     MQTT_TOPICS="Web/475/Monitoring/728589").items():
+        monkeypatch.setenv(k, v)
+    try:
+        assert mqtt_probe.main(["--hold", "1", "--only", "1,2,5"]) == 0
+    finally:
+        broker.close()
+    out = capsys.readouterr().out
+    assert " 1. OK" in out and " 2. FAIL" in out and " 5. FAIL" in out        # token topic + QoS 2 + the key in the id: all three needed
+    assert "MQTT_QOS=2" in out and "MQTT_TOKEN_TOPIC=true" in out and "Web_Edge_728589_" in out
+    assert "SECRET123" not in out
+
+
+def test_probe_says_so_when_nothing_works(tmp_path, monkeypatch, capsys):
+    import mqtt_probe
+    broker = StrictBroker(min_qos=3)                                          # no QoS can satisfy this: every subscription is dropped
+    for k, v in dict(MQTT_URL=f"mqtt://127.0.0.1:{broker.port}", MQTT_USERNAME="728589", MQTT_PASSWORD="token/x",
+                     MQTT_TOPICS="t/1").items():
+        monkeypatch.setenv(k, v)
+    try:
+        assert mqtt_probe.main(["--hold", "1", "--only", "1,2"]) == 1
+    finally:
+        broker.close()
+    assert "No variant that subscribes stayed connected" in capsys.readouterr().out
+
+
+def test_gateway_says_in_the_log_and_in_the_overview_when_no_usb_reader_is_configured(tmp_path, caplog):
+    gw = make_gateway(tmp_path)
+    with caplog.at_level(logging.INFO, logger="edge"):
+        gw.start_local_inputs()
+    assert any("USB inputs: none" in r.message and "LOCAL_INPUTS" in r.message for r in caplog.records)
+    assert ConsoleApi(gw).overview()["local"]["inputs"] == []
+
+
+def test_overview_carries_the_reason_a_usb_input_is_not_listening(tmp_path, monkeypatch):
+    import usb_input
+    monkeypatch.setattr(usb_input.sys, "platform", "darwin")
+    gw = make_gateway(tmp_path, local_inputs="kbd:/dev/input/event5=F9E2")
+    gw.start_local_inputs()
+    try:
+        assert wait_for(lambda: gw.local_sources[0].note != "", 3)
+        i = ConsoleApi(gw).overview()["local"]["inputs"][0]
+        assert i["reader"] == "F9E2" and i["connected"] is False and "Linux only" in i["note"]
+    finally:
+        for src in gw.local_sources:
+            src.close()
+
+
+def test_page_shows_the_usb_note_and_the_no_reader_message():
+    html = (Path(__file__).parent / "console.html").read_text(encoding="utf-8")
+    assert "i.note" in html and "USB readers: none." in html

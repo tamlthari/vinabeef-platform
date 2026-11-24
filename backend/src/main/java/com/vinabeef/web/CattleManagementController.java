@@ -329,7 +329,7 @@ public class CattleManagementController {
         jdbcTemplate.update("""
             INSERT INTO health_records (health_id, animal_id, record_type, administered_by, payload, event_at)
             VALUES (?, ?, 'VACCINATION', ?, jsonb_build_object('vaccine', ?, 'batch', ?, 'notes', ?), ?)
-        """, healthId, animalId, actor, vaccine, batch, notes, Instant.now());
+        """, healthId, animalId, actor, vaccine, batch, notes, java.sql.Timestamp.from(Instant.now()));   // pgjdbc cannot bind a raw Instant
 
         return ResponseEntity.ok(Map.of("status", "RECORDED", "healthId", healthId));
     }
@@ -361,7 +361,7 @@ public class CattleManagementController {
         jdbcTemplate.update("""
             INSERT INTO health_records (health_id, animal_id, record_type, administered_by, payload, event_at)
             VALUES (?, ?, ?, ?, jsonb_build_object('title', ?, 'medication_or_batch', ?, 'resulting_status', ?, 'notes', ?), ?)
-        """, healthId, animalId, recordType, actor, title, medication, newStatus, notes, Instant.now());
+        """, healthId, animalId, recordType, actor, title, medication, newStatus, notes, java.sql.Timestamp.from(Instant.now()));   // pgjdbc cannot bind a raw Instant: the treatment was never saved
 
         jdbcTemplate.update("""
             UPDATE animals

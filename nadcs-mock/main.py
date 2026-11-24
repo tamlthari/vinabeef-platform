@@ -8,8 +8,10 @@ It is a TEST DOUBLE and says so in every response ("mock": true). It is not the 
 Run locally   uvicorn main:app --port 9099         (needs NADCS_MOCK_API_KEYS, e.g. NADCS_MOCK_API_KEYS=test-key)
 Render        see README.md / render.yaml          Vercel: deploys as is (FastAPI instance `app` in main.py)
 
-Everything it keeps (the list of submissions) is in memory: it is lost on restart, on a Render free-tier spin-down,
-and is per-instance on Vercel. Each submission is also written to stdout as one JSON line (visible in the host's log).
+What it keeps (the last 200 submissions) is in memory by default: it is lost on restart, on a Render free-tier spin-down,
+and is per-instance on Vercel. Set NADCS_MOCK_DB to a file path (a persistent disk on the host) and the same list is also
+written to that SQLite file and read back at start-up, so the history of past transmissions survives restarts.
+Each submission is also written to stdout as one JSON line (visible in the host's log).
 """
 from __future__ import annotations
 
@@ -20,13 +22,15 @@ import json
 import os
 import re
 import secrets
+import sqlite3
 import sys
+import threading
 from collections import deque
 from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 import spec
 import ui
@@ -142,8 +146,108 @@ def _log(entry: dict) -> None:
           file=sys.stdout, flush=True)
 
 
+# ---------------------------------------------------------------------------------------------------- history file
+# Optional: NADCS_MOCK_DB=/path/to/file.db keeps the last KEEP_SUBMISSIONS submissions across restarts. The file is a
+# convenience, never a dependency: when it cannot be opened or written the server says so once and carries on in memory,
+# because a mock that refuses a report over a full disk would be testing the wrong thing.
+_DB: dict[str, Any] = {"conn": None, "path": None, "error": None, "write_errors": 0}
+_DB_LOCK = threading.Lock()
+
+
+def _db_path() -> str:
+    return os.environ.get("NADCS_MOCK_DB", "").strip()
+
+
+def _db_fail(what: str, exc: Exception) -> None:
+    if not _DB["error"]:
+        print(f"[nadcs-mock] history file {_db_path()!r}: {what}: {exc}. Carrying on in memory only.", file=sys.stderr, flush=True)
+    _DB["error"] = f"{what}: {exc}"
+
+
+def _db_open() -> sqlite3.Connection | None:
+    """The open history file, or None (persistence off, or the file is unusable). Caller holds _DB_LOCK."""
+    path = _db_path()
+    if _DB["path"] != path:                               # first use, or the setting changed (tests, a restart in place)
+        if _DB["conn"] is not None:
+            try:
+                _DB["conn"].close()
+            except sqlite3.Error:
+                pass
+        _DB.update(conn=None, path=path, error=None, write_errors=0)
+    if not path:
+        return None
+    if _DB["conn"] is None and not _DB["error"]:
+        try:
+            folder = os.path.dirname(os.path.abspath(path))
+            os.makedirs(folder, exist_ok=True)
+            conn = sqlite3.connect(path, check_same_thread=False, timeout=5)
+            try:
+                conn.execute("PRAGMA journal_mode=WAL")
+            except sqlite3.Error:                         # some network file systems cannot do WAL; the default mode still works
+                pass
+            conn.execute("CREATE TABLE IF NOT EXISTS submissions (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, data TEXT NOT NULL)")
+            conn.commit()
+            _DB["conn"] = conn
+        except (sqlite3.Error, OSError) as e:
+            _db_fail("cannot open", e)
+    return _DB["conn"]
+
+
+def history_status() -> dict:
+    """What /health and the list report about where the history lives."""
+    with _DB_LOCK:
+        conn = _db_open()
+        return {"persistent": conn is not None, "file": os.path.basename(_db_path()) if conn is not None else None,
+                "error": _DB["error"] if _db_path() and conn is None else None, "writeErrors": _DB["write_errors"]}
+
+
+def _persist(entry: dict) -> None:
+    with _DB_LOCK:
+        conn = _db_open()
+        if conn is None:
+            return
+        try:
+            conn.execute("INSERT INTO submissions (id, data) VALUES (?, ?)", (entry["submissionId"], json.dumps(entry, default=str)))
+            conn.execute("DELETE FROM submissions WHERE seq <= (SELECT MAX(seq) FROM submissions) - ?", (KEEP_SUBMISSIONS,))
+            conn.commit()
+        except sqlite3.Error as e:
+            _DB["write_errors"] += 1
+            _db_fail("cannot write", e)                    # prints the first failure only
+
+
+def load_history() -> int:
+    """Reads the saved submissions back into memory (oldest first, so the list ends up newest first). Returns how many."""
+    SUBMISSIONS.clear()
+    SEEN_CONTENT.clear()
+    with _DB_LOCK:
+        conn = _db_open()
+        if conn is None:
+            return 0
+        try:
+            rows = conn.execute("SELECT data FROM (SELECT seq, data FROM submissions ORDER BY seq DESC LIMIT ?) ORDER BY seq ASC", (KEEP_SUBMISSIONS,)).fetchall()
+        except sqlite3.Error as e:
+            _db_fail("cannot read", e)
+            return 0
+    for (blob,) in rows:
+        try:
+            e = json.loads(blob)
+        except ValueError:
+            continue
+        SUBMISSIONS.appendleft(e)
+        if e.get("outcome") == "ACCEPTED" and e.get("contentHash") and e.get("receiptId"):
+            SEEN_CONTENT.setdefault(e["contentHash"], e["receiptId"])
+    return len(SUBMISSIONS)
+
+
 def _record(entry: dict) -> None:
+    now = datetime.now(timezone.utc)
+    entry["answeredAt"] = now.isoformat()
+    try:
+        entry["durationMs"] = max(0, int((now - datetime.fromisoformat(entry["receivedAt"])).total_seconds() * 1000))
+    except (KeyError, ValueError):
+        entry["durationMs"] = None
     SUBMISSIONS.appendleft(entry)
+    _persist(entry)
     _log(entry)
 
 
@@ -177,16 +281,21 @@ def _entry(request: Request, raw: bytes, label: str, received: datetime, sid: st
 
 # ---------------------------------------------------------------------------------------------------- endpoints
 @app.get("/")
-def index():
+def index(request: Request):
+    """A browser (it asks for text/html) lands on the page; every other client gets the JSON description."""
+    if "text/html" in request.headers.get("accept", "").lower():
+        return RedirectResponse("/ui", status_code=303)
     return _json(200, {"service": "NADCS test server", "note": "A test double of the national animal-disease reporting API. NOT the real agency.",
                        "behavior": STATE["behavior"],
+                       "history": history_status(),
                        "endpoints": ["POST /v2/surveillance/herd-health", "POST /v2/surveillance/validate", "GET /v2/surveillance/spec",
-                                     "GET /v2/surveillance/submissions", "GET /v2/surveillance/submissions/{id}", "GET|POST /admin/behavior", "GET /health", "GET /ui (browser page)"]})
+                                     "GET /v2/surveillance/submissions", "GET /v2/surveillance/submissions/{id}",
+                                     "GET /v2/surveillance/transmissions", "GET|POST /admin/behavior", "GET /health", "GET /ui (browser page)"]})
 
 
 @app.get("/health")
 def health():
-    return _json(200, {"status": "ok", "behavior": STATE["behavior"], "keysConfigured": bool(_keys())})
+    return _json(200, {"status": "ok", "behavior": STATE["behavior"], "keysConfigured": bool(_keys()), "history": history_status()})
 
 
 @app.get("/v2/surveillance/spec")
@@ -306,7 +415,7 @@ async def receive(request: Request, x_api_key: str | None = Header(None), author
         if len(SEEN_CONTENT) > 1000:
             SEEN_CONTENT.pop(next(iter(SEEN_CONTENT)))
     summary = _summary(True, outcome, receipt)
-    entry.update(outcome="ACCEPTED", httpStatus=202, receiptId=receipt, summary=summary)
+    entry.update(outcome="ACCEPTED", httpStatus=202, receiptId=receipt, summary=summary, contentHash=digest)
     _record(entry)
     return _json(202, {"status": "ACCEPTED", "receiptId": receipt, "submissionId": sid, "receivedAt": entry["receivedAt"],
                        "reportType": outcome.report_type, "farmScope": outcome.farm_scope, "recordCount": outcome.record_count,
@@ -314,14 +423,47 @@ async def receive(request: Request, x_api_key: str | None = Header(None), author
 
 
 def _public(e: dict, full: bool) -> dict:
-    keys = ("submissionId", "receivedAt", "outcome", "httpStatus", "receiptId", "reportType", "farmScope", "recordCount",
+    keys = ("submissionId", "receivedAt", "answeredAt", "durationMs", "outcome", "httpStatus", "receiptId", "reportType", "farmScope", "recordCount",
             "errorCount", "warningCount", "format", "bytes", "clientRef", "contentType", "sha256", "summary", "payloadTruncated")
     d = {k: e.get(k) for k in keys}
     if full:
         payload = e.get("payload", "")
         d.update(errors=e.get("errors", []), warnings=e.get("warnings", []), payload=payload,
-                 payloadPreview=payload[:PREVIEW_CHARS], payloadStoredBytes=len(payload.encode("utf-8")), keyLabel=e.get("keyLabel"))
+                 payloadPreview=payload[:PREVIEW_CHARS], payloadStoredBytes=len(payload.encode("utf-8")), keyLabel=e.get("keyLabel"),
+                 history=_attempts(e))
     return d
+
+
+_ATTEMPT_KEYS = ("submissionId", "receivedAt", "outcome", "httpStatus", "receiptId", "summary", "errorCount", "warningCount")
+
+
+def _attempts(e: dict) -> list[dict]:
+    """Every kept submission that carries the same sender reference as e, oldest first: what happened to one VinaBeef
+    transmission each time it was tried. A submission without a reference is its own one-entry history."""
+    ref = e.get("clientRef")
+    same = [x for x in reversed(list(SUBMISSIONS)) if x.get("clientRef") == ref] if ref else []
+    return [{k: x.get(k) for k in _ATTEMPT_KEYS} for x in (same or [e])]
+
+
+def _transmissions() -> list[dict]:
+    """One entry per VinaBeef transmission (per sender reference; a submission with none stands alone), newest activity first,
+    with the status of every attempt in order. This is the receipt status history."""
+    groups: dict[str, list[dict]] = {}
+    for e in reversed(list(SUBMISSIONS)):                  # a snapshot, oldest first (a request may append meanwhile)
+        groups.setdefault(e.get("clientRef") or e["submissionId"], []).append(e)
+    out = []
+    for key, es in groups.items():
+        last = es[-1]
+        receipt = next((x["receiptId"] for x in reversed(es) if x["outcome"] == "ACCEPTED" and x.get("receiptId")), None)
+        known = next((x for x in reversed(es) if x.get("reportType")), last)
+        out.append({"key": key, "clientRef": es[0].get("clientRef"), "attempts": len(es), "latestSubmissionId": last["submissionId"],
+                    "firstReceivedAt": es[0]["receivedAt"], "lastReceivedAt": last["receivedAt"],
+                    "latestOutcome": last["outcome"], "latestHttpStatus": last.get("httpStatus"), "receiptId": receipt,
+                    "reportType": known.get("reportType"), "farmScope": known.get("farmScope"), "recordCount": known.get("recordCount"),
+                    "history": [{"submissionId": x["submissionId"], "receivedAt": x["receivedAt"], "outcome": x["outcome"],
+                                 "httpStatus": x.get("httpStatus"), "receiptId": x.get("receiptId")} for x in es]})
+    out.sort(key=lambda g: g["lastReceivedAt"], reverse=True)
+    return out
 
 
 @app.get("/v2/surveillance/submissions")
@@ -330,9 +472,31 @@ def list_submissions(limit: int = Query(20, ge=1, le=KEEP_SUBMISSIONS), outcome:
     _authorize(x_api_key, authorization)
     rows = [e for e in SUBMISSIONS if not outcome or e["outcome"] == outcome.upper()]
     counts = {k: sum(1 for e in SUBMISSIONS if e["outcome"] == k) for k in ("ACCEPTED", "REJECTED", "ERROR")}
+    hist = history_status()
     return _json(200, {"count": len(rows[:limit]), "kept": len(SUBMISSIONS), "maxKept": KEEP_SUBMISSIONS, "counts": counts,
-                       "behavior": STATE["behavior"],
-                       "note": "In memory only: cleared on restart / spin-down.", "items": [_public(e, False) for e in rows[:limit]]})
+                       "behavior": STATE["behavior"], "persistent": hist["persistent"],
+                       "note": _history_note(hist), "items": [_public(e, False) for e in rows[:limit]]})
+
+
+def _history_note(hist: dict) -> str:
+    if hist["persistent"]:
+        return "Saved to the history file: kept across restarts (the last %d)." % KEEP_SUBMISSIONS
+    return "In memory only: cleared on restart / spin-down."
+
+
+@app.get("/v2/surveillance/transmissions")
+def list_transmissions(limit: int = Query(50, ge=1, le=KEEP_SUBMISSIONS), outcome: str | None = Query(None),
+                       x_api_key: str | None = Header(None), authorization: str | None = Header(None)):
+    """The receipt status history: one entry per VinaBeef transmission with the outcome of each attempt, oldest to newest.
+    outcome filters on the LATEST attempt (a transmission that failed twice and was then accepted counts as ACCEPTED)."""
+    _authorize(x_api_key, authorization)
+    allx = _transmissions()
+    rows = [g for g in allx if not outcome or g["latestOutcome"] == outcome.upper()]
+    counts = {k: sum(1 for g in allx if g["latestOutcome"] == k) for k in ("ACCEPTED", "REJECTED", "ERROR")}
+    hist = history_status()
+    return _json(200, {"count": len(rows[:limit]), "kept": len(allx), "submissionsKept": len(SUBMISSIONS), "maxKept": KEEP_SUBMISSIONS,
+                       "counts": counts, "behavior": STATE["behavior"], "persistent": hist["persistent"], "note": _history_note(hist),
+                       "items": rows[:limit]})
 
 
 @app.get("/v2/surveillance/submissions/{submission_id}")
@@ -376,3 +540,9 @@ async def set_behavior(request: Request, x_api_key: str | None = Header(None), a
     if isinstance(body, dict) and isinstance(body.get("slowSeconds"), (int, float)) and 0 <= body["slowSeconds"] <= 120:
         STATE["slow_seconds"] = float(body["slowSeconds"])
     return _json(200, {"behavior": STATE["behavior"], "slowSeconds": STATE["slow_seconds"]})
+
+
+try:
+    load_history()                      # no-op unless NADCS_MOCK_DB is set
+except Exception as _e:                 # pragma: no cover - a damaged history file must never stop the server from starting
+    print(f"[nadcs-mock] could not read the history file: {_e}", file=sys.stderr, flush=True)

@@ -39,7 +39,7 @@ unreachable Safetrust broker with a healthy backend still shows the backend as O
 | Inbound port 8090 from the barn LAN | to open the console from a phone or another computer |
 | The Safetrust API token | the MQTT password is `token/` followed by it. It is the token the backend already uses (`vinabeef.ingestion.safetrust.token` in the backend settings). The user name is the device key (`728589`) and the topic is `Web/<company key>/Monitoring/<device key>`, so `Web/475/Monitoring/728589` |
 | The name of the Safetrust reader each USB reader stands next to | for example `DrC0F8`. It decides which wall reader the USB swipe is matched with |
-| A unique MQTT client id for this gateway | for example `Web_Edge_barn1`. Keep the `Web_` prefix. The cloud's own subscribers already use `Web_Standby_728589` and `Web_Direct_728589`; two programs with the same id knock each other off the broker |
+| A unique MQTT client id for this gateway | in the shape of the cloud's own subscribers, `Web_Direct_728589` (the backend) and `Web_Standby_728589` (the standby adapter): `Web_`, a name, the device key. For example `Web_Edge_728589_barn1`. Left blank, the gateway uses `Web_Edge_<MQTT_USERNAME>`. Two programs with the same id knock each other off the broker, so a second gateway needs its own suffix |
 
 ## 3. Install and start
 
@@ -70,12 +70,12 @@ unreachable Safetrust broker with a healthy backend still shows the backend as O
    In Docker, `--env-file` takes `NAME=value` lines only (no `export`, no quotes). The `edge-data` volume keeps the store across restarts.
 5. **Read the first lines of the log.** With the reader feed on, you should see (times and paths differ):
    ```
-   INFO USB inputs: stdin->DrC0F8
-   INFO MQTT: wss://sensor.demo.safetrust.com:443/mqtt as client 'Web_Edge_barn1', topics ['Web/475/Monitoring/728589']
+   INFO USB inputs: stdin->F9E2
+   INFO MQTT: wss://sensor.demo.safetrust.com:443/mqtt as client 'Web_Edge_728589_barn1', subscribing to ['token/… (Safetrust token notices)', 'Web/475/Monitoring/728589'] at QoS 2
    INFO USB numbers mapped to cards: 36->042FAC02AD1490, 1005->04B86592C21290, 35->04143802F32290, 38->044E6602AD1490
    INFO Barn edge gateway up: HTTP 0.0.0.0:8090, queue edge_outbox.db, backend https://api.tamholthucwzr.men/api/v1
-   INFO MQTT connected to wss://sensor.demo.safetrust.com:443/mqtt; subscribing to ['Web/475/Monitoring/728589']
-   INFO MQTT subscription granted QoS [1]
+   INFO MQTT connected to wss://sensor.demo.safetrust.com:443/mqtt; subscribing to ['token/… (Safetrust token notices)', 'Web/475/Monitoring/728589'] (QoS 2)
+   INFO MQTT subscription granted QoS [2, 2]
    INFO Backend link UNKNOWN -> ONLINE
    ```
    These lines are worth a look every time you change a setting:
@@ -108,8 +108,9 @@ All settings are environment variables. Anything not set takes the default shown
 | `MQTT_USERNAME` | empty | Safetrust: the device key, `728589` |
 | `MQTT_PASSWORD` | empty | Safetrust: `token/` followed by the API token |
 | `MQTT_TOPICS` | empty | comma separated. Safetrust: `Web/475/Monitoring/728589`. **Empty means subscribed to nothing** |
-| `MQTT_CLIENT_ID` | `Web_Edge_gateway` | **unique per program on the broker**; keep the `Web_` prefix |
-| `MQTT_QOS` | `1` | if the broker refuses QoS 1 for a topic, the gateway asks again for that topic at QoS 0 |
+| `MQTT_CLIENT_ID` | `Web_Edge_<MQTT_USERNAME>` | **unique per program on the broker**, in the shape `Web_<name>_<device key>[_<suffix>]` like the cloud's own (`Web_Direct_728589`). A second gateway on the same account needs its own suffix |
+| `MQTT_QOS` | `2` | what the cloud's own subscribers ask for. If the broker refuses a QoS for a topic, the gateway asks again for that topic at QoS 0 |
+| `MQTT_TOKEN_TOPIC` | `auto` | the cloud's own subscribers subscribe to `token/<API token>` as well as the topic, in the same request, and the broker sends token notices there. `auto` does the same when the password starts with `token/`; `false` never does; the console shows it as "token/… (Safetrust token notices)", never the token itself |
 | `MQTT_CLEAN_SESSION` | `true` | `false` asks the broker to keep messages while this gateway is off (depends on the broker) |
 | `MQTT_TLS_INSECURE` | `true` | do not check the broker's certificate. The Safetrust demo broker needs it; use `false` with a real CA |
 | `MQTT_CA_CERTS` | empty | CA file to check the broker with when `MQTT_TLS_INSECURE=false` |
@@ -129,6 +130,17 @@ All settings are environment variables. Anything not set takes the default shown
 | `LOCAL_COMPANY_KEY` | `0` | optional `COMPANY_KEY` copied onto USB swipes (`0` = none) |
 | `LOCAL_GRAB_KEYBOARD` | `true` | `false` only for testing: the digits would also be typed into the gateway's console |
 
+**Which kind of input for which computer.** The gateway recognises a USB reader by the device it is plugged into, and the name after `=` says which Safetrust reader that device stands next to. It does not use the sender's network address.
+
+| Computer | Reader works as | `LOCAL_INPUTS` | Notes |
+|---|---|---|---|
+| Linux | a keyboard | `kbd:/dev/input/by-id/<entry ending -event-kbd>=F9E2` | the gateway takes the device exclusively, so the digits never reach a terminal. Plug the reader in and run `ls -l /dev/input/by-id/` to find the entry; your user must be in the `input` group. `by-id` survives a reboot, `eventNN` does not |
+| macOS or Windows | a keyboard | `stdin=F9E2` | **`kbd:` does not work here** (it reads `/dev/input`, which only Linux has; the gateway says so in the log and in the console). The reader types into the terminal the gateway runs in, so that window must have focus when you tap |
+| any | a serial (CDC) port | `serial:/dev/cu.usbmodem1101@9600=F9E2` (macOS), `serial:COM3@9600=F9E2` (Windows), `serial:/dev/ttyACM0@9600=F9E2` (Linux) | needs `pip install pyserial` and a reader set to serial mode. On a Mac `ls /dev/cu.usb*` shows whether it appears; in Device Manager on Windows it is under Ports (COM). This is the way to read a reader in the background on macOS or Windows |
+| another computer on the LAN | either | that computer sends `POST /local-swipe` with `"reader": "F9E2"` | the reader name in the request decides, and `F9E2` must be listed in `LOCAL_READERS`. Set `EDGE_INGEST_TOKEN` so only your own computers can send |
+
+After you start the gateway, the log has a `USB inputs:` line. If it says `USB inputs: none`, `LOCAL_INPUTS` was empty when the gateway started: the settings file was not loaded, or the line is still commented out. The console's Synchronization section shows the same, and says why a reader is not listening.
+
 ### The gateway itself
 
 | Setting | Default | |
@@ -141,7 +153,7 @@ All settings are environment variables. Anything not set takes the default shown
 
 ## 5. Which settings for which job
 
-* **Show the demo with typed numbers.** `edge.demo.env` as it is. Change `LOCAL_INPUTS=stdin=DrC0F8` to the reader at your gate. The reader
+* **Show the demo with typed numbers.** `edge.demo.env` as it is: `LOCAL_INPUTS=stdin=F9E2` names the Safetrust IoT USB reader F9E2. Change the name after `=` to the reader at your gate. The reader
   feed stays off, so the console shows it as Not used and a typed number goes out at once.
 * **Demo plus the wall readers.** Remove the `#` from the five `MQTT_` lines in `edge.demo.env` and paste the token. A typed number now
   waits up to 6 s for the wall reader's copy and, if it arrives, only the wall reader's copy is sent.
@@ -168,7 +180,7 @@ Neither changes anything; the broker check cannot log in, because the card above
 
 | Shows | Means | Do |
 |---|---|---|
-| Connected, topic "subscribed, QoS 1" | logged in and receiving | nothing. "Last message: None yet" is normal until a reader is tapped |
+| Connected, topics "subscribed, QoS 2" | logged in and receiving | nothing. "Last message: None yet" is normal until a reader is tapped |
 | Connected, with a warning | `MQTT_TOPICS` is empty, the broker refused a topic, or the connection keeps being dropped | the warning says which and what to change |
 | Connecting (n tries so far) | the broker has not answered yet | press **Check broker path**; wait if the Internet has just come back |
 | Not connected | it was connected and the connection was lost | the gateway retries on its own, every 1 to 60 s, and subscribes again |
@@ -192,7 +204,7 @@ You need three terminals in `edge_gateway/`, and `pip install amqtt` once for th
 
 Open `http://localhost:8090/`. Then watch `tail -f /tmp/bench.accepted` in a fourth terminal as you go.
 
-**T1. The baseline.** Both cards are green: Cloud backend **Online**, Reader feed **Connected**, topic "subscribed, QoS 1". The log has the lines from step 3.5.
+**T1. The baseline.** Both cards are green: Cloud backend **Online**, Reader feed **Connected**, topics "subscribed, QoS 2". The log has the lines from step 3.5.
 
 **T2. An event over HTTP.**
 ```
@@ -248,6 +260,7 @@ Clean up with Ctrl-C in each terminal and `rm bench_outbox.db*` (and `rm /tmp/be
 |---|---|---|
 | `python -m pytest -q` | all unit tests: intake, queue, forwarder, USB decoding and pairing, the console API, the two connection states | `pip install pytest` |
 | `python drill/wan_drill.py` | a real gateway against a real local broker and a fake backend: backend down, 503, hanging, `kill -9`, duplicate events, broker lost and back | `pip install amqtt paho-mqtt httpx`; ports 18830, 18080, 18090 free |
+| `python drill/mqtt_probe.py` | not a test of the code: asks YOUR broker which client id, QoS and subscription it accepts (section 10). Stop the gateway first | `pip install paho-mqtt`; your `.env` loaded; reaches the broker |
 | `python drill/usb_drill.py` | the USB path the same way: held, shadow, no copy, backend down, broker lost while a swipe is held, `kill -9` | same; ports 18930, 18180, 18190 free |
 
 ## 10. When something is wrong
@@ -256,7 +269,8 @@ Clean up with Ctrl-C in each terminal and `rm bench_outbox.db*` (and `rm /tmp/be
 |---|---|---|
 | Reader feed stays **Connecting** | the broker is unreachable: no Internet, DNS, a firewall on 443, or a wrong `MQTT_URL`. The MQTT client does not use `HTTPS_PROXY` | **Check broker path**: it names the step that fails |
 | Reader feed **Login refused** | wrong `MQTT_USERNAME`/`MQTT_PASSWORD`, an expired token, or a refused `MQTT_CLIENT_ID` | the card gives the broker's reason; paste the token again, with the `token/` prefix |
-| Reader feed connects and drops again and again, with a warning about `MQTT_CLIENT_ID` | another program uses the same client id | give this gateway its own (`Web_Edge_<name>`) |
+| Reader feed connects and drops again and again, with a warning about `MQTT_CLIENT_ID` | another program uses the same client id | give this gateway its own (`Web_Edge_728589_<name>`) |
+| The log shows `MQTT connected` and, about a quarter of a second later, `MQTT disconnected (rc=7)`, over and over, and the card says the broker hangs up right after the login | the login is accepted, then the broker closes the connection without answering the subscription. It does not like the client id, the subscription or its QoS. The cloud's own subscribers use an id ending in the device key, subscribe to `token/<API token>` and the topic together, and ask for QoS 2, which are this gateway's defaults now | stop the gateway, `set -a; . ./.env; set +a`, then `python drill/mqtt_probe.py`: it tries eight combinations against your broker and prints the settings that work. Also try `LOG_LEVEL=DEBUG`: it logs every MQTT packet (the token masked) |
 | Reader feed **Connected** but "Last message: None yet" while readers are being tapped | wrong topic (company or device key), or the readers' own uplink is down so Safetrust publishes nothing | check `MQTT_TOPICS`; look at the Safetrust portal. USB swipes still work |
 | A topic says "refused by the broker" | the topic is wrong or the account may not read it | correct `MQTT_TOPICS` |
 | Cloud backend **Offline** | no Internet, DNS, firewall, a wrong `CLOUD_BASE_URL`, a proxy in the environment, or the backend is down | **Check connection**. A secure-handshake failure usually means the gateway's date is wrong |
@@ -275,5 +289,6 @@ Clean up with Ctrl-C in each terminal and `rm bench_outbox.db*` (and `rm /tmp/be
 * **Stop:** Ctrl-C, or `docker stop`. The store is on disk; nothing waiting is lost.
 * **Start again:** the same command. Events still in the store are sent first.
 * **Update:** copy the new files over `edge_gateway/`, restart. The store file is untouched.
+* **Look inside the store.** `sqlite3 edge_outbox.db "select seq_id, status, attempts, substr(payload_json, 1, 90) from edge_queue"` (the `sqlite3` command is on macOS and most Linux). The store is a queue of what is **waiting** to be sent, not a history: the gateway deletes an event the moment the cloud confirms it, so with the backend Online the table is empty almost at once. To see a row, make the backend unreachable first (`CLOUD_BASE_URL=http://127.0.0.1:9/api/v1`, or stop the backend) and tap or type a number: it appears as `PENDING`, and goes when the backend returns. The recent rows can also sit in the `edge_outbox.db-wal` side file, so a file manager may show the `.db` itself as nearly empty; `sqlite3` reads both.
 * **Reset the store** (it deletes the events still waiting): stop the gateway, delete `edge_outbox.db`, `edge_outbox.db-wal` and `edge_outbox.db-shm`.
 * The console's activity history (what was sent, retried, refused, and the connection changes) lives in memory and starts empty after a restart. The store does not.

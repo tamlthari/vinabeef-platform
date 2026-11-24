@@ -37,7 +37,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from edge_console import ConsoleApi, SyncJournal, clean_broker_url, connack_reason, disconnect_reason
+from edge_console import TOKEN_NOTICES, ConsoleApi, SyncJournal, clean_broker_url, connack_reason, disconnect_reason
 from local_swipes import LocalSwipes
 from usb_input import build_source, parse_credential, parse_credential_map, parse_inputs
 
@@ -73,9 +73,10 @@ class Config:
     mqtt_username: str = ""
     mqtt_password: str = ""
     mqtt_topics: str = ""             # comma separated, e.g. Web/475/Monitoring/728589
-    mqtt_client_id: str = "Web_Edge_gateway"
+    mqtt_client_id: str = ""          # blank: Web_Edge_<MQTT_USERNAME>. Safetrust's own subscribers are Web_<role>_<device key>[_<suffix>]
     mqtt_clean_session: bool = True
-    mqtt_qos: int = 1
+    mqtt_qos: int = 2                 # what the backend and the standby adapter ask Safetrust for
+    mqtt_token_topic: str = "auto"    # auto | true | false: also subscribe to the password ("token/<API token>"), as they do
     mqtt_tls_insecure: bool = True    # the Safetrust demo broker needs it; set false with a real CA
     mqtt_ca_certs: str = ""
     # Local USB readers (leave local_inputs empty to run without them; POST /local-swipe still works for readers in local_readers)
@@ -89,6 +90,25 @@ class Config:
     local_company_key: int = 0        # optional COMPANY_KEY copied onto USB swipes (0 = none)
     local_credential_map: str = ""    # 36=042FAC02AD1490,38=044E6602AD1490: the card UUID of a typed number (demo, or numbers the cloud does not know)
     local_grab_keyboard: bool = True  # take the keyboard device exclusively so digits do not reach a console
+
+    def client_id(self) -> str:
+        """The MQTT client id. Safetrust's own subscribers are Web_Direct_<device key>[_<suffix>] (the backend) and
+        Web_Standby_<device key> (the standby adapter): the 'Web_' prefix, then the device key. Blank means the same
+        shape, Web_Edge_<MQTT_USERNAME>; two gateways on one account need a suffix each (MQTT_CLIENT_ID=Web_Edge_728589_barn1)."""
+        if self.mqtt_client_id:
+            return self.mqtt_client_id
+        return f"Web_Edge_{self.mqtt_username}" if self.mqtt_username else "Web_Edge_gateway"
+
+    def token_topic(self) -> str:
+        """The topic named by the password, or "". The backend and the standby adapter subscribe to 'token/<API token>'
+        next to the monitoring topic, and the broker sends token notices there. With auto, a password that starts with
+        'token/' is used; true uses any non-empty password; false never subscribes to it."""
+        mode = (self.mqtt_token_topic or "auto").strip().lower()
+        if mode in ("0", "false", "no", "off") or not self.mqtt_password:
+            return ""
+        if mode in ("1", "true", "yes", "on"):
+            return self.mqtt_password
+        return self.mqtt_password if self.mqtt_password.startswith("token/") else ""
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -109,9 +129,10 @@ class Config:
             mqtt_username=g("MQTT_USERNAME", ""),
             mqtt_password=g("MQTT_PASSWORD", ""),
             mqtt_topics=g("MQTT_TOPICS", ""),
-            mqtt_client_id=g("MQTT_CLIENT_ID", cls.mqtt_client_id),
+            mqtt_client_id=g("MQTT_CLIENT_ID", ""),
             mqtt_clean_session=_env_bool("MQTT_CLEAN_SESSION", True),
             mqtt_qos=int(g("MQTT_QOS", cls.mqtt_qos)),
+            mqtt_token_topic=g("MQTT_TOKEN_TOPIC", cls.mqtt_token_topic),
             mqtt_tls_insecure=_env_bool("MQTT_TLS_INSECURE", True),
             mqtt_ca_certs=g("MQTT_CA_CERTS", ""),
             gateway_no=int(g("EDGE_GATEWAY_NO", cls.gateway_no)),
@@ -258,6 +279,49 @@ class Outbox:
 # --------------------------------------------------------------------------------------------------------
 # Gateway
 # --------------------------------------------------------------------------------------------------------
+class _Redact(logging.Filter):
+    """Hides a secret in log lines. paho's debug log prints SUBSCRIBE packets, and the token topic is the token."""
+
+    def __init__(self, secret: str):
+        super().__init__()
+        self.secret = secret
+
+    def filter(self, record):
+        if self.secret:
+            text = record.getMessage()
+            if self.secret in text:
+                record.msg, record.args = text.replace(self.secret, "token/***"), ()
+        return True
+
+
+def build_mqtt_client(cfg: "Config", client_id: str = None):
+    """A paho client set up like the cloud's own Safetrust subscribers: websocket path from the URL, TLS without certificate
+    checks for the demo broker, user name and password. Returns (client, host, port); the caller connects it."""
+    import paho.mqtt.client as mqtt
+    url = urlparse(cfg.mqtt_url)
+    websockets = url.scheme in ("ws", "wss")
+    tls = url.scheme in ("wss", "mqtts", "ssl")
+    port = url.port or (443 if url.scheme == "wss" else 80 if url.scheme == "ws" else 8883 if tls else 1883)
+    kwargs = dict(client_id=client_id or cfg.client_id(), clean_session=cfg.mqtt_clean_session,
+                  transport="websockets" if websockets else "tcp")
+    try:                                           # paho-mqtt 2.x
+        client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION1, **kwargs)
+    except AttributeError:                         # paho-mqtt 1.x
+        client = mqtt.Client(**kwargs)
+    if websockets:
+        client.ws_set_options(path=url.path or "/mqtt")
+    if tls:
+        if cfg.mqtt_tls_insecure:
+            log.warning("MQTT TLS certificate checks are OFF (MQTT_TLS_INSECURE).")
+            client.tls_set(cert_reqs=ssl.CERT_NONE)
+            client.tls_insecure_set(True)
+        else:
+            client.tls_set(ca_certs=cfg.mqtt_ca_certs or None)
+    if cfg.mqtt_username:
+        client.username_pw_set(cfg.mqtt_username, cfg.mqtt_password)
+    return client, url.hostname, port
+
+
 class Gateway:
     def __init__(self, cfg: Config):
         self.cfg = cfg
@@ -278,9 +342,9 @@ class Gateway:
         self.console = ConsoleApi(self)
         self._post_ms = None
         self._health_at = None
-        self._sub_mids = {}                 # subscribe request id -> topic, to match each broker answer to its topic
+        self._sub_mids = {}                 # subscribe request id -> [(topic, qos)], to match each broker answer to its topics
         if cfg.mqtt_url:
-            self.journal.mqtt_setup(self.mqtt_topic_list())
+            self.journal.mqtt_setup(self.mqtt_display_topics())
 
     # ---- intake -------------------------------------------------------------------------------------
     def accept_event(self, event: dict, raw_json: str) -> bool:
@@ -333,6 +397,9 @@ class Gateway:
             self.local_sources.append(src)
         if self.local_specs:
             log.info("USB inputs: %s", ", ".join(f"{s.device}->{s.reader}" for s in self.local_specs))
+        else:
+            log.info("USB inputs: none. LOCAL_INPUTS is empty, so nothing listens for a USB reader or typed numbers "
+                     "(set it, for example stdin=F9E2).")
 
     def local_loop(self):
         """Ends holds that ran out, and trims the swipe log."""
@@ -479,7 +546,7 @@ class Gateway:
             "counters": dict(self.counters),
             "local": {
                 **self.local.stats(),
-                "inputs": [{"device": s.device, "reader": s.reader, "connected": s.connected} for s in self.local_sources],
+                "inputs": [{"device": s.device, "reader": s.reader, "connected": s.connected, "note": s.note} for s in self.local_sources],
                 "holdMs": self.cfg.local_hold_ms, "matchSkewMs": self.cfg.local_match_skew_ms,
             },
         }
@@ -488,10 +555,25 @@ class Gateway:
     def mqtt_topic_list(self) -> list:
         return [t.strip() for t in self.cfg.mqtt_topics.split(",") if t.strip()]
 
-    def _mqtt_subscribe(self, subscribe, topic: str, qos: int):
-        result = subscribe(topic, qos=qos)
+    def mqtt_label(self, topic: str) -> str:
+        """What the log and the console call a topic. The token topic IS the API token, so it is never shown."""
+        return TOKEN_NOTICES if topic and topic == self.cfg.token_topic() else topic
+
+    def mqtt_display_topics(self) -> list:
+        token = self.cfg.token_topic()
+        return ([TOKEN_NOTICES] if token else []) + self.mqtt_topic_list()
+
+    def mqtt_wanted(self) -> list:
+        """What to subscribe to, in the order the cloud's own clients use: the token topic, then the topics. One SUBSCRIBE."""
+        token = self.cfg.token_topic()
+        return [(t, self.cfg.mqtt_qos) for t in ([token] if token else []) + self.mqtt_topic_list()]
+
+    def _mqtt_subscribe(self, subscribe, items: list):
+        if not items:
+            return
+        result = subscribe(list(items))
         if isinstance(result, tuple) and len(result) > 1:
-            self._sub_mids[result[1]] = (topic, qos)
+            self._sub_mids[result[1]] = list(items)
 
     def mqtt_on_connect(self, rc, subscribe):
         """The broker answered the login. `subscribe` is the client's own subscribe."""
@@ -501,24 +583,28 @@ class Gateway:
             log.error("MQTT connect refused (rc=%s): %s %s", rc, why, hint)
             self.journal.mqtt_refused(rc, why, hint)
             return
-        topics = self.mqtt_topic_list()
+        wanted = self.mqtt_wanted()
         self.mqtt_connected = True
         self.journal.mqtt_up()
-        log.info("MQTT connected to %s; subscribing to %s", self.cfg.mqtt_url, topics)
-        for t in topics:                               # on EVERY (re)connect: a clean session forgets them
-            self._mqtt_subscribe(subscribe, t, self.cfg.mqtt_qos)
+        log.info("MQTT connected to %s; subscribing to %s (QoS %s)", self.cfg.mqtt_url, self.mqtt_display_topics(), self.cfg.mqtt_qos)
+        self._mqtt_subscribe(subscribe, wanted)        # on EVERY (re)connect: a clean session forgets them
 
     def mqtt_on_subscribe(self, mid, granted, subscribe):
         log.info("MQTT subscription granted QoS %s", list(granted))
-        topic, asked = self._sub_mids.pop(mid, (None, self.cfg.mqtt_qos))
-        if 128 in granted and asked != 0:              # the broker refused this QoS: ask again for that topic at QoS 0
-            for t in ([topic] if topic is not None else self.mqtt_topic_list()):
-                self._mqtt_subscribe(subscribe, t, 0)
-            return
-        if topic is not None and granted:              # refused even at QoS 0 is a final answer: do not ask again
-            self.journal.mqtt_subscribed(topic, granted[0])
-            if granted[0] >= 128:
-                log.error("The MQTT broker refused the subscription to %s: check the topic and what this account may read.", topic)
+        items = self._sub_mids.pop(mid, None) or self.mqtt_wanted()
+        again = []
+        for i, (topic, asked) in enumerate(items):
+            answer = granted[i] if i < len(granted) else None
+            if answer is None:
+                continue
+            if answer >= 128 and asked != 0:           # the broker refused this QoS: ask again for that topic at QoS 0
+                again.append((topic, 0))
+                continue
+            self.journal.mqtt_subscribed(self.mqtt_label(topic), answer)   # refused even at QoS 0 is final: do not ask again
+            if answer >= 128:
+                log.error("The MQTT broker refused the subscription to %s: check the topic and what this account may read.",
+                          self.mqtt_label(topic))
+        self._mqtt_subscribe(subscribe, again)
 
     def mqtt_on_disconnect(self, rc):
         was_connected = self.mqtt_connected
@@ -539,39 +625,22 @@ class Gateway:
         if not self.cfg.mqtt_url:
             log.info("MQTT_URL not set: HTTP intake only.")
             return None
-        import paho.mqtt.client as mqtt
         cfg = self.cfg
-        url = urlparse(cfg.mqtt_url)
-        websockets = url.scheme in ("ws", "wss")
-        tls = url.scheme in ("wss", "mqtts", "ssl")
-        port = url.port or (443 if url.scheme == "wss" else 80 if url.scheme == "ws" else 8883 if tls else 1883)
-        kwargs = dict(client_id=cfg.mqtt_client_id, clean_session=cfg.mqtt_clean_session,
-                      transport="websockets" if websockets else "tcp")
-        try:                                           # paho-mqtt 2.x
-            client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION1, **kwargs)
-        except AttributeError:                         # paho-mqtt 1.x
-            client = mqtt.Client(**kwargs)
-        if websockets:
-            client.ws_set_options(path=url.path or "/mqtt")
-        if tls:
-            if cfg.mqtt_tls_insecure:
-                log.warning("MQTT TLS certificate checks are OFF (MQTT_TLS_INSECURE).")
-                client.tls_set(cert_reqs=ssl.CERT_NONE)
-                client.tls_insecure_set(True)
-            else:
-                client.tls_set(ca_certs=cfg.mqtt_ca_certs or None)
-        if cfg.mqtt_username:
-            client.username_pw_set(cfg.mqtt_username, cfg.mqtt_password)
+        client, host, port = build_mqtt_client(cfg)
         topics = self.mqtt_topic_list()
-        log.info("MQTT: %s as client '%s', topics %s", clean_broker_url(cfg.mqtt_url), cfg.mqtt_client_id, topics or "none")
+        log.info("MQTT: %s as client '%s', subscribing to %s at QoS %s", clean_broker_url(cfg.mqtt_url), cfg.client_id(),
+                 self.mqtt_display_topics() or "nothing", cfg.mqtt_qos)
         if not topics:
-            log.warning("MQTT_TOPICS is empty: the gateway will connect to the broker but subscribe to nothing.")
+            log.warning("MQTT_TOPICS is empty: the gateway will connect to the broker but subscribe to no reader topic.")
+        if log.isEnabledFor(logging.DEBUG):             # every MQTT packet, with the token masked
+            logging.getLogger("paho.mqtt").addFilter(_Redact(cfg.mqtt_password))
+            client.enable_logger(logging.getLogger("paho.mqtt"))
 
         def on_message(c, userdata, msg):
             try:
                 self.handle_mqtt_message(msg.topic, msg.payload)
             except Exception:
-                log.exception("Could not queue a message from %s", msg.topic)
+                log.exception("Could not queue a message from %s", self.mqtt_label(msg.topic))
 
         client.on_connect = lambda c, userdata, flags, rc: self.mqtt_on_connect(rc, c.subscribe)
         client.on_subscribe = lambda c, userdata, mid, granted: self.mqtt_on_subscribe(mid, granted, c.subscribe)
@@ -579,7 +648,7 @@ class Gateway:
         client.on_connect_fail = lambda c, userdata: self.mqtt_on_connect_fail()
         client.on_message = on_message
         client.reconnect_delay_set(min_delay=1, max_delay=60)
-        client.connect_async(url.hostname, port, keepalive=30)   # keeps retrying even if the first attempt fails
+        client.connect_async(host, port, keepalive=30)   # keeps retrying even if the first attempt fails
         client.loop_start()
         return client
 

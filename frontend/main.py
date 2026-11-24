@@ -1720,14 +1720,22 @@ async def htmx_transmission_detail(request: Request, tx_id: str, user: dict = De
         return HTMLResponse("<div class='p-6 text-xs text-rose-700'>Your role cannot view surveillance transmissions.</div>", status_code=403)
     if not TX_ID_RE.match(tx_id):
         return HTMLResponse("<div class='p-6 text-xs text-rose-700'>That is not a transmission id.</div>")
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        res = await client.get(f"{BACKEND_BASE_URL}/surveillance/transmissions/{tx_id}", params={"maxChars": 120000}, headers=get_auth_headers(user))
-    if res.status_code != 200:
+    def failed(reason: str):
         # 200 on purpose: HTMX does not swap an error status into the window, and the reason belongs there
         return templates.TemplateResponse("partials/transmission_detail.html", {
-            "request": request, "d": None, "view": None, "tx_id": tx_id,
-            "error": extract_backend_error(res, "The transmission could not be loaded.")})
-    d = res.json()
+            "request": request, "d": None, "view": None, "tx_id": tx_id, "error": reason})
+
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            res = await client.get(f"{BACKEND_BASE_URL}/surveillance/transmissions/{tx_id}", params={"maxChars": 120000}, headers=get_auth_headers(user))
+    except httpx.HTTPError as exc:
+        return failed(f"The backend could not be reached: {exc.__class__.__name__}.")
+    if res.status_code != 200:
+        return failed(extract_backend_error(res, "The transmission could not be loaded."))
+    try:
+        d = res.json()
+    except ValueError:
+        return failed("The backend answered with something that is not a transmission.")
     return templates.TemplateResponse("partials/transmission_detail.html", {
         "request": request, "d": d, "view": build_transmission_view(d), "tx_id": tx_id, "error": ""})
 

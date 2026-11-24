@@ -45,6 +45,8 @@ log = logging.getLogger("edge.console")
 MAX_PAGE = 200
 STATUSES = ("PENDING", "HELD", "DEAD")
 NO_ANSWER = "No answer from the broker."
+# What the console and the log call the subscription to the password topic. The topic IS the API token: never show it.
+TOKEN_NOTICES = "token/… (Safetrust token notices)"
 
 # What the MQTT broker says when it refuses a login (the CONNACK return code), in words a person can act on.
 _CONNACK = {
@@ -104,6 +106,10 @@ class SyncJournal:
                      "connects": 0, "messages": 0, "events": 0, "last_message": None}
         self.mqtt_subs = {}                      # topic -> {"state": "pending" | "granted" | "refused", "qos": int | None}
         self.mqtt_drops = deque(maxlen=10)       # when the connection was lost, newest last
+        self.mqtt_up_at = None                   # when the current/last connection was accepted
+        self.mqtt_confirmed = False              # the broker has answered a subscription on this connection
+        self.mqtt_early = 0                      # connections in a row that ended before any subscription was confirmed
+        self.mqtt_early_ms = None                # how long the last of them lasted
 
     # ---- writing -------------------------------------------------------------------------------------
     def _bucket(self, now: float) -> list:
@@ -192,12 +198,14 @@ class SyncJournal:
             self.mqtt["attempts"] = 0
             for sub in self.mqtt_subs.values():
                 sub.update(state="pending", qos=None)
+            self.mqtt_up_at, self.mqtt_confirmed = self.clock(), False
             self._mqtt_state("CONNECTED", "", "", None, "ok", "Reader feed connected")
 
     def mqtt_subscribed(self, topic: str, granted: int):
         with self.lock:
             refused = granted is None or granted >= 128
             self.mqtt_subs[topic] = {"state": "refused" if refused else "granted", "qos": None if refused else granted}
+            self.mqtt_confirmed, self.mqtt_early = True, 0      # the broker answers: it is not hanging up on the subscribe
             if refused:
                 self._log(self.clock(), "FEED", 0, None, f"The broker refused the subscription to {topic}", "bad")
 
@@ -208,7 +216,11 @@ class SyncJournal:
 
     def mqtt_down(self, code, why: str):
         with self.lock:
-            self.mqtt_drops.append(self.clock())
+            now = self.clock()
+            self.mqtt_drops.append(now)
+            if self.mqtt_subs and not self.mqtt_confirmed and self.mqtt_up_at is not None:
+                self.mqtt_early += 1                             # accepted, then hung up on before it answered a subscription
+                self.mqtt_early_ms = int((now - self.mqtt_up_at) * 1000)
             self._mqtt_state("DISCONNECTED", why, "", code, "warn", f"Reader feed lost: {why}")
 
     def mqtt_attempt_failed(self):
@@ -247,7 +259,8 @@ class SyncJournal:
                     "messages": m["messages"], "events": m["events"],
                     "lastMessageAgeS": int(now - m["last_message"]) if m["last_message"] else None,
                     "topics": [{"topic": t, **v} for t, v in self.mqtt_subs.items()],
-                    "drops5min": drops, "flapping": drops >= 3}
+                    "drops5min": drops, "flapping": drops >= 3,
+                    "earlyDrops": self.mqtt_early, "earlyDropMs": self.mqtt_early_ms}
             return {
                 "mqtt": mqtt,
                 "startedAt": int(self.started * 1000),
@@ -411,18 +424,25 @@ class ConsoleApi:
         connected = bool(configured and gw.mqtt_connected)
         state = "NOT_CONFIGURED" if not configured else "CONNECTED" if connected else (
             j["state"] if j["state"] not in ("CONNECTED", "NOT_CONFIGURED") else "DISCONNECTED")
-        topics = j["topics"] if j["topics"] else [{"topic": t, "state": "pending", "qos": None} for t in gw.mqtt_topic_list()]
+        topics = j["topics"] if j["topics"] else [{"topic": t, "state": "pending", "qos": None} for t in gw.mqtt_display_topics()]
         warning = None
         if configured and not gw.mqtt_topic_list():
             warning = "MQTT_TOPICS is empty. This gateway can connect to the broker but is subscribed to nothing."
+        elif configured and j["earlyDrops"] >= 2:
+            warning = (f"The broker hangs up about {j['earlyDropMs']} ms after the login, before it confirms the subscription "
+                       f"({j['earlyDrops']} times in a row). The login itself works, so the address, user name and token are right. "
+                       "Safetrust's own subscribers use a client id that ends with the device key, subscribe to token/<API token> "
+                       "as well as the topic, and ask for QoS 2. Run python drill/mqtt_probe.py to see which of these this broker needs.")
         elif connected and any(t["state"] == "refused" for t in topics):
             bad = next(t["topic"] for t in topics if t["state"] == "refused")
-            warning = f"The broker refused the subscription to {bad}. Check the topic and what this account may read."
+            warning = (f"The broker refused the subscription to {bad}. Check the topic and what this account may read."
+                       if bad != TOKEN_NOTICES else
+                       "The broker refused the token subscription. The token may have expired; MQTT_TOKEN_TOPIC=false stops asking for it.")
         elif j["flapping"]:
             warning = (f"The connection dropped {j['drops5min']} times in the last 5 minutes. A broker disconnects a client "
                        "when another program connects with the same MQTT_CLIENT_ID: give each its own.")
         return {"configured": configured, "connected": connected, "broker": u.hostname if u else None,
-                "url": clean_broker_url(cfg.mqtt_url), "clientId": cfg.mqtt_client_id if configured else None,
+                "url": clean_broker_url(cfg.mqtt_url), "clientId": cfg.client_id() if configured else None,
                 "state": state, "sinceMs": j["since"], "sinceAgeS": j["sinceAgeS"], "why": j["why"], "hint": j["hint"],
                 "code": j["code"], "attempts": j["attempts"], "connects": j["connects"], "messages": j["messages"],
                 "events": j["events"], "lastMessageAgeS": j["lastMessageAgeS"], "topics": topics, "warning": warning,

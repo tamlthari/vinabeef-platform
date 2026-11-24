@@ -28,6 +28,11 @@ from dataclasses import dataclass
 
 log = logging.getLogger("edge.usb")
 
+PLATFORM_NAMES = {"darwin": "macOS", "win32": "Windows", "cygwin": "Windows"}
+LINUX_ONLY = ("{kind} reads /dev/input, which exists on Linux only (this computer is {os}), so this reader is NOT listened to. "
+              "Use stdin=<reader> (the reader types into the terminal the gateway runs in) or serial:<port>@<baud>=<reader> "
+              "(a reader in serial mode: /dev/cu.usbmodem... on macOS, COM3 on Windows).")
+
 CREDENTIAL_RE = re.compile(r"^[0-9]{1,12}$")
 
 
@@ -193,6 +198,7 @@ class _Source(threading.Thread):
         self.device, self.reader, self.sink, self.clock = device, reader, sink, clock
         self.stop_event = threading.Event()
         self.connected = False
+        self.note = ""                              # why this source is not listening, in words, for the console
 
     def emit(self, swipes):
         for s in swipes:
@@ -234,15 +240,20 @@ class KeyboardSource(_Source):
 
     def run(self):
         own_fd = self._fd is None
+        if own_fd and not sys.platform.startswith("linux"):
+            self.note = LINUX_ONLY.format(kind="kbd:", os=PLATFORM_NAMES.get(sys.platform, sys.platform))
+            log.error("USB input %s: %s", self.device, self.note)
+            return                                   # /dev/input does not exist here: retrying would never help
         while not self.stop_event.is_set():
             try:
                 fd = self._fd if self._fd is not None else self._open()
             except OSError as ex:
                 self.connected = False
+                self.note = f"{self.path} is not available ({ex.strerror or ex}). Plug the reader in and check the path with ls -l /dev/input/by-id/."
                 log.warning("USB keyboard %s not available (%s); retrying.", self.path, ex)
                 self.stop_event.wait(self.retry_s)
                 continue
-            self.connected = True
+            self.connected, self.note = True, ""
             log.info("USB keyboard %s open: swipes go to reader %s", self.path or "(descriptor)", self.reader)
             try:
                 self._read(fd)
@@ -298,14 +309,16 @@ class SerialSource(_Source):
             try:
                 port = self._open()
             except ImportError:
+                self.note = "pyserial is not installed (pip install pyserial)."
                 log.error("pyserial is not installed: serial source %s is OFF (pip install pyserial).", self.path)
                 return
             except Exception as ex:                  # SerialException, OSError
                 self.connected = False
+                self.note = f"{self.path} is not available ({getattr(ex, 'strerror', None) or ex}). Plug the reader in and check the port name."
                 log.warning("Serial port %s not available (%s); retrying.", self.path, ex)
                 self.stop_event.wait(self.retry_s)
                 continue
-            self.connected = True
+            self.connected, self.note = True, ""
             log.info("Serial port %s open at %s baud: swipes go to reader %s", self.path, self.baud, self.reader)
             try:
                 while not self.stop_event.is_set():

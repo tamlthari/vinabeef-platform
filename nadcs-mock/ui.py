@@ -11,7 +11,7 @@ _PAGE = r"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>NADCS test server: submissions</title>
+<title>NADCS test server: receipts</title>
 <style nonce="__NONCE__">
   :root { --bg:#f4f6f9; --card:#fff; --ink:#1b2430; --mute:#667085; --line:#e3e8ef; --blue:#2563eb;
           --ok:#067647; --okbg:#ecfdf3; --okline:#abefc6; --bad:#b42318; --badbg:#fef3f2; --badline:#fecdca;
@@ -89,6 +89,13 @@ _PAGE = r"""<!doctype html>
   table.mini td:nth-child(1), table.mini td:nth-child(2) { white-space:nowrap; word-break:normal; }
   .scroll { overflow-x:auto; }
   table.mini tbody tr { cursor:default; } table.mini tbody tr:hover { background:transparent; }
+  table.mini.hist tbody tr { cursor:pointer; } table.mini.hist tbody tr:hover { background:#f6f9ff; }
+  table.mini.hist tbody tr.cur { background:#eaf1ff; font-weight:600; }
+  .chain { display:flex; flex-wrap:wrap; align-items:center; gap:4px; }
+  .chain .arrow { color:var(--mute); font-size:12px; }
+  .pill.sm { font-size:10.5px; padding:1px 7px; white-space:nowrap; }
+  .more { font-size:11px; color:var(--mute); white-space:nowrap; }
+  td.chaincell { min-width:190px; max-width:340px; }
   .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:8px; }
   pre.body { margin:0; background:#0f172a; color:#e2e8f0; border-radius:8px; padding:12px 14px; font:12px/1.5 var(--mono); max-height:420px; overflow:auto; white-space:pre-wrap; word-break:break-all; }
   .small-btn { padding:3px 9px; font-size:12px; }
@@ -122,13 +129,20 @@ _PAGE = r"""<!doctype html>
 <main id="app" class="hidden">
   <div id="modebanner" class="banner hidden" role="status"></div>
   <div class="tiles">
-    <div class="tile"><b id="t-all">0</b><span>received (kept)</span></div>
-    <div class="tile ok"><b id="t-ok">0</b><span>accepted, receipt issued</span></div>
-    <div class="tile bad"><b id="t-bad">0</b><span>rejected</span></div>
-    <div class="tile err"><b id="t-err">0</b><span>failed on purpose (error mode)</span></div>
+    <div class="tile"><b id="t-all">0</b><span id="l-all">received (kept)</span></div>
+    <div class="tile ok"><b id="t-ok">0</b><span id="l-ok">accepted, receipt issued</span></div>
+    <div class="tile bad"><b id="t-bad">0</b><span id="l-bad">rejected</span></div>
+    <div class="tile err"><b id="t-err">0</b><span id="l-err">failed on purpose (error mode)</span></div>
   </div>
   <div class="toolbar">
-    <div class="seg" role="group" aria-label="Filter by result">
+    <div class="seg" id="viewseg" role="group" aria-label="What to list">
+      <button type="button" data-v="tx" aria-pressed="true">Transmissions: receipt history</button>
+      <button type="button" data-v="sub" aria-pressed="false">Every request</button>
+    </div>
+    <span class="note" id="viewnote"></span>
+  </div>
+  <div class="toolbar">
+    <div class="seg" id="filterseg" role="group" aria-label="Filter by result">
       <button type="button" data-f="ALL" aria-pressed="true">All</button>
       <button type="button" data-f="ACCEPTED" aria-pressed="false">Accepted</button>
       <button type="button" data-f="REJECTED" aria-pressed="false">Rejected</button>
@@ -139,7 +153,16 @@ _PAGE = r"""<!doctype html>
     <button id="refresh" type="button">Refresh</button>
   </div>
   <div class="note mb" id="keptnote"></div>
-  <div class="tablewrap">
+  <div class="tablewrap" id="wrap-tx">
+    <table>
+      <thead><tr>
+        <th>VinaBeef transmission</th><th>Latest</th><th>Status of each attempt, oldest first</th><th>Receipt</th><th>Report</th><th>Tries</th><th>Last received</th>
+      </tr></thead>
+      <tbody id="txrows"></tbody>
+    </table>
+    <div id="txempty" class="empty hidden"></div>
+  </div>
+  <div class="tablewrap hidden" id="wrap-sub">
     <table>
       <thead><tr>
         <th>Received</th><th>Result</th><th>HTTP</th><th>Report</th><th>Records</th><th>Body</th><th>Warn.</th><th>VinaBeef ref.</th><th>Submission</th>
@@ -180,7 +203,7 @@ _PAGE = r"""<!doctype html>
 
   let key = null;
   try { key = sessionStorage.getItem(KEY_STORE); } catch (e) { key = null; }
-  const state = { items: [], meta: null, filter: 'ALL', query: '', selected: null, busy: false, timer: null };
+  const state = { view: 'tx', items: [], meta: null, tx: [], txMeta: null, filter: 'ALL', query: '', selected: null, busy: false, timer: null };
 
   const fmtBytes = (n) => n == null ? '' : n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(1) + ' MB';
   const fmtTime = (iso) => { const d = new Date(iso); return isNaN(d) ? String(iso) : d.toLocaleString(); };
@@ -208,8 +231,8 @@ _PAGE = r"""<!doctype html>
     const slow = quiet ? null : setTimeout(() => setConn('Waiting for the server (a sleeping free-tier instance needs up to a minute)...', false), 3000);
     if (!quiet) setConn('Loading...', false);
     try {
-      const data = await api('/v2/surveillance/submissions?limit=200');
-      state.items = data.items || []; state.meta = data;
+      const [data, txs] = await Promise.all([api('/v2/surveillance/submissions?limit=200'), api('/v2/surveillance/transmissions?limit=200')]);
+      state.items = data.items || []; state.meta = data; state.tx = txs.items || []; state.txMeta = txs;
       $('login').classList.add('hidden'); $('app').classList.remove('hidden'); $('signout').classList.remove('hidden');
       setConn('Updated ' + new Date().toLocaleTimeString(), false);
       renderAll();
@@ -221,15 +244,60 @@ _PAGE = r"""<!doctype html>
   }
 
   function renderAll() {
-    const m = state.meta || {}, c = m.counts || {};
-    $('t-all').textContent = m.kept ?? 0; $('t-ok').textContent = c.ACCEPTED ?? 0; $('t-bad').textContent = c.REJECTED ?? 0; $('t-err').textContent = c.ERROR ?? 0;
+    const m = state.meta || {}, tx = state.view === 'tx', src = tx ? (state.txMeta || {}) : m, c = src.counts || {};
+    $('t-all').textContent = src.kept ?? 0; $('t-ok').textContent = c.ACCEPTED ?? 0; $('t-bad').textContent = c.REJECTED ?? 0; $('t-err').textContent = c.ERROR ?? 0;
+    $('l-all').textContent = tx ? 'transmissions (kept)' : 'received (kept)';
+    $('l-ok').textContent = tx ? 'latest attempt accepted' : 'accepted, receipt issued';
+    $('l-bad').textContent = tx ? 'latest attempt rejected' : 'rejected';
+    $('l-err').textContent = tx ? 'latest attempt failed (error mode)' : 'failed on purpose (error mode)';
     $('mode').textContent = m.behavior ? 'mode: ' + m.behavior : '';
     const mb = $('modebanner');
     if (m.behavior && m.behavior !== 'normal') { mb.textContent = 'This server is set to "' + m.behavior + '": it is answering on purpose in a way a normal server would not (POST /admin/behavior {"mode":"normal"} restores it).'; mb.classList.remove('hidden'); }
     else mb.classList.add('hidden');
-    $('keptnote').textContent = 'Showing the last ' + (m.kept ?? 0) + ' of at most ' + (m.maxKept ?? 200) + ' submissions. They are kept in memory only and disappear when the server restarts or a free instance spins down.';
-    for (const b of document.querySelectorAll('.seg button')) b.setAttribute('aria-pressed', String(b.dataset.f === state.filter));
-    renderRows();
+    const where = m.persistent ? 'They are saved to a history file on the server and survive a restart.' : 'They are kept in memory only and disappear when the server restarts or a free instance spins down.';
+    $('keptnote').textContent = 'Showing the last ' + (m.kept ?? 0) + ' of at most ' + (m.maxKept ?? 200) + ' requests. ' + where;
+    $('viewnote').textContent = tx ? 'One row per VinaBeef transmission; a retry adds an attempt to the same row.' : 'One row per request that reached this server.';
+    for (const b of document.querySelectorAll('#filterseg button')) b.setAttribute('aria-pressed', String(b.dataset.f === state.filter));
+    for (const b of document.querySelectorAll('#viewseg button')) b.setAttribute('aria-pressed', String(b.dataset.v === state.view));
+    $('wrap-tx').classList.toggle('hidden', !tx); $('wrap-sub').classList.toggle('hidden', tx);
+    renderRows(); renderTx();
+  }
+
+  function pillOf(outcome, http, small) {
+    return h('span', { class: 'pill ' + outcome + (small ? ' sm' : '') }, outcome + (http ? ' ' + http : ''));
+  }
+
+  function matchesTx(g, q) {
+    if (!q) return true;
+    const own = [g.clientRef, g.key, g.receiptId, g.reportType, g.farmScope, g.latestSubmissionId];
+    const past = (g.history || []).flatMap((a) => [a.submissionId, a.receiptId]);
+    return own.concat(past).some((v) => v && String(v).toLowerCase().includes(q));
+  }
+
+  function renderTx() {
+    const q = state.query.trim().toLowerCase();
+    const rows = state.tx.filter((g) => (state.filter === 'ALL' || g.latestOutcome === state.filter) && matchesTx(g, q));
+    const tbody = $('txrows'); tbody.replaceChildren();
+    for (const g of rows) {
+      const hist = g.history || [], shown = hist.slice(-6), hidden = hist.length - shown.length;
+      const chain = h('div', { class: 'chain', 'aria-label': 'Attempts, oldest first: ' + hist.map((a) => a.outcome + (a.httpStatus ? ' ' + a.httpStatus : '')).join(', then ') });
+      if (hidden > 0) chain.append(h('span', { class: 'more' }, '+' + hidden + ' earlier'), h('span', { class: 'arrow' }, '\u203a'));
+      shown.forEach((a, i) => { if (i) chain.append(h('span', { class: 'arrow' }, '\u203a')); chain.append(pillOf(a.outcome, a.httpStatus, true)); });
+      tbody.append(h('tr', { tabindex: '0', 'data-id': g.latestSubmissionId, 'aria-label': 'Open ' + (g.clientRef || g.latestSubmissionId), class: g.latestSubmissionId === state.selected ? 'sel' : '',
+        onclick: () => openDetail(g.latestSubmissionId), onkeydown: (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openDetail(g.latestSubmissionId); } } },
+        h('td', { class: 'mono nw' }, g.clientRef || h('span', { class: 'small' }, 'no reference (' + g.latestSubmissionId + ')')),
+        h('td', { class: 'nw' }, pillOf(g.latestOutcome, g.latestHttpStatus, false)),
+        h('td', { class: 'chaincell' }, chain),
+        h('td', { class: 'mono nw' }, g.receiptId || h('span', { class: 'small' }, g.latestOutcome === 'ACCEPTED' ? '' : 'none issued')),
+        h('td', { class: 'nw' }, h('div', {}, g.reportType || '-'), h('div', { class: 'small' }, g.reportType ? (g.farmScope || '') + ' \u00b7 ' + (g.recordCount ?? 0) + (g.recordCount === 1 ? ' record' : ' records') : '')),
+        h('td', {}, g.attempts),
+        h('td', { class: 'nw', title: g.lastReceivedAt }, fmtTime(g.lastReceivedAt))));
+    }
+    const empty = $('txempty');
+    if (!rows.length) {
+      empty.textContent = state.tx.length ? 'No transmission matches this filter.' : 'Nothing received yet. Transmit a report from VinaBeef, or POST one to /v2/surveillance/herd-health.';
+      empty.classList.remove('hidden');
+    } else empty.classList.add('hidden');
   }
 
   function matches(it, q) {
@@ -265,8 +333,11 @@ _PAGE = r"""<!doctype html>
 
   // ------------------------------------------------------------------------------------------- detail drawer
   function closeDrawer() {
+    // the #TX-... in the address is only dropped when a drawer was open; on the login screen it must survive, because
+    // a link from VinaBeef opens in a new tab with no key yet, and the transmission is opened once the key is entered
+    const wasOpen = state.selected !== null;
     $('drawer').classList.add('hidden'); $('shade').classList.add('hidden'); state.selected = null;
-    if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+    if (wasOpen && location.hash) history.replaceState(null, '', location.pathname + location.search);
     for (const r of document.querySelectorAll('tbody tr.sel')) r.classList.remove('sel');
   }
 
@@ -320,6 +391,25 @@ _PAGE = r"""<!doctype html>
     return [h('h3', {}, 'Received body'), tools, note, pre];
   }
 
+  // what happened to this VinaBeef transmission each time it was tried (the receipt status history)
+  function historySection(d) {
+    const hist = d.history || [];
+    if (!hist.length) return [];
+    const n = hist.length;
+    const intro = d.clientRef
+      ? (n === 1 ? 'Only one attempt of ' + d.clientRef + ' has reached this server.' : n + ' attempts of ' + d.clientRef + ', oldest first. Open one to see its answer and body.')
+      : 'This request carried no VinaBeef reference, so it has no other attempts to link to it.';
+    const body = hist.map((a, i) => h('tr', { class: a.submissionId === d.submissionId ? 'cur' : '', tabindex: '0', 'aria-label': 'Open attempt ' + (i + 1),
+      onclick: () => { if (a.submissionId !== d.submissionId) openDetail(a.submissionId); },
+      onkeydown: (ev) => { if ((ev.key === 'Enter' || ev.key === ' ') && a.submissionId !== d.submissionId) { ev.preventDefault(); openDetail(a.submissionId); } } },
+      h('td', {}, String(i + 1)), h('td', { class: 'nw' }, fmtTime(a.receivedAt)), h('td', {}, pillOf(a.outcome, a.httpStatus, true)),
+      h('td', { class: 'mono' }, a.receiptId || ''), h('td', {}, a.submissionId === d.submissionId ? 'this one' : '')));
+    return [h('h3', {}, 'Status history'), h('div', { class: 'small mb' }, intro),
+      h('div', { class: 'scroll' }, h('table', { class: 'mini hist' },
+        h('thead', {}, h('tr', {}, h('th', {}, 'Try'), h('th', {}, 'Received'), h('th', {}, 'Result'), h('th', {}, 'Receipt'), h('th', {}, ''))),
+        h('tbody', {}, body)))];
+  }
+
   function renderDrawer(d) {
     const out = h('div', {});
     const head = d.outcome === 'ACCEPTED' ? 'Accepted: receipt issued'
@@ -330,9 +420,12 @@ _PAGE = r"""<!doctype html>
       d.summary ? h('div', {}, d.summary) : null,
       d.receiptId ? h('div', { class: 'rid' }, h('span', {}, 'Receipt ' + d.receiptId), copyBtn(d.receiptId)) : null));
 
+    for (const el of historySection(d)) out.append(el);
+
     out.append(h('h3', {}, 'Request'));
     out.append(h('dl', {},
       fact('Received', fmtTime(d.receivedAt) + '  (' + d.receivedAt + ')'),
+      fact('Answered', d.answeredAt ? fmtTime(d.answeredAt) + (d.durationMs != null ? '  (' + d.durationMs.toLocaleString() + ' ms after it arrived)' : '') : null),
       fact('HTTP answer', d.httpStatus),
       fact('VinaBeef reference', d.clientRef, true),
       fact('Submission id', d.submissionId, true),
@@ -373,7 +466,7 @@ _PAGE = r"""<!doctype html>
     if (!t) return;
     const hit = state.items.find((it) => [it.submissionId, it.receiptId, it.clientRef].includes(t));
     if (hit) openDetail(hit.submissionId);
-    else { $('q').value = t; state.query = t; renderRows(); setConn('No submission for ' + t + ' is kept: it may predate the last restart.', true); }
+    else { $('q').value = t; state.query = t; renderRows(); renderTx(); setConn('No submission for ' + t + ' is kept: it may predate the last restart.', true); }
   }
 
   // ------------------------------------------------------------------------------------------- wiring
@@ -388,8 +481,9 @@ _PAGE = r"""<!doctype html>
   $('dclose').addEventListener('click', closeDrawer);
   $('shade').addEventListener('click', closeDrawer);
   document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && !$('drawer').classList.contains('hidden')) closeDrawer(); });
-  $('q').addEventListener('input', (ev) => { state.query = ev.target.value; renderRows(); });
-  for (const b of document.querySelectorAll('.seg button')) b.addEventListener('click', () => { state.filter = b.dataset.f; renderAll(); });
+  $('q').addEventListener('input', (ev) => { state.query = ev.target.value; renderRows(); renderTx(); });
+  for (const b of document.querySelectorAll('#filterseg button')) b.addEventListener('click', () => { state.filter = b.dataset.f; renderAll(); });
+  for (const b of document.querySelectorAll('#viewseg button')) b.addEventListener('click', () => { state.view = b.dataset.v; renderAll(); });
   $('auto').addEventListener('change', schedule);
   function schedule() {
     if (state.timer) { clearInterval(state.timer); state.timer = null; }
