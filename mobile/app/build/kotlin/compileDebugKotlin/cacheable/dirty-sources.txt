@@ -1,0 +1,6 @@
+/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/java/com/vinabeef/field/FieldRules.kt
+/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/java/com/vinabeef/field/ApiClient.kt
+/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/java/com/vinabeef/field/MainActivity.kt
+/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/java/com/vinabeef/field/OfflineFieldDbHelper.kt
+/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/java/com/vinabeef/field/OutboxSyncer.kt
+/Users/thurlake/Desktop/Projects/vinabeef-platform/mobile/app/src/main/java/com/vinabeef/field/RfidScannerManager.kt
