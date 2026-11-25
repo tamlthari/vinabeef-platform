@@ -43,6 +43,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 class MainActivity : AppCompatActivity() {
 
     private lateinit var db: OfflineFieldDbHelper
+    private lateinit var syncer: OutboxSyncer
     private lateinit var session: SessionStore
     private lateinit var rfidScanner: RfidScannerManager
     private var nfcAdapter: NfcAdapter? = null
@@ -99,6 +100,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         db = OfflineFieldDbHelper(this)
+        syncer = OutboxSyncer(db, ApiClient, BATCH_SIZE)
         session = SessionStore(this)
         nfcAdapter = NfcAdapter.getDefaultAdapter(this)
 
@@ -539,11 +541,7 @@ class MainActivity : AppCompatActivity() {
 
     // ------------------------------------------------------------------ sending
 
-    /**
-     * Sends what is waiting, oldest first. A record leaves the phone only when the server lists its id in
-     * `acknowledgedClientIds`; one the server refuses is kept as REJECTED with the reason; a failed request
-     * changes nothing, so everything is simply tried again later.
-     */
+    /** Sends the signed-in user's waiting records in the background ([OutboxSyncer] holds the rules) and reports the result. */
     private fun syncPending(userInitiated: Boolean) {
         if (session.token.isEmpty()) {
             if (userInitiated) toast("Sign in to send the waiting records.")
@@ -565,48 +563,18 @@ class MainActivity : AppCompatActivity() {
         val baseUrl = session.serverUrl
         val token = session.token
         worker.execute {
-            var sent = 0
-            var refused = 0
-            var note = ""
-            try {
-                while (true) {
-                    val batch = db.getPendingOutbox(user, BATCH_SIZE)
-                    if (batch.length() == 0) break
-                    val resp = ApiClient.syncRecords(baseUrl, token, batch)
-                    if (resp.code == 401 || resp.code == 403) {
-                        note = expireSession(token)
-                        break
-                    }
-                    if (resp.code !in 200..299) {
-                        note = "The server answered HTTP ${resp.code}. The records stay on the phone and are tried again."
-                        break
-                    }
-                    val json = JSONObject(resp.body)
-                    val acknowledged = json.optJSONArray("acknowledgedClientIds") ?: JSONArray()
-                    val rejected = json.optJSONArray("rejected") ?: JSONArray()
-                    db.deleteAcknowledgedIds(acknowledged)
-                    for (i in 0 until rejected.length()) {
-                        val r = rejected.getJSONObject(i)
-                        val id = r.optString("clientEventId")
-                        if (id.isNotEmpty()) {
-                            db.markRejected(id, FieldRules.friendlyReason(r.optString("code"), r.optString("message")))
-                        }
-                    }
-                    sent += acknowledged.length()
-                    refused += rejected.length()
-                    if (acknowledged.length() + rejected.length() == 0) break
-                }
-            } catch (e: Exception) {
-                note = "No connection to the server. The records stay on the phone and are sent when it returns."
+            val result = try {
+                syncer.send(baseUrl, token, user)
             } finally {
                 syncRunning.set(false)
             }
+            val note = if (result.sessionEnded) expireSession(token) else result.note
             runOnUiThread {
                 syncNote = note
                 refreshStatus()
-                if (sent > 0) toast("Sent $sent record(s) to the server.")
-                if (refused > 0) toast("$refused record(s) were not accepted. Tap the orange button to see why.", true)
-                if (userInitiated && sent == 0 && refused == 0 && note.isNotEmpty()) toast(note, true)
+                if (result.sent > 0) toast("Sent ${result.sent} record(s) to the server.")
+                if (result.refused > 0) toast("${result.refused} record(s) were not accepted. Tap the orange button to see why.", true)
+                if (userInitiated && result.sent == 0 && result.refused == 0 && note.isNotEmpty()) toast(note, true)
             }
         }
     }
