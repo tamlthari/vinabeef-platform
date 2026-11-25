@@ -282,6 +282,9 @@ td.c-time { white-space: nowrap; }
 .stats dt { color: var(--ink2); }
 .stats dd { font-weight: 650; font-variant-numeric: tabular-nums; }
 .usbnote { margin-top: 12px; color: var(--ink2); font-size: 0.875rem; }
+.statshead { margin: 20px 0 0; font-size: 0.9375rem; font-weight: 650; }
+.statshead + .stats { margin-top: 6px; }
+.statshead small { display: block; margin-top: 2px; font-weight: 400; color: var(--ink2); font-size: 0.8125rem; }
 @media (max-width: 640px) { .stats { grid-template-columns: 1fr; } }
 
 .log { margin-top: 26px; }
@@ -408,14 +411,17 @@ pre { margin: 0; padding: 12px; background: var(--ground); border: 1px solid var
       <div class="panel syncbox">
         <div class="chart-head">
           <div>
-            <div class="chart-title" id="chart-title">Events per minute</div>
+            <div class="chart-title" id="chart-title">Local reads per minute</div>
           </div>
-          <div class="legend" aria-label="Legend"><span><i class="l1"></i>Received</span><span><i class="l2"></i>Sent to the cloud</span></div>
+          <div class="legend" aria-label="Legend"><span><i class="l1"></i>Local reads taken (HTTP and USB)</span><span><i class="l2"></i>Sent to the cloud</span></div>
           <button class="btn btn--quiet" id="chart-toggle" type="button" aria-pressed="false">Show as table</button>
         </div>
-        <div id="chart-wrap" class="chartbox" tabindex="0" role="group" aria-label="Events per minute. Use the left and right arrow keys to read each minute."></div>
+        <div id="chart-wrap" class="chartbox" tabindex="0" role="group" aria-label="Local reads per minute. Use the left and right arrow keys to read each minute."></div>
         <div id="chart-table" hidden></div>
+        <h3 class="statshead">Local reads, HTTP and USB together<small>These are the only events this gateway sends to the cloud.</small></h3>
         <dl class="stats" id="stats"></dl>
+        <h3 class="statshead">Reader feed (MQTT), watched only<small>The cloud already receives these events itself. The gateway only uses them to spot a local read that is a copy of one. None is sent.</small></h3>
+        <dl class="stats" id="stats-mqtt"></dl>
         <p class="usbnote" id="usbnote" hidden></p>
         <div class="log">
           <h3>Recent activity</h3>
@@ -571,7 +577,7 @@ function renderHero(ov) {
   const hi = $('#hero-icon'); hi.className = `tone-${meta.tone}`; hi.replaceChildren(icon(meta.icon));
   document.title = `${ov.gateway.name}: ${meta.word}`;
 
-  const flowIn = ov.sync.perMinute.slice(-2).some((m) => m.received > 0);
+  const flowIn = ov.sync.perMinute.slice(-2).some((m) => m.taken > 0) || (ov.mqtt.lastMessageAgeS != null && ov.mqtt.lastMessageAgeS < 120);
   const flowOut = ov.cloud.state === 'ONLINE' && (ov.store.sendRatePerMin > 0 || ov.store.pending > 0);
   const mqtt = ov.mqtt;
   const feedTone = !mqtt.configured ? 'idle' : mqtt.connected ? 'ok' : 'bad';
@@ -681,9 +687,9 @@ function renderMqtt(ov) {
   const confirmed = subs.length > 0 && subs.every((t) => t.state === 'granted');
   const tries = m.attempts ? ` (${plural(m.attempts, 'try', 'tries')} so far)` : '';
   const say = {
-    NOT_CONFIGURED: 'MQTT_URL is not set, so this gateway takes reader events by HTTP and USB only.',
+    NOT_CONFIGURED: 'MQTT_URL is not set, so this gateway takes local reads by HTTP and USB only and sends each one at once.',
     CONNECTING: `Trying to reach the broker${tries}.`,
-    CONNECTED: !subs.length ? 'Connected to the broker.' : confirmed ? 'Connected and subscribed. Reader events arrive as taps happen.' : 'Connected. Waiting for the broker to confirm the subscription.',
+    CONNECTED: !subs.length ? 'Connected to the broker.' : confirmed ? 'Connected and subscribed. Reader events are watched as taps happen; none is sent by this gateway.' : 'Connected. Waiting for the broker to confirm the subscription.',
     DISCONNECTED: `${m.why || 'The connection was lost.'} The gateway keeps retrying${tries}.`,
     REFUSED: `${m.why || 'The broker refused the login.'}${tries}`,
   }[m.state] || '';
@@ -700,10 +706,10 @@ function renderMqtt(ov) {
     rows.push(...row(subs.length === 1 ? 'Topic' : 'Topics', subs.length ? h('span', null, ...subs.map((t) => h('span', { class: 'tl' }, topicLine(t), h('small', { text: topicSub(t) })))) : 'None: MQTT_TOPICS is empty'));
     rows.push(...row(m.state === 'CONNECTED' ? 'Connected for' : m.state === 'CONNECTING' ? 'Trying for' : 'Not connected for', clock('for', m.sinceAgeS), `since ${when(m.sinceMs)}`));
     rows.push(...row('Last message', m.lastMessageAgeS == null ? 'None yet' : clock('ago', m.lastMessageAgeS),
-      m.messages ? `${num(m.messages)} received, ${num(m.events)} ${m.events === 1 ? 'reader event' : 'reader events'}` : null));
+      m.messages ? `${num(m.events)} ${m.events === 1 ? 'reader event' : 'reader events'} seen${m.messages > m.events ? `, ${num(m.messages - m.events)} other` : ''}. None is sent by this gateway.` : null));
   }
-  rows.push(...row('USB swipes', m.holding ? `Wait up to ${dur(m.holdMs / 1000)} for the reader's own copy` : 'Queued at once',
-    m.holding ? null : m.configured ? 'No reader copy can arrive while the feed is down.' : 'There is no reader feed to wait for.'));
+  rows.push(...row('Local reads (HTTP and USB)', m.holding ? `Wait up to ${dur(m.holdMs / 1000)} for the reader's own copy` : 'Sent at once',
+    m.holding ? 'A read that matches a reader event seen here is a copy and is not sent.' : m.configured ? 'No reader copy can arrive while the feed is down.' : 'There is no reader feed to wait for.'));
   $('#mqtt-kv').replaceChildren(...rows);
 }
 
@@ -739,7 +745,7 @@ const TABS = [['ALL', 'All'], ['PENDING', 'Waiting'], ['HELD', 'Held'], ['DEAD',
 const TAB_HELP = {
   ALL: 'Everything still on this gateway.',
   PENDING: 'These are sent to the cloud in this order, oldest first.',
-  HELD: 'USB swipes waiting a few seconds for the reader’s own copy of the same tap, so one tap is not counted twice.',
+  HELD: 'Local reads (HTTP or USB) waiting a few seconds for the reader’s own copy of the same tap on the reader feed, so one tap is not counted twice.',
   DEAD: 'The cloud refused these too many times. They are kept here and not retried.',
 };
 const STATE = { PENDING: ['clock', 'Waiting', 'idle'], HELD: ['pause', 'Held', 'warn'], DEAD: ['cross', 'Refused', 'bad'] };
@@ -769,7 +775,8 @@ function renderStoreText(ov) {
     : `${plural(s.pending, 'event is', 'events are')} waiting to be sent${s.held ? `, ${num(s.held)} held for a reader copy` : ''}${s.dead ? `, ${num(s.dead)} refused by the cloud` : ''}.${s.oldestPendingAgeS ? ` The oldest has waited ${dur(s.oldestPendingAgeS)}.` : ''}`;
   const bits = [`Store file ${bytes(s.dbBytes + s.walBytes)}`, `${bytes(s.diskFreeBytes)} free of ${bytes(s.diskTotalBytes)} on this disk`, `${s.fillPct}% of the ${num(s.maxRows)} event limit used`];
   if (s.emptyInS) bits.push(`at this speed it empties in about ${dur(s.emptyInS)}`);
-  $('#storefoot').textContent = `${bits.join('. ')}.`;
+  const where = [`Database: ${s.dbPath}`, s.logPath ? `history log: ${s.logPath}` : 'history log: off (terminal only)'];
+  $('#storefoot').textContent = `${bits.join('. ')}. ${where.join('. ')}.`;
 }
 
 function rowsSig(q) { return JSON.stringify([q.total, q.offset, q.rows.map((r) => [r.id, r.status, r.attempts, r.lastError])]); }
@@ -798,7 +805,7 @@ function renderQueue() {
     const none = st.q ? ['No events match your search.', 'Try a card number, a reader name or an event number.'] :
       st.tab === 'ALL' ? ['Nothing is waiting.', 'Every event so far has been confirmed by the cloud.'] :
       st.tab === 'PENDING' ? ['Nothing is waiting to be sent.', 'Every event so far has been confirmed by the cloud.'] :
-      st.tab === 'HELD' ? ['No swipes are being held.', 'USB swipes appear here for a few seconds when a reader feed is connected.'] :
+      st.tab === 'HELD' ? ['No reads are being held.', 'HTTP and USB reads appear here for a few seconds when a reader feed is connected.'] :
       ['No events were refused.', 'The cloud has accepted everything it was sent.'];
     empty.replaceChildren(h('strong', { text: none[0] }), none[1]);
   } else empty.hidden = true;
@@ -866,15 +873,18 @@ async function openEvent(id) {
 
 /* ---------- synchronization ---------- */
 const COUNTER_ROWS = [
-  ['Received from readers (MQTT and HTTP)', 'received'], ['Sent to the cloud', 'forwarded'], ['Duplicates ignored', 'duplicates'], ['Refused by the cloud and kept', 'dead'],
+  ['Local reads taken', 'localReceived'], ['Sent to the cloud', 'forwarded'], ['Matched with a reader event, not sent', 'localMatched'],
+  ['Repeats ignored', 'localDuplicates'], ['Refused at the door', 'localRejected'], ['Refused by the cloud and kept', 'dead'],
+];
+const MQTT_ROWS = [
+  ['Reader events seen', 'mqttEvents'], ['Repeats ignored', 'mqttRepeats'], ['Other messages', 'mqttOther'],
 ];
 function renderSync(ov) {
   const c = ov.sync.counters;
-  $('#sync-lede').textContent = `Since this gateway started ${dur(ov.gateway.uptimeS)} ago: ${plural(c.forwarded, 'event was', 'events were')} sent to the cloud. This history starts empty after a restart. The store above is not affected.`;
-  const total = c.localReceived;
-  $('#stats').replaceChildren(...COUNTER_ROWS.map(([label, key]) => h('div', null, h('dt', { text: label }), h('dd', { text: num(c[key]) }))),
-    ...(total || ov.local.inputs.length ? [h('div', null, h('dt', { text: 'USB swipes taken' }), h('dd', { text: num(c.localReceived) })),
-      h('div', null, h('dt', { text: 'USB swipes matched to a reader copy' }), h('dd', { text: num(ov.local.shadow ?? c.localShadow) }))] : []));
+  $('#sync-lede').textContent = `Since this gateway started ${dur(ov.gateway.uptimeS)} ago: ${plural(c.forwarded, 'local read was', 'local reads were')} sent to the cloud. These counts start from zero after a restart; the store above is not affected, and the history log file keeps the lines.`;
+  const rows = (list) => list.map(([label, key]) => h('div', null, h('dt', { text: label }), h('dd', { text: num(c[key] || 0) })));
+  $('#stats').replaceChildren(...rows(COUNTER_ROWS));
+  $('#stats-mqtt').replaceChildren(...rows(MQTT_ROWS));
   const note = $('#usbnote');
   note.hidden = false;
   if (ov.local.inputs.length) {
@@ -905,9 +915,9 @@ function drawChart() {
   const ov = st.ov; if (!ov) return;
   const wrap = $('#chart-wrap'), W = Math.max(260, Math.floor(wrap.clientWidth || 640));
   const count = W < 520 ? 15 : 30, data = ov.sync.perMinute.slice(-count), n = data.length;
-  $('#chart-title').textContent = `Events per minute, last ${n} minutes`;
+  $('#chart-title').textContent = `Local reads per minute, last ${n} minutes`;
   const H = 180, M = { l: 34, r: 4, t: 10, b: 24 }, iw = W - M.l - M.r, ih = H - M.t - M.b, slot = iw / n;
-  const top = niceTop(Math.max(1, ...data.map((d) => Math.max(d.received, d.sent)))), y = (v) => M.t + ih - (ih * v) / top;
+  const top = niceTop(Math.max(1, ...data.map((d) => Math.max(d.taken, d.sent)))), y = (v) => M.t + ih - (ih * v) / top;
   const pad = Math.max(2, slot * 0.16), bw = Math.max(2, Math.min(24, (slot - pad * 2 - 2) / 2));
   const svg = sv('svg', { viewBox: `0 0 ${W} ${H}`, width: W, height: H, 'aria-hidden': 'true' });
   [0, top / 2, top].forEach((v) => {
@@ -917,7 +927,7 @@ function drawChart() {
     const x0 = M.l + i * slot, cx = x0 + slot / 2;
     svg.append(sv('rect', { class: 'band', 'data-i': i, x: x0, y: M.t, width: slot, height: ih }));
     const pair = bw * 2 + 2, left = cx - pair / 2;
-    if (d.received > 0) svg.append(sv('path', { class: 'bar1', d: barPath(left, y(d.received), bw, M.t + ih - y(d.received), 4) }));
+    if (d.taken > 0) svg.append(sv('path', { class: 'bar1', d: barPath(left, y(d.taken), bw, M.t + ih - y(d.taken), 4) }));
     if (d.sent > 0) svg.append(sv('path', { class: 'bar2', d: barPath(left + bw + 2, y(d.sent), bw, M.t + ih - y(d.sent), 4) }));
     if ((n - 1 - i) % 5 === 0) svg.append(sv('text', { class: 'axis', x: cx, y: H - 6, 'text-anchor': 'middle' }, i === n - 1 ? 'now' : clockTime(d.t, false)));
   });
@@ -931,7 +941,7 @@ function drawChart() {
     svg.querySelectorAll('.band').forEach((b) => b.classList.toggle('on', Number(b.dataset.i) === i));
     const d = data[i];
     tip.replaceChildren(h('div', { class: 'when', text: `${clockTime(d.t, false)}, minute ${i === n - 1 ? 'so far' : 'total'}` }),
-      h('div', { class: 'row' }, h('span', { class: 'key k1' }), h('span', { class: 'val', text: num(d.received) }), h('span', { class: 'nm', text: 'Received' })),
+      h('div', { class: 'row' }, h('span', { class: 'key k1' }), h('span', { class: 'val', text: num(d.taken) }), h('span', { class: 'nm', text: 'Local reads taken' })),
       h('div', { class: 'row' }, h('span', { class: 'key k2' }), h('span', { class: 'val', text: num(d.sent) }), h('span', { class: 'nm', text: 'Sent to the cloud' })));
     tip.hidden = false;
     const cx = M.l + i * slot + slot / 2, tw = tip.offsetWidth;
@@ -949,9 +959,9 @@ function drawChart() {
     else if (ev.key === 'Escape') hide();
   };
   // the table view carries every value without hovering
-  const tbl = h('div', { class: 'tablescroll', tabindex: '0', role: 'region', 'aria-label': 'Events per minute as a table' },
-    h('table', null, h('thead', null, h('tr', null, h('th', { scope: 'col', text: 'Minute' }), h('th', { scope: 'col', class: 'num', text: 'Received' }), h('th', { scope: 'col', class: 'num', text: 'Sent' }), h('th', { scope: 'col', class: 'num', text: 'Refused' }))),
-      h('tbody', null, [...data].reverse().map((d) => h('tr', null, h('td', { text: clockTime(d.t, false) }), h('td', { class: 'num', text: num(d.received) }), h('td', { class: 'num', text: num(d.sent) }), h('td', { class: 'num', text: num(d.rejected) }))))));
+  const tbl = h('div', { class: 'tablescroll', tabindex: '0', role: 'region', 'aria-label': 'Local reads per minute as a table' },
+    h('table', null, h('thead', null, h('tr', null, h('th', { scope: 'col', text: 'Minute' }), h('th', { scope: 'col', class: 'num', text: 'Taken' }), h('th', { scope: 'col', class: 'num', text: 'Sent' }), h('th', { scope: 'col', class: 'num', text: 'Refused' }))),
+      h('tbody', null, [...data].reverse().map((d) => h('tr', null, h('td', { text: clockTime(d.t, false) }), h('td', { class: 'num', text: num(d.taken) }), h('td', { class: 'num', text: num(d.sent) }), h('td', { class: 'num', text: num(d.rejected) }))))));
   $('#chart-table').replaceChildren(tbl);
   syncChartView();
 }

@@ -2,19 +2,27 @@
 """
 Barn edge gateway (store-and-forward) for VinaBeef.
 
-Reader events reach the gateway three ways and land in ONE durable queue (SQLite, WAL, synchronous=FULL):
+Two kinds of input reach the gateway.
 
-  1. MQTT   - subscribes to the reader events (Safetrust cloud broker, or a broker on the barn LAN).
-  2. HTTP   - POST /  with one event or a list (LAN devices, test tools).
-  3. USB    - Safetrust USB IoT readers on this machine (keyboard, serial) or POST /local-swipe. They send only a
-              credential number, no time: the gateway stamps the time, gives the swipe a negative EVENT_KEY and,
-              while MQTT is up, holds it briefly to see whether the reader's own copy of the tap shows up.
-              See local_swipes.py and usb_input.py.
+  LOCAL READS (these go to the cloud). They land in ONE durable queue (SQLite, WAL, synchronous=FULL):
+    HTTP  - POST /  with one event or a list (a sensor on the LAN, Ethernet or serial bridge, a test tool).
+    USB   - Safetrust USB IoT readers on this machine (keyboard, serial) or POST /local-swipe. They send only a
+            credential number, no time: the gateway stamps the time and gives the swipe a negative EVENT_KEY.
+    While MQTT is up, a local read is held briefly to see whether the reader's own copy of the tap shows up there.
+    HTTP and USB reads are counted together. See local_swipes.py and usb_input.py.
+
+  THE MQTT FEED (this is only WATCHED). The Safetrust reader events are already delivered to the cloud backend by its own
+    MQTT subscription, so the gateway never queues or forwards them. It only remembers them, to decide whether a local
+    read is a copy of a tap the cloud already has. MQTT is counted separately from local reads.
 
 A background worker forwards the queue to the VinaBeef backend in hardware-time order and deletes an event
 ONLY when the backend confirms it (HTTP 200, or an OK entry in the 207 result list). If the backend or the WAN
 is down, events stay in the queue and are retried with exponential backoff. The backend is idempotent on
 EVENT_KEY, so resending is always safe.
+
+Where things live (the start-up log prints both full paths): the queue and the read log are in the SQLite file EDGE_DB_PATH
+(recent writes sit in its -wal side file until a checkpoint, which the gateway makes every couple of seconds), and the
+history of what the gateway did (links, sends, retries, reads) is in EDGE_LOG_FILE as well as on the terminal.
 
 Configuration is by environment variables (see edge.environment.example and RUN-AND-TEST.md). Secrets are never hard-coded.
 """
@@ -23,6 +31,7 @@ import binascii
 import hashlib
 import json
 import logging
+import logging.handlers
 import os
 import random
 import re
@@ -38,7 +47,7 @@ from urllib.parse import urlparse
 import httpx
 
 from edge_console import TOKEN_NOTICES, ConsoleApi, SyncJournal, clean_broker_url, connack_reason, disconnect_reason
-from local_swipes import LocalSwipes
+from local_swipes import LocalSwipes, Observation
 from usb_input import build_source, parse_credential, parse_credential_map, parse_inputs
 
 log = logging.getLogger("edge")
@@ -58,6 +67,7 @@ def _env_bool(name: str, default: bool) -> bool:
 @dataclass
 class Config:
     db_path: str = "edge_outbox.db"
+    log_file: str = None              # None: edge_gateway.log beside the database. Empty: no log file (terminal only)
     cloud_base_url: str = "http://localhost:8080/api/v1"
     batch_size: int = 100
     max_attempts: int = 20            # an event the backend keeps rejecting becomes DEAD (kept, not retried)
@@ -115,6 +125,7 @@ class Config:
         g = os.getenv
         return cls(
             db_path=g("EDGE_DB_PATH", cls.db_path),
+            log_file=g("EDGE_LOG_FILE"),
             cloud_base_url=g("CLOUD_BASE_URL", cls.cloud_base_url).rstrip("/"),
             batch_size=int(g("EDGE_BATCH_SIZE", cls.batch_size)),
             max_attempts=int(g("EDGE_MAX_ATTEMPTS", cls.max_attempts)),
@@ -266,6 +277,12 @@ class Outbox:
             self.db.commit()
             return cur.rowcount == 1
 
+    def checkpoint(self, truncate: bool = False):
+        """Copies what sits in the write-ahead log (the -wal file) into the main database file, so a viewer that opens only
+        the .db file sees the tables and rows. PASSIVE never waits for a reader; TRUNCATE (at shutdown) also empties the -wal."""
+        with self.lock:
+            self.db.execute(f"PRAGMA wal_checkpoint({'TRUNCATE' if truncate else 'PASSIVE'})").fetchall()
+
     def stats(self) -> dict:
         with self.lock:
             rows = dict(self.db.execute("SELECT status, COUNT(*) FROM edge_queue GROUP BY status").fetchall())
@@ -330,8 +347,14 @@ class Gateway:
         self.wan_state = "UNKNOWN"          # ONLINE | DEGRADED (backend answered but cannot write) | OFFLINE
         self.last_success_at = None
         self.mqtt_connected = False
-        self.counters = {"received": 0, "duplicates": 0, "ignored": 0, "forwarded": 0, "dead": 0,
-                         "localReceived": 0, "localHeld": 0, "localShadow": 0, "localQueued": 0, "localRejected": 0}
+        # Local reads (HTTP and USB together): localReceived = localQueued + localMatched + the ones held right now.
+        # forwarded is what was really sent to the cloud, and only local reads are ever sent. The mqtt* counters are the
+        # watched reader feed: nothing in them is sent.
+        self.counters = {"localReceived": 0, "localHeld": 0, "localMatched": 0, "localQueued": 0, "localDuplicates": 0,
+                         "localRejected": 0, "forwarded": 0, "dead": 0,
+                         "mqttEvents": 0, "mqttRepeats": 0, "mqttOther": 0}
+        self.db_path = os.path.abspath(cfg.db_path)
+        self.log_path = None                # set by main(): the history log file, if there is one
         self.credential_cards = parse_credential_map(cfg.local_credential_map)
         self.local = LocalSwipes(self.outbox, cfg.gateway_no, cfg.local_hold_ms, cfg.local_match_skew_ms,
                                  cfg.local_retention_s, cfg.local_company_key, cards=self.credential_cards)
@@ -346,23 +369,33 @@ class Gateway:
         if cfg.mqtt_url:
             self.journal.mqtt_setup(self.mqtt_display_topics())
 
-    # ---- intake -------------------------------------------------------------------------------------
-    def accept_event(self, event: dict, raw_json: str) -> bool:
-        # EDGE_* fields are written by this gateway for its own USB swipes and nowhere else: a reader event or a LAN
-        # POST must not be able to pose as one.
+    # ---- local reads: counting -----------------------------------------------------------------------
+    def _count_local(self, state: str):
+        """One local read (HTTP or USB) was taken. HELD ones are counted again as queued or matched when their hold ends."""
+        c = self.counters
+        if state == "DUPLICATE":
+            c["localDuplicates"] += 1
+            return
+        c["localReceived"] += 1
+        self.journal.taken()
+        c[{"HELD": "localHeld", "SHADOW": "localMatched", "QUEUED": "localQueued"}[state]] += 1
+
+    def _hold_now(self) -> bool:
+        # Wait for the reader's own copy only while MQTT is connected: with MQTT down no copy can reach this gateway.
+        return self.mqtt_connected and self.cfg.local_hold_ms > 0
+
+    # ---- local reads: HTTP ---------------------------------------------------------------------------
+    def accept_http_read(self, event: dict, raw_json: str) -> str:
+        """One event from a LAN sensor. Returns its state: HELD, QUEUED, SHADOW (a copy of a reader event already seen on
+        MQTT, so not sent) or DUPLICATE (the same EVENT_KEY again)."""
+        # EDGE_* fields are written by this gateway for its own USB swipes and nowhere else: a LAN POST must not pose as one.
         event = {k: v for k, v in event.items() if not str(k).startswith("EDGE_")}
         ev = normalise(event, raw_json)
-        is_new = self.outbox.add(ev)
-        self.counters["received" if is_new else "duplicates"] += 1
-        if is_new:
-            self.journal.received()
-            try:                                   # matching is an optimisation: it must never lose the event
-                self.local.record_safetrust(ev)
-            except Exception:
-                log.exception("Could not record read %s for USB matching", ev.get("EVENT_KEY"))
-        return is_new
+        state = self.local.submit_event(ev, self._hold_now()).state
+        self._count_local(state)
+        return state
 
-    # ---- local USB swipes ---------------------------------------------------------------------------
+    # ---- local reads: USB ----------------------------------------------------------------------------
     def accept_local(self, reader: str, device: str, text, t_ms: int = None):
         """One swipe of a USB reader. Raises ValueError (and counts it) when the text is not a credential number or the
         reader is not one this gateway serves. Returns a LocalResult: HELD, QUEUED or SHADOW."""
@@ -374,13 +407,8 @@ class Gateway:
             self.counters["localRejected"] += 1
             raise ValueError(f"reader '{reader}' is not served by this gateway (LOCAL_INPUTS / LOCAL_READERS)")
         t_ms = int(time.time() * 1000) if t_ms is None else t_ms
-        # Wait for the reader's own copy only while MQTT is connected: with MQTT down no copy can reach this gateway.
-        hold = self.mqtt_connected and self.cfg.local_hold_ms > 0
-        result = self.local.submit(reader, device, credential, str(text), t_ms, hold)
-        self.counters["localReceived"] += 1
-        self.counters[{"HELD": "localHeld", "SHADOW": "localShadow", "QUEUED": "localQueued"}[result.state]] += 1
-        if result.state == "QUEUED":                # a HELD swipe counts when its hold ends; a SHADOW never does
-            self.journal.received()
+        result = self.local.submit(reader, device, credential, str(text), t_ms, self._hold_now())
+        self._count_local(result.state)
         log.info("USB swipe: credential %s at reader %s from %s -> %s", credential, reader, device, result.state)
         return result
 
@@ -402,29 +430,44 @@ class Gateway:
                      "(set it, for example stdin=F9E2).")
 
     def local_loop(self):
-        """Ends holds that ran out, and trims the swipe log."""
-        last_prune = 0.0
+        """Ends holds that ran out, trims the read log, and copies the write-ahead log into the database file."""
+        last_prune = last_checkpoint = 0.0
         while not self.stop.wait(0.25):
             try:
                 released = self.local.release_due()
                 if released:
-                    self.journal.received(released)
-                    log.info("USB swipes with no reader copy within %d ms were queued.", self.cfg.local_hold_ms)
-                if time.time() - last_prune > 60:
+                    self.counters["localQueued"] += released
+                    log.info("%d local read%s with no reader copy within %d ms %s queued.", released,
+                             "" if released == 1 else "s", self.cfg.local_hold_ms, "was" if released == 1 else "were")
+                now = time.time()
+                if now - last_prune > 60:
                     self.local.prune()
-                    last_prune = time.time()
+                    last_prune = now
+                if now - last_checkpoint > 2:
+                    self.outbox.checkpoint()
+                    last_checkpoint = now
             except Exception:
-                log.exception("USB hold loop error")
+                log.exception("Local read loop error")
 
     def handle_mqtt_message(self, topic: str, payload: bytes):
+        """A message on the reader feed. It is only WATCHED: the cloud backend already receives this feed directly, so nothing
+        here is queued or sent. It is remembered so a local read of the same tap is recognised as a copy."""
         decoded = decode_payload(payload)
         is_event = decoded is not None and "EVENT_KEY" in decoded[0]
         self.journal.mqtt_message(is_event)
         if not is_event:
-            self.counters["ignored"] += 1          # e.g. the token notice topic
+            self.counters["mqttOther"] += 1          # e.g. the token notice topic
             log.debug("Ignored non-event message on %s", topic)
             return
-        self.accept_event(*decoded)
+        try:                                         # watching is an optimisation: a failure here loses nothing
+            seen = self.local.observe_reader_event(normalise(*decoded))
+        except Exception:
+            log.exception("Could not record a reader event from the MQTT feed")
+            seen = Observation()
+        self.counters["mqttRepeats" if seen.duplicate else "mqttEvents"] += 1
+        if seen.released_key is not None:
+            self.counters["localMatched"] += 1       # a held local read was this event's copy: it is not sent
+            log.info("Local read %s matched the reader's own event on MQTT: not sent.", seen.released_key)
 
     # ---- forwarding ---------------------------------------------------------------------------------
     def forward_once(self, client: httpx.Client) -> str:
@@ -541,7 +584,7 @@ class Gateway:
 
     def status(self) -> dict:
         return {
-            "wan": self.wan_state, "mqttConnected": self.mqtt_connected, "queue": self.outbox.stats(),
+            "wan": self.wan_state, "mqttConnected": self.mqtt_connected, "queue": self.outbox.stats(), "dbPath": self.db_path,
             "lastForwardedAgeSeconds": int(time.time() - self.last_success_at) if self.last_success_at else None,
             "counters": dict(self.counters),
             "local": {
@@ -613,9 +656,9 @@ class Gateway:
         if was_connected:                              # a refused login is followed by a disconnect: that is not a lost feed
             self.journal.mqtt_down(rc, disconnect_reason(rc))
         try:                                           # no reader copy can arrive now: stop waiting for one
-            self.journal.received(self.local.release_all_held())
+            self.counters["localQueued"] += self.local.release_all_held()
         except Exception:
-            log.exception("Could not release held USB swipes")
+            log.exception("Could not release held local reads")
 
     def mqtt_on_connect_fail(self):
         self.mqtt_connected = False
@@ -640,7 +683,7 @@ class Gateway:
             try:
                 self.handle_mqtt_message(msg.topic, msg.payload)
             except Exception:
-                log.exception("Could not queue a message from %s", self.mqtt_label(msg.topic))
+                log.exception("Could not handle a message from %s", self.mqtt_label(msg.topic))
 
         client.on_connect = lambda c, userdata, flags, rc: self.mqtt_on_connect(rc, c.subscribe)
         client.on_subscribe = lambda c, userdata, mid, granted: self.mqtt_on_subscribe(mid, granted, c.subscribe)
@@ -704,10 +747,11 @@ class Gateway:
                     events = body if isinstance(body, list) else [body]
                     if not all(isinstance(e, dict) for e in events):
                         raise ValueError("expected an event object or a list of event objects")
-                    queued = sum(1 for e in events if gw.accept_event(e, json.dumps(e)))
+                    states = [gw.accept_http_read(e, json.dumps(e)) for e in events]
                 except Exception as ex:
                     return self._json(400, {"error": str(ex)})
-                self._json(202, {"status": "BUFFERED_IN_EDGE_WAL", "queued": queued, "duplicates": len(events) - queued})
+                self._json(202, {"status": "BUFFERED_IN_EDGE_WAL", "queued": sum(1 for s in states if s in ("QUEUED", "HELD")),
+                                 "matched": states.count("SHADOW"), "duplicates": states.count("DUPLICATE")})
 
             def _local_swipe(self):
                 """{"reader": "DrC0F8", "credential": "38", "device": "optional label"}. The gateway stamps the time."""
@@ -726,11 +770,35 @@ class Gateway:
         return ThreadingHTTPServer((self.cfg.bind_host, self.cfg.bind_port), Handler)
 
 
+def log_file_path(cfg: "Config"):
+    """Where the history is written: EDGE_LOG_FILE, or edge_gateway.log beside the database. None when switched off (empty)."""
+    if cfg.log_file is None:
+        return os.path.join(os.path.dirname(os.path.abspath(cfg.db_path)), "edge_gateway.log")
+    return os.path.abspath(cfg.log_file) if cfg.log_file.strip() else None
+
+
+def add_log_file(path: str):
+    """Keeps the same lines the terminal shows in a file that survives a restart: 5 MB, 3 older files kept."""
+    try:
+        handler = logging.handlers.RotatingFileHandler(path, maxBytes=5_000_000, backupCount=3, encoding="utf-8")
+    except OSError as ex:                                  # a read-only folder must not stop the gateway
+        log.warning("Cannot write the log file %s (%s). The history is on the terminal only.", path, ex)
+        return False
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logging.getLogger().addHandler(handler)
+    return True
+
+
 def main():
     logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
     if os.getenv("LOG_LEVEL", "INFO").upper() != "DEBUG":
         logging.getLogger("httpx").setLevel(logging.WARNING)       # one health-check line a second would bury the lines that matter
-    gw = Gateway(Config.from_env())
+    cfg = Config.from_env()
+    log_path = log_file_path(cfg)
+    if log_path and not add_log_file(log_path):
+        log_path = None
+    gw = Gateway(cfg)
+    gw.log_path = log_path
     threading.Thread(target=gw.forward_loop, name="forwarder", daemon=True).start()
     threading.Thread(target=gw.local_loop, name="usb-hold", daemon=True).start()
     gw.start_local_inputs()
@@ -739,8 +807,9 @@ def main():
     signal.signal(signal.SIGTERM, lambda *_: threading.Thread(target=server.shutdown).start())
     if gw.credential_cards:
         log.info("USB numbers mapped to cards: %s", ", ".join(f"{n}->{c}" for n, c in gw.credential_cards.items()))
-    log.info("Barn edge gateway up: HTTP %s:%s, queue %s, backend %s",
-             gw.cfg.bind_host, gw.cfg.bind_port, gw.cfg.db_path, gw.cfg.cloud_base_url)
+    log.info("Barn edge gateway up: HTTP %s:%s, backend %s", gw.cfg.bind_host, gw.cfg.bind_port, gw.cfg.cloud_base_url)
+    log.info("Database (waiting reads and the read log): %s", gw.db_path)
+    log.info("History log: %s", log_path or "none (EDGE_LOG_FILE is empty): the terminal only")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -752,6 +821,10 @@ def main():
         if mqtt_client:
             mqtt_client.loop_stop()
             mqtt_client.disconnect()
+        try:                                                   # leave the .db file complete, with an empty -wal beside it
+            gw.outbox.checkpoint(truncate=True)
+        except sqlite3.Error:
+            log.exception("Could not checkpoint the database at shutdown")
 
 
 if __name__ == "__main__":

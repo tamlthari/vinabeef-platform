@@ -4,7 +4,9 @@
 # The VinaBeef backend this gateway forwards to (the deployed site, or your local backend when testing)
 CLOUD_BASE_URL=https://api.tamholthucwzr.men/api/v1
 
-# --- MQTT source -------------------------------------------------------------------------------------
+# --- MQTT reader feed (WATCHED ONLY) -------------------------------------------------------------------
+# The cloud backend already receives these reader events itself, so the gateway never sends them. It only watches them, to tell
+# whether a local read (HTTP or USB) is a copy of a tap the cloud already has.
 # Safetrust cloud broker (what the backend and multi_webs_sub_mqtt_threads_2.py use today)
 MQTT_URL=wss://sensor.demo.safetrust.com:443/mqtt
 MQTT_USERNAME=728589
@@ -17,7 +19,8 @@ MQTT_CLIENT_ID=Web_Edge_728589_barn1
 # A broker on the barn LAN would look like:  MQTT_URL=mqtt://192.168.2.10:1883  (no username needed)
 
 # --- optional ----------------------------------------------------------------------------------------
-# EDGE_DB_PATH=edge_outbox.db          # keep this on storage that survives a reboot
+# EDGE_DB_PATH=edge_outbox.db          # waiting reads + the 24 h read log. Relative to the folder you start from: give a full path. Keep it on storage that survives a reboot
+# EDGE_LOG_FILE=                       # the history log (links, sends, retries, reads). Default: edge_gateway.log beside the database. Empty = terminal only
 # EDGE_BIND_HOST=0.0.0.0               # LAN address for the HTTP intake and /status
 # EDGE_BIND_PORT=8090
 # EDGE_INGEST_TOKEN=change-me          # if set, POST needs the header  X-Edge-Token: change-me
@@ -28,7 +31,7 @@ MQTT_CLIENT_ID=Web_Edge_728589_barn1
 # MQTT_TLS_INSECURE=true               # the Safetrust demo broker needs this; use false with a real CA
 # EDGE_MAX_QUEUE_ROWS=200000
 
-# --- USB readers on this gateway (Safetrust USB IoT) -----------------------------------------------------------
+# --- Local reads: USB readers on this gateway (Safetrust USB IoT). HTTP sensors need no setting: they POST to / and name their own reader ---
 # The USB reader sends only a credential number ("38", "1005"), no time and no card UUID. The gateway stamps the time,
 # the cloud finds the card for that number. Leave LOCAL_INPUTS empty to run without USB readers.
 #   LOCAL_INPUTS=<kind>:<device>=<Safetrust reader it stands next to>, ...
@@ -39,8 +42,8 @@ MQTT_CLIENT_ID=Web_Edge_728589_barn1
 # LOCAL_INPUTS=kbd:/dev/input/event5=DrC0F8,kbd:/dev/input/event6=DrC1C4
 # EDGE_GATEWAY_NO=1                    # 1..99, unique per gateway: keeps the negative EVENT_KEYs of USB swipes apart
 # LOCAL_READERS=DrC0F8,DrC1C4          # readers POST /local-swipe may name (the inputs above are added automatically)
-# LOCAL_CREDENTIAL_MAP=36=042FAC02AD1490,1005=04B86592C21290,35=04143802F32290,38=044E6602AD1490   # the card UUID of a typed number (demo, or numbers the cloud does not know yet)
-# LOCAL_HOLD_MS=6000                   # while MQTT is up, wait this long for the reader's own copy of the tap (0 = never wait)
+# LOCAL_CREDENTIAL_MAP=36=042FAC02AD1490,1005=04B86592C21290,35=04143802F32290,38=044E6602AD1490   # the card UUID of a TYPED USB number only (demo, or numbers the cloud does not know yet)
+# LOCAL_HOLD_MS=6000                   # while MQTT is up, a local read (USB or HTTP) waits this long for the reader's own event (0 = never wait)
 # LOCAL_MATCH_SKEW_MS=10000            # same tap = closer than this, on the reader's clock AND the gateway's
 # LOCAL_IDLE_FLUSH_MS=200              # a USB device that sends no Enter ends a swipe after this silence
 # LOCAL_LOG_RETENTION_S=86400          # how long the swipe log is kept

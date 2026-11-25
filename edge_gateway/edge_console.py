@@ -17,9 +17,11 @@ broker (never an address the caller supplies).
 
 If EDGE_CONSOLE_TOKEN is set, every /api call needs the header X-Edge-Token with that value. The page itself carries no data.
 
-SyncJournal is what the gateway keeps for the page: link changes, what was sent, retried or rejected, events per minute, and the
-state of the MQTT reader feed (connected or not, why, last message, what it is subscribed to).
-It lives in memory, so it starts empty when the gateway restarts; the queue itself is durable and is not affected.
+SyncJournal is what the gateway keeps for the page: link changes, what was sent, retried or rejected, local reads taken per minute
+(HTTP and USB together), and the state of the MQTT reader feed (connected or not, why, last message, what it is subscribed to).
+The MQTT feed is only watched by the gateway, so it is never part of "taken" or "sent".
+It lives in memory, so it starts empty when the gateway restarts; the queue itself is durable and is not affected. The same lines
+are also written to the gateway's log file (EDGE_LOG_FILE), which does survive a restart.
 """
 import base64
 import hmac
@@ -95,7 +97,7 @@ class SyncJournal:
         self.lock = threading.Lock()
         self.started = clock()
         self.events = deque(maxlen=200)          # newest last
-        self.minutes = {}                        # minute number -> [received, sent, rejected]
+        self.minutes = {}                        # minute number -> [taken, sent, rejected]; taken = local reads (HTTP and USB)
         self.link = {"state": "UNKNOWN", "since": self.started, "why": ""}
         self.transitions = deque(maxlen=30)
         self.last_probe = None
@@ -131,7 +133,8 @@ class SyncJournal:
             event["tone"] = tone
         self.events.append(event)
 
-    def received(self, n: int = 1):
+    def taken(self, n: int = 1):
+        """A local read (HTTP or USB) arrived. MQTT reader events are not counted here: they are watched, not taken."""
         with self.lock:
             self._bucket(self.clock())[0] += n
 
@@ -250,7 +253,7 @@ class SyncJournal:
             per_minute = []
             for m in range(this - minutes + 1, this + 1):
                 r, s, x = self.minutes.get(m, (0, 0, 0))
-                per_minute.append({"t": m * 60_000, "received": r, "sent": s, "rejected": x})
+                per_minute.append({"t": m * 60_000, "taken": r, "sent": s, "rejected": x})
             sent_60s = sum(e["n"] for e in self.events if e["kind"] == "SENT" and e["t"] >= (now - 60) * 1000)
             m = self.mqtt
             drops = sum(1 for t in self.mqtt_drops if t >= now - 300)
@@ -405,7 +408,7 @@ class ConsoleApi:
                       "lastSentAgeS": int(now - gw.last_success_at) if gw.last_success_at else None,
                       "transitions": journal["transitions"]},
             "mqtt": self._mqtt(journal["mqtt"]),
-            "store": {"pending": pending, "held": held, "dead": dead, "total": total,
+            "store": {"dbPath": str(db_path), "logPath": gw.log_path, "pending": pending, "held": held, "dead": dead, "total": total,
                       "oldestPendingAgeS": int(now - oldest / 1000) if oldest else None,
                       "dbBytes": db_bytes, "walBytes": wal_bytes, "diskFreeBytes": disk.free, "diskTotalBytes": disk.total,
                       "maxRows": cfg.max_queue_rows, "fillPct": round(100.0 * total / cfg.max_queue_rows, 1) if cfg.max_queue_rows else 0,
@@ -432,7 +435,7 @@ class ConsoleApi:
             warning = (f"The broker hangs up about {j['earlyDropMs']} ms after the login, before it confirms the subscription "
                        f"({j['earlyDrops']} times in a row). The login itself works, so the address, user name and token are right. "
                        "Safetrust's own subscribers use a client id that ends with the device key, subscribe to token/<API token> "
-                       "as well as the topic, and ask for QoS 2. Run python drill/mqtt_probe.py to see which of these this broker needs.")
+                       "as well as the topic, and ask for QoS 2. Check MQTT_CLIENT_ID, MQTT_QOS and MQTT_TOKEN_TOPIC.")
         elif connected and any(t["state"] == "refused" for t in topics):
             bad = next(t["topic"] for t in topics if t["state"] == "refused")
             warning = (f"The broker refused the subscription to {bad}. Check the topic and what this account may read."
@@ -446,6 +449,7 @@ class ConsoleApi:
                 "state": state, "sinceMs": j["since"], "sinceAgeS": j["sinceAgeS"], "why": j["why"], "hint": j["hint"],
                 "code": j["code"], "attempts": j["attempts"], "connects": j["connects"], "messages": j["messages"],
                 "events": j["events"], "lastMessageAgeS": j["lastMessageAgeS"], "topics": topics, "warning": warning,
+                "watchedOnly": True,
                 "drops5min": j["drops5min"], "holdMs": cfg.local_hold_ms,
                 "holding": bool(connected and cfg.local_hold_ms > 0)}
 

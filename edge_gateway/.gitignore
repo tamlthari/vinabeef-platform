@@ -1,9 +1,10 @@
 edgegw_env/
 .env
-# *.db
-# *.db-wal
-# *.db-shm
+*.db
+*.db-wal
+*.db-shm
 *.db-journal
+*.log
 __pycache__/
 *.py[cod]
 .pytest_cache/

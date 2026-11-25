@@ -1,17 +1,22 @@
-# Barn edge gateway: configure, run and test
+# Barn edge gateway: configure, run and check
 
-The whole procedure for one gateway, from a folder of code to a tested link. It is written for the computer in the barn, but every
-step also works on a laptop. Section 7 is a test bench that touches neither the real cloud nor the Safetrust broker, so you can try
-everything first.
+The whole procedure for one gateway, from a folder of code to a working link. It is written for the computer in the barn, but every
+step also works on a laptop. Section 7 shows how to try it with simulated sensors.
 
 ## 1. What you are setting up
 
 ```
- Wall readers ─► Safetrust cloud ─► MQTT broker ──(1) reader feed ──┐
-                                                                     ├─► GATEWAY ──(2) cloud backend ──► api.tamholthucwzr.men
- USB reader (types a number) ────────────────────────────────────────┘      │
-                                                                            └─ durable queue on disk (the "forward store")
+ Wall readers ─► Safetrust cloud ─┬─► (a) cloud backend, directly, over its own MQTT subscription
+                                  └─► MQTT broker ──(1) reader feed ──► GATEWAY   (watched only: never sent on)
+ HTTP sensors (whole reads) ─────────────────────────────────────────────► GATEWAY ──(2) cloud backend ──► api.tamholthucwzr.men
+ USB reader (types a number) ────────────────────────────────────────────► GATEWAY      │
+                                                                                         └─ durable queue on disk (the "forward store")
 ```
+
+**Only local reads are sent.** A *local read* is an HTTP read or a USB swipe; the two are counted together. The reader feed is only
+**watched**: the cloud backend already receives those events itself (arrow a), so the gateway never queues or forwards them. It uses them for one
+thing: to tell whether a local read is a copy of a tap the cloud already has. A read that matches a reader event is not sent. The console and
+`/status` count the two apart (`local*` and `forwarded` against `mqtt*`).
 
 The gateway keeps two connections and reports them **separately**, as two cards at the top of the console (`http://<gateway>:8090/`)
 and as `mqtt.state` and `cloud.state` in `GET /api/overview`:
@@ -19,11 +24,11 @@ and as `mqtt.state` and `cloud.state` in `GET /api/overview`:
 | | (1) Reader feed (MQTT) | (2) Cloud backend |
 |---|---|---|
 | Setting | `MQTT_URL`, `MQTT_USERNAME`, `MQTT_PASSWORD`, `MQTT_TOPICS` | `CLOUD_BASE_URL` |
-| Direction | reader events **in** | events **out** |
+| Direction | reader events **in**, watched only | local reads **out** |
 | How the gateway judges it | the MQTT session with the broker: connected, and each topic confirmed | a health check, `GET <CLOUD_BASE_URL>/ingestion/health`, before every send, and the result of the send |
 | States | Connected, Connecting, Not connected, Login refused, Not used | Online, Degraded (answers but cannot take events), Offline, Checking |
-| When it is down | no reader copies arrive, so a typed USB number is queued at once instead of waiting up to 6 s for one | events wait in the store and are sent, oldest first, when it returns. Nothing is lost |
-| Optional? | yes: USB and HTTP intake work without it | no |
+| When it is down | no reader events arrive, so a local read is sent at once instead of waiting up to 6 s for its reader copy | local reads wait in the store and are sent, oldest first, when it returns. Nothing is lost |
+| Optional? | yes: HTTP and USB intake work without it | no |
 
 One can be down while the other is up. A working Internet connection with the backend down still shows the backend as Offline or Degraded; an
 unreachable Safetrust broker with a healthy backend still shows the backend as Online.
@@ -33,12 +38,12 @@ unreachable Safetrust broker with a healthy backend still shows the backend as O
 | You need | Why |
 |---|---|
 | Python 3.12 (3.13 was used for the checks here) **or** Docker | to run the gateway |
-| A correct clock on the gateway (NTP) | a USB swipe and the reader's own copy are the same tap only if their clocks are within `LOCAL_MATCH_SKEW_MS` (10 s) |
+| A correct clock on the gateway (NTP) | a local read and the reader's own event are the same tap only if their clocks are within `LOCAL_MATCH_SKEW_MS` (10 s) |
 | Outbound HTTPS (443) to `api.tamholthucwzr.men` | the backend |
 | Outbound WebSocket over 443 to `sensor.demo.safetrust.com` | the reader feed, only if you use it |
 | Inbound port 8090 from the barn LAN | to open the console from a phone or another computer |
 | The Safetrust API token | the MQTT password is `token/` followed by it. It is the token the backend already uses (`vinabeef.ingestion.safetrust.token` in the backend settings). The user name is the device key (`728589`) and the topic is `Web/<company key>/Monitoring/<device key>`, so `Web/475/Monitoring/728589` |
-| The name of the Safetrust reader each USB reader stands next to | for example `DrC0F8`. It decides which wall reader the USB swipe is matched with |
+| The name of the Safetrust reader each USB reader or HTTP sensor stands next to | for example `F9E2`. It decides which wall reader the local read is matched with |
 | A unique MQTT client id for this gateway | in the shape of the cloud's own subscribers, `Web_Direct_728589` (the backend) and `Web_Standby_728589` (the standby adapter): `Web_`, a name, the device key. For example `Web_Edge_728589_barn1`. Left blank, the gateway uses `Web_Edge_<MQTT_USERNAME>`. Two programs with the same id knock each other off the broker, so a second gateway needs its own suffix |
 
 ## 3. Install and start
@@ -53,7 +58,6 @@ unreachable Safetrust broker with a healthy backend still shows the backend as O
 
    | File | For | Reaches the real cloud? |
    |---|---|---|
-   | `edge.bench.env` | trying everything safely: fake backend, local broker, typed numbers (section 7) | no |
    | `edge.demo.env` | the demo: a USB reader that types numbers, mapped to the four demo tags | **yes**: `https://api.tamholthucwzr.men/api/v1` |
    | `edge.environment.example` → copy to `.env` | the barn: Safetrust reader feed plus USB readers | **yes** |
 
@@ -73,7 +77,9 @@ unreachable Safetrust broker with a healthy backend still shows the backend as O
    INFO USB inputs: stdin->F9E2
    INFO MQTT: wss://sensor.demo.safetrust.com:443/mqtt as client 'Web_Edge_728589_barn1', subscribing to ['token/… (Safetrust token notices)', 'Web/475/Monitoring/728589'] at QoS 2
    INFO USB numbers mapped to cards: 36->042FAC02AD1490, 1005->04B86592C21290, 35->04143802F32290, 38->044E6602AD1490
-   INFO Barn edge gateway up: HTTP 0.0.0.0:8090, queue edge_outbox.db, backend https://api.tamholthucwzr.men/api/v1
+   INFO Barn edge gateway up: HTTP 0.0.0.0:8090, backend https://api.tamholthucwzr.men/api/v1
+   INFO Database (waiting reads and the read log): /home/pi/edge_gateway/edge_outbox.db
+   INFO History log: /home/pi/edge_gateway/edge_gateway.log
    INFO MQTT connected to wss://sensor.demo.safetrust.com:443/mqtt; subscribing to ['token/… (Safetrust token notices)', 'Web/475/Monitoring/728589'] (QoS 2)
    INFO MQTT subscription granted QoS [2, 2]
    INFO Backend link UNKNOWN -> ONLINE
@@ -82,6 +88,7 @@ unreachable Safetrust broker with a healthy backend still shows the backend as O
    * `MQTT_TOPICS is empty: ...` (warning): you are connected to the broker but subscribed to nothing.
    * `MQTT connect refused (rc=4)` or `(rc=5)`: the user name or password was refused.
    * `Backend link ... -> OFFLINE backend unreachable: ConnectError`: the backend cannot be reached.
+   * `Database ...` and `History log ...` are the **full paths** of the two files that hold everything (section 10). Look at them once: a different folder means a different, empty file.
    * The log is quiet when all is well: there is no line for each health check.
 6. **Open the console** at `http://localhost:8090/` (or `http://<gateway IP>:8090/`). Both cards should be green. Section 6 says how to read them.
 
@@ -98,9 +105,10 @@ All settings are environment variables. Anything not set takes the default shown
 | `EDGE_BACKOFF_MIN` / `EDGE_BACKOFF_MAX` | `2` / `60` seconds | wait before the next try after a failure; doubles each time up to the maximum, with a little random spread |
 | `EDGE_MAX_ATTEMPTS` | `20` | an event the backend keeps refusing is marked Refused (kept, not retried) so it cannot block the others |
 | `EDGE_MAX_QUEUE_ROWS` | `200000` | safety cap for very long outages |
-| `EDGE_DB_PATH` | `edge_outbox.db` (Docker: `/data/edge_outbox.db`) | the store. Keep it on storage that survives a reboot |
+| `EDGE_DB_PATH` | `edge_outbox.db` (Docker: `/data/edge_outbox.db`) | the store and the read log. **Relative to the folder you start the gateway from**, so give a full path in a settings file you start from anywhere. Keep it on storage that survives a reboot |
+| `EDGE_LOG_FILE` | `edge_gateway.log` beside the database | the history of what the gateway did (links, sends, retries, reads), kept across restarts: 5 MB, 3 older files. Empty switches it off (the terminal only) |
 
-### Reader feed (MQTT). Leave `MQTT_URL` empty to run without it
+### Reader feed (MQTT), watched only. Leave `MQTT_URL` empty to run without it
 
 | Setting | Default | |
 |---|---|---|
@@ -119,14 +127,14 @@ All settings are environment variables. Anything not set takes the default shown
 
 | Setting | Default | |
 |---|---|---|
-| `LOCAL_INPUTS` | empty | `<kind>:<device>=<wall reader name>`, comma separated. `stdin=DrC0F8` (type in the terminal the gateway runs in), `kbd:/dev/input/event5=DrC0F8` (the reader as a keyboard; Linux only; the gateway takes the device exclusively), `serial:/dev/ttyACM0@9600=DrC1C4` (needs `pyserial`). Find the keyboard device with `ls -l /dev/input/by-id/`. **The name after `=` must be the real wall reader at that gate** |
-| `LOCAL_READERS` | empty | extra reader names `POST /local-swipe` may use (the inputs above are added automatically) |
-| `LOCAL_CREDENTIAL_MAP` | empty | `36=042FAC02AD1490,38=044E6602AD1490`: the card UUID of a typed number, for the demo or for numbers the cloud does not know. A number not listed is not guessed. A bad entry, a repeated number, or one card for two numbers stops the gateway at start-up |
+| `LOCAL_INPUTS` | empty | the USB readers: `<kind>:<device>=<wall reader name>`, comma separated. `stdin=DrC0F8` (type in the terminal the gateway runs in), `kbd:/dev/input/event5=DrC0F8` (the reader as a keyboard; Linux only; the gateway takes the device exclusively), `serial:/dev/ttyACM0@9600=DrC1C4` (needs `pyserial`). Find the keyboard device with `ls -l /dev/input/by-id/`. **The name after `=` must be the real wall reader at that gate** |
+| `LOCAL_READERS` | empty | extra reader names `POST /local-swipe` may use (the inputs above are added automatically). HTTP reads (`POST /`) name their own reader and need nothing here |
+| `LOCAL_CREDENTIAL_MAP` | empty | `36=042FAC02AD1490,38=044E6602AD1490`: the card UUID of a **typed USB number**, for the demo or for numbers the cloud does not know. It applies to typed USB input only: an HTTP read carries its own card. A number not listed is not guessed. A bad entry, a repeated number, or one card for two numbers stops the gateway at start-up |
 | `EDGE_GATEWAY_NO` | `1` | 1 to 99, unique per gateway; keeps the negative event numbers of USB swipes apart |
-| `LOCAL_HOLD_MS` | `6000` | how long a typed number waits for the wall reader's own copy while the reader feed is connected (`0` = never wait) |
+| `LOCAL_HOLD_MS` | `6000` | how long a local read (HTTP or USB) waits for the wall reader's own event while the reader feed is connected (`0` = never wait) |
 | `LOCAL_MATCH_SKEW_MS` | `10000` | two reads are the same tap when closer than this on the reader's clock **and** the gateway's |
 | `LOCAL_IDLE_FLUSH_MS` | `200` | a USB device that sends no Enter ends a swipe after this silence |
-| `LOCAL_LOG_RETENTION_S` | `86400` | how long the swipe log is kept |
+| `LOCAL_LOG_RETENTION_S` | `86400` | how long the read log is kept (local reads and the reader events seen) |
 | `LOCAL_COMPANY_KEY` | `0` | optional `COMPANY_KEY` copied onto USB swipes (`0` = none) |
 | `LOCAL_GRAB_KEYBOARD` | `true` | `false` only for testing: the digits would also be typed into the gateway's console |
 
@@ -155,8 +163,8 @@ After you start the gateway, the log has a `USB inputs:` line. If it says `USB i
 
 * **Show the demo with typed numbers.** `edge.demo.env` as it is: `LOCAL_INPUTS=stdin=F9E2` names the Safetrust IoT USB reader F9E2. Change the name after `=` to the reader at your gate. The reader
   feed stays off, so the console shows it as Not used and a typed number goes out at once.
-* **Demo plus the wall readers.** Remove the `#` from the five `MQTT_` lines in `edge.demo.env` and paste the token. A typed number now
-  waits up to 6 s for the wall reader's copy and, if it arrives, only the wall reader's copy is sent.
+* **Demo plus the wall readers.** Remove the `#` from the five `MQTT_` lines in `edge.demo.env` and paste the token. A typed number or an HTTP read now
+  waits up to 6 s for the wall reader's event and, if it arrives, is not sent: the cloud already has the wall reader's own event.
 * **The barn.** Copy `edge.environment.example` to `.env`, paste the token, set `MQTT_CLIENT_ID` to something unique, set `LOCAL_INPUTS` to the
   real devices and readers, set `EDGE_CONSOLE_TOKEN`, and keep `EDGE_DB_PATH` on storage that survives a reboot. Run it under Docker with
   `--restart=always` (and `--device=/dev/input/eventX --group-add input` for a keyboard-style reader).
@@ -180,7 +188,7 @@ Neither changes anything; the broker check cannot log in, because the card above
 
 | Shows | Means | Do |
 |---|---|---|
-| Connected, topics "subscribed, QoS 2" | logged in and receiving | nothing. "Last message: None yet" is normal until a reader is tapped |
+| Connected, topics "subscribed, QoS 2" | logged in and watching | nothing. "Last message: None yet" is normal until a reader is tapped. The events counted here are **not** sent by the gateway |
 | Connected, with a warning | `MQTT_TOPICS` is empty, the broker refused a topic, or the connection keeps being dropped | the warning says which and what to change |
 | Connecting (n tries so far) | the broker has not answered yet | press **Check broker path**; wait if the Internet has just come back |
 | Not connected | it was connected and the connection was lost | the gateway retries on its own, every 1 to 60 s, and subscribes again |
@@ -191,104 +199,78 @@ The same numbers for scripts, no password needed unless `EDGE_CONSOLE_TOKEN` is 
 `curl http://localhost:8090/status` is the short form: `wan` (the backend), `mqttConnected`, the queue, the counters, and `local.clockOffset` (how far the
 readers' clocks are from this one; the matching window must be larger than that).
 
-## 7. Test bench: nothing reaches the real cloud
+## 7. Try it with simulated sensors
 
-This runs the gateway against a **fake backend** and a **local MQTT broker**, and you play the USB reader and the wall reader yourself.
-You need three terminals in `edge_gateway/`, and `pip install amqtt` once for the broker.
+`sensor_simulator.py` plays sensors that deliver whole reads (a card UID, a reader name, a time) to the gateway's HTTP door, the way a LAN sensor, an
+Ethernet reader or a serial-to-HTTP bridge would. It needs only Python. The sensors are `03F0`, `C1C4`, `0ED4`, `03EC`, `56CA` and `F9E2`, and the tags
+are random 14-digit hex UIDs starting with `04` (like `042FAC02AD1490`). The credential map plays no part: it is for typed USB numbers only.
 
-| Terminal | Command | Why |
-|---|---|---|
-| 1, the cloud | `echo ok > /tmp/bench.mode; : > /tmp/bench.accepted; python drill/fake_backend.py 18080 /tmp/bench.mode /tmp/bench.accepted` | a stand-in backend. What it answers is whatever is in `/tmp/bench.mode`: `ok`, `down503` (health fails: Degraded), `hang` (no answer: Offline), `health_ok_write_503` (health passes, writes fail). Everything it accepts is appended to `/tmp/bench.accepted` |
-| 2, the broker | `python drill/broker.py 1883` | a stand-in for Safetrust. Optional: skip it to test only the USB and HTTP paths |
-| 3, the gateway | `set -a; . ./edge.bench.env; set +a; python barn_edge_gateway.py` | the gateway, with the demo mapping and `stdin=DrC0F8` |
+**The reads are fake, and the gateway forwards them to `CLOUD_BASE_URL`.** Point it at a test backend, or accept that the cloud you configured gets
+rows for tags nobody owns. The simulator waits 3 s before it starts so you can stop it.
 
-Open `http://localhost:8090/`. Then watch `tail -f /tmp/bench.accepted` in a fourth terminal as you go.
+1. Start the gateway (section 3).
+2. In a second terminal, from `edge_gateway/`:
+   ```
+   python sensor_simulator.py                                   # one read every ~2 s, six sensors, until Ctrl-C
+   python sensor_simulator.py --count 20 --interval 0.5         # twenty quick ones
+   python sensor_simulator.py --sensors 03F0,C1C4 --tag 042FAC02AD1490   # two sensors, one known tag
+   ```
+   `--gateway`, `--token` (if `EDGE_INGEST_TOKEN` is set), `--tags` (how many random tags to reuse), `--seed` and `--yes` are the other options; `--help` lists them.
 
-**T1. The baseline.** Both cards are green: Cloud backend **Online**, Reader feed **Connected**, topics "subscribed, QoS 2". The log has the lines from step 3.5.
-
-**T2. An event over HTTP.**
-```
-curl -s -X POST http://localhost:8090/ -H 'Content-Type: application/json' \
-  -d "{\"EVENT_KEY\":900001,\"TIMESTAMP\":$(date +%s)000,\"CARD_UUID\":\"042FAC02AD1490\",\"READER_NAME\":\"DrC0F8\",\"NOTES\":{\"ACTION\":\"TAP\"}}"
-```
-Expect `{"status": "BUFFERED_IN_EDGE_WAL", "queued": 1, ...}` and, a second later, the event in `/tmp/bench.accepted`. The console's "Received" and "Sent to the cloud" counters each go up by one.
-
-**T3. A typed number (the USB reader).** Click terminal 3, type `36` and Enter. Expect `USB swipe: credential 36 at reader DrC0F8 from stdin -> HELD` in the log. The reader feed is
-connected, so the gateway waits 6 s for a wall-reader copy that does not come, then sends the swipe. In `/tmp/bench.accepted` the line has `"card": "042FAC02AD1490"`, `"cred": "36"`, a **negative** `key`
-and `"src": "LOCAL_USB"`. Try the other three: `1005`, `35`, `38`. A number that is not 1 to 12 digits is rejected and counted, never sent.
-
-**T4. One tap seen twice becomes one event.** Type `35` and Enter, and within 6 s run in another terminal:
-```
-python drill/publish_reader_event.py --credential 35 --card 04143802F32290
-```
-Expect only the wall reader's copy in `/tmp/bench.accepted` (positive `key`, no `src`), and on the console, under Synchronization, **USB swipes matched to a reader copy** goes up by one. Run it again with `--reader SomeOtherReader`:
-the names differ, nothing is paired, and **both** are sent. That is what a wrong name after `=` in `LOCAL_INPUTS` does at the barn.
-
-**T5. The backend goes away and comes back.**
-1. `echo down503 > /tmp/bench.mode`: within about a second the Cloud backend card turns **Degraded** ("its health check returned HTTP 503"). The Reader feed card stays Connected.
-2. `echo ok > /tmp/bench.mode`: back to Online.
-3. Stop terminal 1 with Ctrl-C: the card turns **Offline** ("no connection (ConnectError)") and "Next try" counts down. A silent backend (`echo hang > /tmp/bench.mode`) takes up to 10 s to show, the request timeout.
-4. While it is Offline, type `38` and Enter in terminal 3. After 6 s the number appears under **Forward store → Waiting**, with its card `044E6602AD1490`. Open the row to see the full event. Press **Check connection** to see the step that fails.
-5. Start terminal 1 again (use the same command but without `: > /tmp/bench.accepted;` so the earlier lines are kept). The card returns to Online and the store empties, oldest first. The row is gone from the store and the event is in `/tmp/bench.accepted`.
-
-**T6. The broker goes away and comes back.** Stop terminal 2 with Ctrl-C. The Reader feed card turns **Not connected**: "The connection to the broker was lost: ...", the tries count goes up, and **USB swipes** says **Queued at once**.
-The Cloud backend card stays Online, and a number typed now is sent at once. Start the broker again: the card returns to **Connected**, the topic is confirmed again, and the activity log shows the loss and the recovery.
-Press **Check broker path** while the broker is stopped: it stops at "Open a connection" and says the port is closed or firewalled.
-
-**T7. A power cut.** Stop terminal 1, type `38` in terminal 3, wait for it to appear under Waiting, then kill the gateway hard: `pkill -9 -f barn_edge_gateway.py`. Start it again (terminal 3). The number is still under Waiting. Start the backend: it is sent once.
-
-**T8. A wrong password and an empty topic list.** The bench broker accepts anyone, so use the Safetrust settings for this one. Put a wrong token in `MQTT_PASSWORD` and start.
-A broker that answers a bad login with a refusal (MQTT code 4 or 5) makes the card say **Login refused**, with advice to check the user name and password, and the log say `MQTT connect refused (rc=4)`.
-If the broker rejects the connection at an earlier step, the card stays on **Connecting** instead: press **Check broker path** to see how far it gets. Then set `MQTT_TOPICS=` (empty) with a good token: the card warns that nothing is subscribed.
-
-**T9. The console password.** Add `EDGE_CONSOLE_TOKEN=secret` and restart: the page asks for the token once per browser tab, and `curl http://localhost:8090/api/overview` answers 401 until you add `-H 'X-Edge-Token: secret'`.
-
-Clean up with Ctrl-C in each terminal and `rm bench_outbox.db*` (and `rm /tmp/bench.mode /tmp/bench.accepted`).
+| Try | You should see |
+|---|---|
+| **The reader feed is off** (`MQTT_URL` empty). Run the simulator | each read is sent at once. The console's **Local reads taken** and **Sent to the cloud** go up together; the **Reader feed** counters stay at 0 |
+| **The reader feed is on.** Run the simulator | each read waits up to 6 s (`LOCAL_HOLD_MS`) under **Forward store → Held**, then is sent. A read whose own wall-reader event arrives in that time is **Matched with a reader event, not sent**. The **Reader feed** counters count the wall readers' events separately, and none of them is ever sent |
+| **A typed number.** `LOCAL_INPUTS=stdin=F9E2`: click the gateway's terminal, type `36` and Enter | `USB swipe: credential 36 at reader F9E2 from stdin -> ...` in the log. With the credential map the sent event carries card `042FAC02AD1490`, a negative event number and `"EDGE_SOURCE": "LOCAL_USB"`. A number that is not 1 to 12 digits is refused and counted, never sent |
+| **The cloud is unreachable.** Stop the backend, or start the gateway with `CLOUD_BASE_URL=http://127.0.0.1:9/api/v1`, then run the simulator | the **Cloud backend** card turns Offline; the reads appear under **Forward store → Waiting** and are in the database file (section 10). Bring the cloud back: they are sent oldest first and leave the store |
+| **A power cut.** With the cloud unreachable and reads waiting: `pkill -9 -f barn_edge_gateway.py`, then start the gateway again | the reads are still under Waiting, and are sent once the cloud answers |
+| **The same read twice.** `curl -s -X POST http://localhost:8090/ -H 'Content-Type: application/json' -d '{"EVENT_KEY":900001,"TIMESTAMP":1760000000000,"CARD_UUID":"042FAC02AD1490","READER_NAME":"03F0"}'`, twice | the second answer says `"duplicates": 1` and **Repeats ignored** goes up by one |
 
 ## 8. Against the real cloud and the real readers
 
-1. Everything that reaches the gateway is forwarded to `CLOUD_BASE_URL`. Pointed at the real cloud, a typed `36` is a real movement for the animal with card `042FAC02AD1490`. Use test tags you are happy to see in the dashboard.
+1. Every local read the gateway takes is forwarded to `CLOUD_BASE_URL`. Pointed at the real cloud, a typed `36` is a real movement for the animal with card `042FAC02AD1490`. Use test tags you are happy to see in the dashboard.
 2. Start with the demo settings, reader feed off, and type one number: the Cloud backend card is Online, the row appears under Waiting only if you cut the link, and the movement appears in the dashboard.
 3. Turn the reader feed on (section 5). Tap a tag on the **wall reader** only: the Reader feed card's "Last message" shows it, and the event appears in the dashboard once.
-4. Type the number on the USB reader and tap the wall reader within a second or two. The dashboard should show **one** movement. If it shows two, check the reader name after `=` in `LOCAL_INPUTS` and `local.clockOffset` in `/status` (it must be well under 10 s).
+4. Type the number on the USB reader and tap the wall reader within a second or two. The dashboard should show **one** movement. If it shows two, check the reader name after `=` in `LOCAL_INPUTS` and `local.clockOffset` in `/status` (it must be well under 10 s). An HTTP sensor behaves the same: its read is matched with the wall reader's event by reader name and card.
 5. Unplug the barn's Internet for a minute while tapping: both cards go red, the typed numbers wait under Waiting, and when the link returns they are sent in order and the dashboard fills in.
 6. If you use `kbd:` readers, confirm that digits typed on the USB reader do **not** appear in any terminal (`LOCAL_GRAB_KEYBOARD=true`, the default).
 
-## 9. Automated tests
-
-| Command | What it covers | Needs |
-|---|---|---|
-| `python -m pytest -q` | all unit tests: intake, queue, forwarder, USB decoding and pairing, the console API, the two connection states | `pip install pytest` |
-| `python drill/wan_drill.py` | a real gateway against a real local broker and a fake backend: backend down, 503, hanging, `kill -9`, duplicate events, broker lost and back | `pip install amqtt paho-mqtt httpx`; ports 18830, 18080, 18090 free |
-| `python drill/mqtt_probe.py` | not a test of the code: asks YOUR broker which client id, QoS and subscription it accepts (section 10). Stop the gateway first | `pip install paho-mqtt`; your `.env` loaded; reaches the broker |
-| `python drill/usb_drill.py` | the USB path the same way: held, shadow, no copy, backend down, broker lost while a swipe is held, `kill -9` | same; ports 18930, 18180, 18190 free |
-
-## 10. When something is wrong
+## 9. When something is wrong
 
 | You see | Probably | Do |
 |---|---|---|
 | Reader feed stays **Connecting** | the broker is unreachable: no Internet, DNS, a firewall on 443, or a wrong `MQTT_URL`. The MQTT client does not use `HTTPS_PROXY` | **Check broker path**: it names the step that fails |
 | Reader feed **Login refused** | wrong `MQTT_USERNAME`/`MQTT_PASSWORD`, an expired token, or a refused `MQTT_CLIENT_ID` | the card gives the broker's reason; paste the token again, with the `token/` prefix |
 | Reader feed connects and drops again and again, with a warning about `MQTT_CLIENT_ID` | another program uses the same client id | give this gateway its own (`Web_Edge_728589_<name>`) |
-| The log shows `MQTT connected` and, about a quarter of a second later, `MQTT disconnected (rc=7)`, over and over, and the card says the broker hangs up right after the login | the login is accepted, then the broker closes the connection without answering the subscription. It does not like the client id, the subscription or its QoS. The cloud's own subscribers use an id ending in the device key, subscribe to `token/<API token>` and the topic together, and ask for QoS 2, which are this gateway's defaults now | stop the gateway, `set -a; . ./.env; set +a`, then `python drill/mqtt_probe.py`: it tries eight combinations against your broker and prints the settings that work. Also try `LOG_LEVEL=DEBUG`: it logs every MQTT packet (the token masked) |
-| Reader feed **Connected** but "Last message: None yet" while readers are being tapped | wrong topic (company or device key), or the readers' own uplink is down so Safetrust publishes nothing | check `MQTT_TOPICS`; look at the Safetrust portal. USB swipes still work |
+| The log shows `MQTT connected` and, about a quarter of a second later, `MQTT disconnected (rc=7)`, over and over, and the card says the broker hangs up right after the login | the login is accepted, then the broker closes the connection without answering the subscription. It does not like the client id, the subscription or its QoS. The cloud's own subscribers use an id ending in the device key, subscribe to `token/<API token>` and the topic together, and ask for QoS 2, which are this gateway's defaults now | set `MQTT_CLIENT_ID`, `MQTT_QOS` and `MQTT_TOKEN_TOPIC` as above, and try `LOG_LEVEL=DEBUG`: it logs every MQTT packet (the token masked) |
+| Reader feed **Connected** but "Last message: None yet" while readers are being tapped | wrong topic (company or device key), or the readers' own uplink is down so Safetrust publishes nothing | check `MQTT_TOPICS`; look at the Safetrust portal. Local reads still work |
 | A topic says "refused by the broker" | the topic is wrong or the account may not read it | correct `MQTT_TOPICS` |
 | Cloud backend **Offline** | no Internet, DNS, firewall, a wrong `CLOUD_BASE_URL`, a proxy in the environment, or the backend is down | **Check connection**. A secure-handshake failure usually means the gateway's date is wrong |
 | Cloud backend **Degraded** | the backend is up but its health check fails | look at the backend's database and logs; events are kept |
 | Events under **Refused** in the store | the backend refuses them (for example HTTP 422) | open the row: the last error is there. They are kept and no longer retried |
-| One tap makes two movements | the reader name after `=` in `LOCAL_INPUTS` is not the real wall reader, or the clocks differ by more than 10 s | fix the name; fix the clock (NTP); read `local.clockOffset` in `/status` |
+| One tap makes two movements | the reader name after `=` in `LOCAL_INPUTS` (or in the HTTP read) is not the real wall reader, or the clocks differ by more than 10 s | fix the name; fix the clock (NTP); read `local.clockOffset` in `/status` |
 | A typed number does nothing | `stdin`: the terminal is not in focus. `kbd`: no permission on the device. The text is not 1 to 12 digits (counted as rejected) | click the terminal; add the device and `--group-add input` in Docker; read `counters.localRejected` |
+| I open `edge_outbox.db` and see no tables or no rows | the file is not the one the gateway uses (another folder, another `EDGE_DB_PATH`), the viewer ignores the `-wal` side file, or the reads were already sent (the queue holds only what is waiting) | section 10: the start-up log and the console's Forward store footer give the full path; the gateway copies the `-wal` into the `.db` every 2 s; `swipe_log` keeps the last 24 h of reads |
 | `reader 'X' is not served by this gateway` | the name is not in `LOCAL_INPUTS` or `LOCAL_READERS` | add it |
 | The gateway stops at start-up with a message about the credential map | a malformed entry, a repeated number, or one card for two numbers in `LOCAL_CREDENTIAL_MAP` | fix the list |
 | `DeprecationWarning: Callback API version 1 is deprecated` at start | a notice from paho-mqtt 2.x | harmless |
 | The console looks old after you edit `console.html` | the gateway caches the page | restart the gateway |
 | `Address already in use` | something else uses `EDGE_BIND_PORT` | change it |
 
-## 11. Daily use
+## 10. Daily use and where things are kept
 
 * **Stop:** Ctrl-C, or `docker stop`. The store is on disk; nothing waiting is lost.
 * **Start again:** the same command. Events still in the store are sent first.
 * **Update:** copy the new files over `edge_gateway/`, restart. The store file is untouched.
-* **Look inside the store.** `sqlite3 edge_outbox.db "select seq_id, status, attempts, substr(payload_json, 1, 90) from edge_queue"` (the `sqlite3` command is on macOS and most Linux). The store is a queue of what is **waiting** to be sent, not a history: the gateway deletes an event the moment the cloud confirms it, so with the backend Online the table is empty almost at once. To see a row, make the backend unreachable first (`CLOUD_BASE_URL=http://127.0.0.1:9/api/v1`, or stop the backend) and tap or type a number: it appears as `PENDING`, and goes when the backend returns. The recent rows can also sit in the `edge_outbox.db-wal` side file, so a file manager may show the `.db` itself as nearly empty; `sqlite3` reads both.
-* **Reset the store** (it deletes the events still waiting): stop the gateway, delete `edge_outbox.db`, `edge_outbox.db-wal` and `edge_outbox.db-shm`.
-* The console's activity history (what was sent, retried, refused, and the connection changes) lives in memory and starts empty after a restart. The store does not.
+* **Where things are kept.** Two files, and their full paths are in the start-up log and at the bottom of the console's Forward store:
+  * **The database** (`EDGE_DB_PATH`, default `edge_outbox.db` in the folder you start from). Table `edge_queue` is what is **waiting** to be sent: a local read is added the moment it arrives and deleted the moment the cloud confirms it, so with the backend Online it is nearly always empty. Table `swipe_log` is a **history of the last 24 hours**: every local read (`route` `LOCAL_USB` or `LOCAL_HTTP`, with its state: `HELD`, `QUEUED` when it was sent, `SHADOW` when it matched a reader event) and every reader event seen on MQTT (`route` `SAFETRUST`, which is never sent). `edge_meta` holds the USB event counter.
+  * **The history log** (`EDGE_LOG_FILE`, default `edge_gateway.log` beside the database): the lines the terminal shows (link changes, what was sent, retries, refusals, each read taken), kept across restarts. The console's own activity list and counters are in memory and start empty after a restart; this file does not.
+* **The `-wal` side file.** SQLite writes new rows to `edge_outbox.db-wal` first. The gateway copies them into `edge_outbox.db` every 2 s and when it stops cleanly, so the `.db` file is complete within a couple of seconds. A tool that reads only the `.db` file during those seconds, or after a hard stop, can show it empty; `sqlite3` reads both files together.
+* **Look inside.** From the folder that holds the file:
+  ```
+  sqlite3 edge_outbox.db "select seq_id, status, attempts, substr(payload_json, 1, 90) from edge_queue"
+  sqlite3 edge_outbox.db "select datetime(arrived_ms/1000,'unixepoch','localtime'), route, reader, credential, card, state from swipe_log order by id desc limit 20"
+  ```
+  To see a row in `edge_queue`, make the backend unreachable first (`CLOUD_BASE_URL=http://127.0.0.1:9/api/v1`, or stop the backend) and send a read: it appears as `PENDING`, and goes when the backend returns.
+* **Reset the store** (it deletes the reads still waiting and the 24-hour read log): stop the gateway, delete `edge_outbox.db`, `edge_outbox.db-wal` and `edge_outbox.db-shm`.
+* The console's activity history (what was sent, retried, refused, and the connection changes) lives in memory and starts empty after a restart. The store and the history log file do not.
