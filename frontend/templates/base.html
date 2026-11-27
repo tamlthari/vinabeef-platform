@@ -16,7 +16,8 @@
 
     {% if user %}
     <!-- ================= VINAFARM SIDEBAR ================= -->
-    <aside class="w-64 bg-[#182232] text-slate-300 flex-shrink-0 flex flex-col justify-between min-h-screen border-r border-[#101725] z-30">
+    <!-- The sidebar stays in view while the page on the right scrolls: as tall as the window, it scrolls inside itself only when the window is shorter than the menu. -->
+    <aside class="w-64 bg-[#182232] text-slate-300 flex-shrink-0 flex flex-col justify-between sticky top-0 self-start h-screen overflow-y-auto border-r border-[#101725] z-30">
         <div>
             <!-- VinaFarm Brand Header -->
             <div class="h-16 flex items-center justify-between px-5 border-b border-[#232f42]">

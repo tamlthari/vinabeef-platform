@@ -78,7 +78,7 @@
         <div class="flex items-center space-x-2.5">
             <button type="button"
                     hx-get="/htmx/alerts-list"
-                    hx-include="#alert-state-filter, #alert-type-filter, #alert-search-input"
+                    hx-include="#alert-state-filter, #alert-type-filter, #alert-search-input, #alert-page"
                     hx-target="#alerts-table-container"
                     class="px-3.5 py-2 bg-white hover:bg-gray-50 border border-gray-300 rounded-md text-xs font-semibold text-gray-700 transition">
                 Refresh
@@ -98,7 +98,7 @@
     <div id="alerts-table-container"
          hx-get="/htmx/alerts-list"
          hx-trigger="every 5s"
-         hx-include="#alert-state-filter, #alert-type-filter, #alert-search-input"
+         hx-include="#alert-state-filter, #alert-type-filter, #alert-search-input, #alert-page"
          hx-swap="innerHTML"
          class="bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
         {% include "partials/alert_table_content.html" %}
@@ -162,6 +162,7 @@
 
         <form id="resolve-alert-form"
               hx-post=""
+              hx-include="#alert-state-filter, #alert-type-filter, #alert-search-input, #alert-page"
               hx-target="#alerts-table-container"
               hx-swap="innerHTML"
               onsubmit="document.getElementById('resolve-modal').classList.add('hidden')"

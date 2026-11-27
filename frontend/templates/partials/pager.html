@@ -1,0 +1,60 @@
+{# The footer of a paged list: which rows are shown, and the page buttons. Used by Anomaly Alerts and Gate Readers.
+   url      address that renders the list, e.g. /htmx/alerts-list (the page number is added)
+   include  the fields whose values the next page must keep (search, filters, sort); not the page itself
+   target   the element the list is swapped into #}
+{% macro pager(url, page, total_pages, page_range, start_item, end_item, total, noun, per_page, target, include, filtered=false) -%}
+{% set sep = '&' if '?' in url else '?' %}
+<div data-pager class="px-5 py-3.5 border-t border-gray-100 bg-gray-50/40 flex flex-wrap justify-between items-center gap-4 text-xs text-gray-500">
+    <div class="flex items-center space-x-1.5">
+        <span>Showing</span>
+        <strong class="text-gray-800 font-mono">{{ "{:,}".format(start_item) }}</strong>
+        <span>to</span>
+        <strong class="text-gray-800 font-mono">{{ "{:,}".format(end_item) }}</strong>
+        <span>of</span>
+        <strong class="text-gray-800 font-mono">{{ "{:,}".format(total) }}</strong>
+        <span>{{ noun if total != 1 else noun[:-1] }}{% if filtered %} matching the filters{% endif %} ({{ per_page }} per page)</span>
+    </div>
+
+    {% if total_pages > 1 %}
+    <nav class="flex items-center space-x-1" aria-label="Pages">
+        <button type="button"
+                {% if page > 1 %}
+                hx-get="{{ url }}{{ sep }}page={{ page - 1 }}" hx-include="{{ include }}" hx-target="{{ target }}"
+                aria-label="Previous page"
+                class="px-2.5 py-1 rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 font-semibold transition"
+                {% else %}
+                disabled aria-label="Previous page"
+                class="px-2.5 py-1 rounded border border-gray-200 bg-gray-50 text-gray-300 cursor-not-allowed"
+                {% endif %}>
+            &lt;
+        </button>
+
+        {% for p in page_range %}
+            {% if p == "..." %}
+            <span class="px-2 py-1 text-gray-400">...</span>
+            {% elif p == page %}
+            <span aria-current="page" class="px-3 py-1 rounded bg-[#2f80ed] text-white font-semibold shadow-xs">{{ p }}</span>
+            {% else %}
+            <button type="button"
+                    hx-get="{{ url }}{{ sep }}page={{ p }}" hx-include="{{ include }}" hx-target="{{ target }}"
+                    class="px-3 py-1 rounded border border-gray-200 bg-white text-gray-700 hover:bg-blue-50 hover:border-blue-300 font-medium transition">
+                {{ p }}
+            </button>
+            {% endif %}
+        {% endfor %}
+
+        <button type="button"
+                {% if page < total_pages %}
+                hx-get="{{ url }}{{ sep }}page={{ page + 1 }}" hx-include="{{ include }}" hx-target="{{ target }}"
+                aria-label="Next page"
+                class="px-2.5 py-1 rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 font-semibold transition"
+                {% else %}
+                disabled aria-label="Next page"
+                class="px-2.5 py-1 rounded border border-gray-200 bg-gray-50 text-gray-300 cursor-not-allowed"
+                {% endif %}>
+            &gt;
+        </button>
+    </nav>
+    {% endif %}
+</div>
+{%- endmacro %}

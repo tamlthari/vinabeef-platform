@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% from "partials/list_filters.html" import pick, facility_barn, bar_end %}
 {% block header_title %}
-<span>Gate Readers ({{ readers|length }})</span>
+<span>Gate Readers (<span id="reader-total">{{ total }}</span>)</span>
 {% endblock %}
 
 {% block content %}

@@ -1,3 +1,7 @@
+{% from "partials/pager.html" import pager %}
+{% set view_fields = '#alert-state-filter, #alert-type-filter, #alert-search-input' %}
+{# the page on screen travels with the list, so the 5-second refresh and the buttons stay on it #}
+<input type="hidden" id="alert-page" name="page" value="{{ page }}">
 {% if oob_update %}
 <div id="kpi-open-count" hx-swap-oob="true" class="text-3xl font-extrabold text-rose-600 font-mono mt-1">{{ stats.openCount }}</div>
 <div id="kpi-missing-count" hx-swap-oob="true" class="text-3xl font-extrabold text-amber-600 font-mono mt-1">{{ stats.missingCount }}</div>
@@ -89,6 +93,7 @@
                     {% if al.state == 'OPEN' %}
                     <button type="button"
                             hx-post="/htmx/alerts/{{ al.alert_id }}/acknowledge"
+                            hx-include="{{ view_fields }}, #alert-page"
                             hx-target="#alerts-table-container"
                             class="px-2.5 py-1 bg-white hover:bg-amber-50 border border-gray-300 text-gray-700 rounded text-[11px] font-semibold transition">
                         Acknowledge
@@ -116,3 +121,6 @@
         </tbody>
     </table>
 </div>
+
+{{ pager('/htmx/alerts-list', page, total_pages, page_range, start_item, end_item, total, 'alerts', per_page,
+         '#alerts-table-container', view_fields, current_state != 'OPEN' or current_type != 'ALL' or q) }}

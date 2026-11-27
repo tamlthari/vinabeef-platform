@@ -65,6 +65,34 @@ def build_page_range(current_page: int, total_pages: int) -> list:
     return [1, "...", current_page - 1, current_page, current_page + 1, "...", total_pages]
 
 
+# Rows per page on the Anomaly Alerts and Gate Readers lists. The one place to change it (the Herd list pages by 100).
+PAGE_SIZE = 25
+PAGING_KEYS = ("total", "page", "per_page", "total_pages", "start_item", "end_item", "page_range")
+
+
+def page_numbers(total: int, page: int, size: int = PAGE_SIZE) -> dict:
+    """What a pager needs to know for `total` rows shown `size` at a time, with `page` kept inside 1..last."""
+    total_pages = max(1, math.ceil(total / size))
+    page = min(max(1, page), total_pages)
+    return {
+        "total": total,
+        "page": page,
+        "per_page": size,
+        "total_pages": total_pages,
+        "start_item": (page - 1) * size + 1 if total > 0 else 0,
+        "end_item": min(page * size, total),
+        "page_range": build_page_range(page, total_pages),
+    }
+
+
+def whole_number(value, default: int = 1) -> int:
+    """A page number out of a query string or form; anything that is not a number is `default`."""
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+
+
 # The column filters of the list pages. The form field and the page's query string use these names; the backend gets
 # camelCase for facility and barn (farmId, barnId). A blank filter is not sent.
 HERD_FILTERS = ("farm", "barn", "health", "presence", "tags", "vaccination", "passes")
@@ -1319,25 +1347,42 @@ async def cattle_download_dossier(animal_id: str, user: dict = Depends(get_curre
 # ================= GATE READER MANAGEMENT =================
 
 async def fetch_readers(client: httpx.AsyncClient, headers: dict, user: dict, q: str = "", sort: str = "", dir: str = "",
-                        filters: dict | None = None) -> dict:
-    """Readers in the order the server applied (newest first by default), with the order for the table headers."""
-    readers, sort_key, sort_dir = [], sort, dir
+                        filters: dict | None = None, page: int = 1) -> dict:
+    """One page of readers in the order the server applied (newest first by default), with the order for the table headers
+    and the numbers for the pager. A page past the end (readers were removed meanwhile) becomes the last page."""
+    readers, sort_key, sort_dir, total = [], sort, dir, 0
     filters = {n: (filters or {}).get(n, "") for n in READER_FILTERS}
-    res = await client.get(f"{BACKEND_BASE_URL}/readers", params={"q": q, "sort": sort, "dir": dir, **backend_filters(filters)}, headers=headers)
-    if res.status_code == 401:
-        raise HTTPException(status_code=401, detail="Session expired")
-    if res.status_code == 403:
-        raise HTTPException(status_code=403, detail=extract_backend_error(res, "access Gate Readers"))
-    if res.status_code == 200:
-        readers = filter_readers_by_scope(res.json(), user)
+    page = max(1, page)
+    for _ in range(3):
+        res = await client.get(f"{BACKEND_BASE_URL}/readers",
+                               params={"q": q, "sort": sort, "dir": dir, "page": page, "size": PAGE_SIZE, **backend_filters(filters)},
+                               headers=headers)
+        if res.status_code == 401:
+            raise HTTPException(status_code=401, detail="Session expired")
+        if res.status_code == 403:
+            raise HTTPException(status_code=403, detail=extract_backend_error(res, "access Gate Readers"))
+        if res.status_code != 200:
+            break
+        rows = res.json()
+        readers = filter_readers_by_scope(rows, user)
+        total = whole_number(res.headers.get("X-Total-Count"), len(readers))
         sort_key = res.headers.get("X-Sort-Key", sort_key)
         sort_dir = res.headers.get("X-Sort-Dir", sort_dir)
+        if isinstance(rows, list) and len(readers) != len(rows):
+            # this role sees fewer readers here than the backend counted (the check above is the portal's own and
+            # stricter), so the backend's total would promise rows that are not shown: count what is shown
+            return {"readers": readers, "sort": sort_key, "dir": sort_dir, "q": q, "filters": filters,
+                    "filters_active": any(filters.values()), **page_numbers(len(readers), 1)}
+        last = page_numbers(total, page)["total_pages"]
+        if page <= last:
+            break
+        page = last
     return {"readers": readers, "sort": sort_key, "dir": sort_dir, "q": q,
-            "filters": filters, "filters_active": any(filters.values())}
+            "filters": filters, "filters_active": any(filters.values()), **page_numbers(total, page)}
 
 
 @app.get("/readers", response_class=HTMLResponse)
-async def readers_page(request: Request, q: str = "", sort: str = "", dir: str = "", user: dict = Depends(get_current_user)):
+async def readers_page(request: Request, q: str = "", sort: str = "", dir: str = "", page: int = 1, user: dict = Depends(get_current_user)):
     if not user:
         return RedirectResponse(url="/login")
 
@@ -1345,13 +1390,14 @@ async def readers_page(request: Request, q: str = "", sort: str = "", dir: str =
     filters = pick_filters(READER_FILTERS, request.query_params)
     async with httpx.AsyncClient(timeout=6.0) as client:
         try:
-            listing = await fetch_readers(client, headers, user, q, sort, dir, filters)
+            listing = await fetch_readers(client, headers, user, q, sort, dir, filters, page)
         except HTTPException as exc:
             if exc.status_code == 401:
                 return RedirectResponse(url="/login")
             raise
         except Exception:
-            listing = {"readers": [], "sort": sort, "dir": dir, "q": q, "filters": filters, "filters_active": any(filters.values())}
+            listing = {"readers": [], "sort": sort, "dir": dir, "q": q, "filters": filters, "filters_active": any(filters.values()),
+                       **page_numbers(0, 1)}
 
         try:
             barns_res = await client.get(f"{BACKEND_BASE_URL}/barns", headers=headers)
@@ -1370,15 +1416,16 @@ async def readers_page(request: Request, q: str = "", sort: str = "", dir: str =
 
 
 @app.get("/htmx/readers-list", response_class=HTMLResponse)
-async def htmx_readers_list(request: Request, q: str = "", sort: str = "", dir: str = "", user: dict = Depends(get_current_user)):
+async def htmx_readers_list(request: Request, q: str = "", sort: str = "", dir: str = "", page: int = 1, user: dict = Depends(get_current_user)):
     headers = get_auth_headers(user) if user else {}
     filters = pick_filters(READER_FILTERS, request.query_params)
     async with httpx.AsyncClient(timeout=6.0) as client:
         try:
-            listing = await fetch_readers(client, headers, user, q, sort, dir, filters)
+            listing = await fetch_readers(client, headers, user, q, sort, dir, filters, page)
         except Exception:
-            listing = {"readers": [], "sort": sort, "dir": dir, "q": q, "filters": filters, "filters_active": any(filters.values())}
-    return templates.TemplateResponse("partials/readers_table.html", {"request": request, "user": user, **listing})
+            listing = {"readers": [], "sort": sort, "dir": dir, "q": q, "filters": filters, "filters_active": any(filters.values()),
+                       **page_numbers(0, 1)}
+    return templates.TemplateResponse("partials/readers_table.html", {"request": request, "user": user, "oob_update": True, **listing})
 
 
 @app.post("/htmx/readers/create", response_class=HTMLResponse)
@@ -1425,13 +1472,13 @@ async def htmx_readers_create(
         except Exception:
             form = {}
         listing = await fetch_readers(client, get_auth_headers(user), user, filters=pick_filters(READER_FILTERS, form))
-    return templates.TemplateResponse("partials/readers_table.html", {"request": request, "user": user, **listing},
+    return templates.TemplateResponse("partials/readers_table.html", {"request": request, "user": user, "oob_update": True, **listing},
                                       headers=flash_header(message, kind))
 
 
 @app.post("/htmx/readers/{gate_id}/delete", response_class=HTMLResponse)
 async def htmx_readers_delete(request: Request, gate_id: str, q: str = Form(""), sort: str = Form(""), dir: str = Form(""),
-                              user: dict = Depends(get_current_user)):
+                              page: int = Form(1), user: dict = Depends(get_current_user)):
     """Delete or retire from the readers list. The backend decides which one and says so."""
     if not user:
         return ""
@@ -1456,8 +1503,9 @@ async def htmx_readers_delete(request: Request, gate_id: str, q: str = Form(""),
             form = await request.form()
         except Exception:
             form = {}
-        listing = await fetch_readers(client, headers, user, q, sort, dir, pick_filters(READER_FILTERS, form))
-    return templates.TemplateResponse("partials/readers_table.html", {"request": request, "user": user, **listing},
+        # the same page the person was on; if that was the last row of the last page, the last page that is left
+        listing = await fetch_readers(client, headers, user, q, sort, dir, pick_filters(READER_FILTERS, form), page)
+    return templates.TemplateResponse("partials/readers_table.html", {"request": request, "user": user, "oob_update": True, **listing},
                                       headers=flash_header(message, kind))
 
 
@@ -1562,76 +1610,95 @@ async def reader_delete_action(request: Request, gate_id: str, user: dict = Depe
 
 # ================= ABNORMALITY DETECTION & ALERTING =================
 
-async def fetch_alerts_data(client: httpx.AsyncClient, headers: dict, state: str = "OPEN", alert_type: str = "ALL", q: str = "") -> dict:
-    try:
-        res = await client.get(
-            f"{BACKEND_BASE_URL}/alerts",
-            params={"state": state, "type": alert_type, "q": q},
-            headers=headers
-        )
-        if res.status_code == 200:
-            data = res.json()
-            return {
-                "alerts": data.get("alerts", []),
-                "stats": data.get("stats", {
-                    "openCount": 0,
-                    "acknowledgedCount": 0,
-                    "missingCount": 0,
-                    "unexpectedCount": 0,
-                    "wrongBarnCount": 0
-                })
-            }
-    except Exception as e:
-        print(f"[ERROR] Failed to fetch alerts: {e}")
+NO_ALERT_STATS = {"openCount": 0, "acknowledgedCount": 0, "missingCount": 0, "unexpectedCount": 0, "wrongBarnCount": 0}
 
+
+async def fetch_alerts_data(client: httpx.AsyncClient, headers: dict, state: str = "OPEN", alert_type: str = "ALL", q: str = "",
+                            page: int = 1, size: int = PAGE_SIZE) -> dict:
+    """One page of alerts, the counters for the top of the page, and the numbers for the pager.
+    A page past the end (alerts were resolved meanwhile) becomes the last page."""
+    page = max(1, page)
+    for _ in range(3):
+        try:
+            res = await client.get(
+                f"{BACKEND_BASE_URL}/alerts",
+                params={"state": state, "type": alert_type, "q": q, "page": page, "size": size},
+                headers=headers
+            )
+        except Exception as e:
+            print(f"[ERROR] Failed to fetch alerts: {e}")
+            break
+        if res.status_code != 200:
+            break
+        data = res.json()
+        alerts = data.get("alerts", [])
+        total = whole_number(data.get("total"), len(alerts))
+        last = page_numbers(total, page, size)["total_pages"]
+        if page > last:
+            page = last
+            continue
+        return {"alerts": alerts, "stats": data.get("stats", dict(NO_ALERT_STATS)), **page_numbers(total, page, size)}
+
+    return {"alerts": [], "stats": dict(NO_ALERT_STATS), **page_numbers(0, 1, size)}
+
+
+def alert_context(request: Request, user: dict, data: dict, state: str, type: str, q: str, **extra) -> dict:
+    """What alert_table_content.html needs: the rows, the counters, the filters on screen and the pager."""
     return {
-        "alerts": [],
-        "stats": {"openCount": 0, "acknowledgedCount": 0, "missingCount": 0, "unexpectedCount": 0, "wrongBarnCount": 0}
+        "request": request,
+        "user": user,
+        "alerts": data["alerts"],
+        "stats": data["stats"],
+        "current_state": state,
+        "current_type": type,
+        "q": q,
+        **{k: data[k] for k in PAGING_KEYS},
+        **extra,
+    }
+
+
+async def alert_view(request: Request) -> dict:
+    """The state, type, search text and page the list had on screen when a button was pressed: sent with the request
+    (the buttons include the filter fields), so acknowledging or resolving keeps the view instead of jumping back to page 1."""
+    sent = dict(request.query_params)
+    try:
+        form = await request.form()
+        sent.update({k: str(v) for k, v in form.items()})
+    except Exception:
+        pass
+    return {
+        "state": (sent.get("state") or "OPEN").strip() or "OPEN",
+        "type": (sent.get("type") or "ALL").strip() or "ALL",
+        "q": (sent.get("q") or "").strip(),
+        "page": whole_number(sent.get("page")),
     }
 
 
 @app.get("/alerts", response_class=HTMLResponse)
-async def alerts_page(request: Request, state: str = "OPEN", type: str = "ALL", q: str = "", user: dict = Depends(get_current_user)):
+async def alerts_page(request: Request, state: str = "OPEN", type: str = "ALL", q: str = "", page: int = 1, user: dict = Depends(get_current_user)):
     if not user:
         return RedirectResponse(url="/login")
 
     headers = get_auth_headers(user)
     async with httpx.AsyncClient(timeout=8.0) as client:
-        alert_data = await fetch_alerts_data(client, headers, state=state, alert_type=type, q=q)
+        alert_data = await fetch_alerts_data(client, headers, state=state, alert_type=type, q=q, page=page)
         try:
             barns_res = await client.get(f"{BACKEND_BASE_URL}/barns", headers=headers)
             barns = filter_barns_by_scope(barns_res.json() if barns_res.status_code == 200 else [], user)
         except Exception:
             barns = []
 
-    return templates.TemplateResponse("alerts.html", {
-        "request": request,
-        "user": user,
-        "alerts": alert_data["alerts"],
-        "stats": alert_data["stats"],
-        "barns": barns,
-        "current_state": state,
-        "current_type": type,
-        "q": q
-    })
+    return templates.TemplateResponse("alerts.html", alert_context(request, user, alert_data, state, type, q, barns=barns))
 
 
 @app.get("/htmx/alerts-list", response_class=HTMLResponse)
-async def htmx_alerts_list(request: Request, state: str = "OPEN", type: str = "ALL", q: str = "", user: dict = Depends(get_current_user)):
+async def htmx_alerts_list(request: Request, state: str = "OPEN", type: str = "ALL", q: str = "", page: int = 1, user: dict = Depends(get_current_user)):
     headers = get_auth_headers(user) if user else {}
     async with httpx.AsyncClient(timeout=8.0) as client:
-        alert_data = await fetch_alerts_data(client, headers, state=state, alert_type=type, q=q)
+        alert_data = await fetch_alerts_data(client, headers, state=state, alert_type=type, q=q, page=page)
 
-    return templates.TemplateResponse("partials/alert_table_content.html", {
-        "request": request,
-        "user": user,
-        "alerts": alert_data["alerts"],
-        "stats": alert_data["stats"],
-        "current_state": state,
-        "current_type": type,
-        "q": q,
-        "oob_update": True
-    })
+    return templates.TemplateResponse("partials/alert_table_content.html",
+                                      alert_context(request, user, alert_data, state, type, q, oob_update=True))
 
 
 @app.post("/htmx/alerts/reconcile", response_class=HTMLResponse)
@@ -1661,24 +1728,17 @@ async def htmx_alerts_reconcile(
             body = res.json()
             flagged = body.get("flaggedCount", 0)
             banner_msg = f"Roll-call completed for {barn_id}: {flagged} missing cattle flagged."
+        # the new alerts are open, newest first: show the open list from its first page
         alert_data = await fetch_alerts_data(client, headers, state="OPEN", alert_type="ALL", q="")
 
-    return templates.TemplateResponse("partials/alert_table_content.html", {
-        "request": request,
-        "user": user,
-        "alerts": alert_data["alerts"],
-        "stats": alert_data["stats"],
-        "current_state": "OPEN",
-        "current_type": "ALL",
-        "q": "",
-        "oob_update": True,
-        "banner_msg": banner_msg
-    })
+    return templates.TemplateResponse("partials/alert_table_content.html",
+                                      alert_context(request, user, alert_data, "OPEN", "ALL", "", oob_update=True, banner_msg=banner_msg))
 
 
 @app.post("/htmx/alerts/{alert_id}/acknowledge", response_class=HTMLResponse)
-async def htmx_alert_acknowledge(request: Request, alert_id: str, state: str = "OPEN", type: str = "ALL", user: dict = Depends(get_current_user)):
+async def htmx_alert_acknowledge(request: Request, alert_id: str, user: dict = Depends(get_current_user)):
     headers = get_auth_headers(user) if user else {}
+    view = await alert_view(request)
     async with httpx.AsyncClient(timeout=8.0) as client:
         res = await client.post(f"{BACKEND_BASE_URL}/alerts/{alert_id}/acknowledge", headers=headers)
         if res.status_code == 403:
@@ -1686,18 +1746,10 @@ async def htmx_alert_acknowledge(request: Request, alert_id: str, state: str = "
             msg = format_403_security_message(user or {}, err, request.url.path)
             await log_security_violation_best_effort(user or {}, request.url.path, msg)
             return HTMLResponse(content=render_403_alert_html(msg), status_code=403)
-        alert_data = await fetch_alerts_data(client, headers, state=state, alert_type=type, q="")
+        alert_data = await fetch_alerts_data(client, headers, state=view["state"], alert_type=view["type"], q=view["q"], page=view["page"])
 
-    return templates.TemplateResponse("partials/alert_table_content.html", {
-        "request": request,
-        "user": user,
-        "alerts": alert_data["alerts"],
-        "stats": alert_data["stats"],
-        "current_state": state,
-        "current_type": type,
-        "q": "",
-        "oob_update": True
-    })
+    return templates.TemplateResponse("partials/alert_table_content.html",
+                                      alert_context(request, user, alert_data, view["state"], view["type"], view["q"], oob_update=True))
 
 
 @app.post("/htmx/alerts/{alert_id}/resolve", response_class=HTMLResponse)
@@ -1705,11 +1757,10 @@ async def htmx_alert_resolve(
     request: Request,
     alert_id: str,
     note: str = Form("Verified and cleared by operator"),
-    state: str = Form("OPEN"),
-    type: str = Form("ALL"),
     user: dict = Depends(get_current_user)
 ):
     headers = get_auth_headers(user) if user else {}
+    view = await alert_view(request)
     async with httpx.AsyncClient(timeout=8.0) as client:
         res = await client.post(f"{BACKEND_BASE_URL}/alerts/{alert_id}/resolve", json={"note": note}, headers=headers)
         if res.status_code == 403:
@@ -1717,18 +1768,10 @@ async def htmx_alert_resolve(
             msg = format_403_security_message(user or {}, err, request.url.path)
             await log_security_violation_best_effort(user or {}, request.url.path, msg)
             return HTMLResponse(content=render_403_alert_html(msg), status_code=403)
-        alert_data = await fetch_alerts_data(client, headers, state=state, alert_type=type, q="")
+        alert_data = await fetch_alerts_data(client, headers, state=view["state"], alert_type=view["type"], q=view["q"], page=view["page"])
 
-    return templates.TemplateResponse("partials/alert_table_content.html", {
-        "request": request,
-        "user": user,
-        "alerts": alert_data["alerts"],
-        "stats": alert_data["stats"],
-        "current_state": state,
-        "current_type": type,
-        "q": "",
-        "oob_update": True
-    })
+    return templates.TemplateResponse("partials/alert_table_content.html",
+                                      alert_context(request, user, alert_data, view["state"], view["type"], view["q"], oob_update=True))
 
 
 @app.get("/htmx/alerts/badge", response_class=HTMLResponse)
@@ -1737,7 +1780,7 @@ async def htmx_alerts_badge(user: dict = Depends(get_current_user)):
         return ""
     headers = get_auth_headers(user)
     async with httpx.AsyncClient(timeout=3.0) as client:
-        data = await fetch_alerts_data(client, headers, state="OPEN", alert_type="ALL", q="")
+        data = await fetch_alerts_data(client, headers, state="OPEN", alert_type="ALL", q="", size=1)   # only the counter is used
     count = data["stats"].get("openCount", 0)
     if count > 0:
         return f'<span class="px-2 py-0.5 text-[10px] font-bold rounded-full bg-rose-500 text-white">{count}</span>'

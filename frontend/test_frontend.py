@@ -497,6 +497,7 @@ class AppBackend(BaseHTTPRequestHandler):
     """Stands in for the Spring backend and remembers what the portal asked it, as (path, query)."""
     asked, farms, fail = [], FARMS, False
     health_rows = [EVENT]
+    reader_total = alert_total = 0
 
     def log_message(self, *a):
         pass
@@ -515,8 +516,24 @@ class AppBackend(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         if u.path.endswith("/verify-return"):
             self._send(200, {"exitedCount": 2, "returnedCount": 1, "deficit": 1, "newlyFlaggedAlerts": 0})
+        elif u.path.startswith("/api/v1/alerts/"):
+            self._send(200, {})
         else:
             self._send(404, {})
+
+    def do_DELETE(self):
+        if self.path.startswith("/api/v1/readers/"):
+            AppBackend.reader_total -= 1
+            self._send(200, {"status": "DELETED"})
+        else:
+            self._send(404, {})
+
+    @staticmethod
+    def _slice(total, q):
+        """The rows of the page asked for, `total` rows in all, as the backend pages them."""
+        page, size = int(q.get("page", 1)), int(q.get("size", 100))
+        first = (page - 1) * size
+        return range(first, max(first, min(first + size, total)))
 
     def do_GET(self):
         u = urlparse(self.path)
@@ -527,7 +544,19 @@ class AppBackend(BaseHTTPRequestHandler):
         if u.path == "/api/v1/cattle":
             self._send(200, [], {"X-Total-Count": "0"})
         elif u.path == "/api/v1/readers":
-            self._send(200, [])
+            rows = [{"gate_id": f"GATE-{i:03d}", "label": f"Reader {i}", "barn_id": "BARN-DL-011", "farm_id": "FARM-1",
+                     "reader_name": f"R{i}", "direction_mode": "IN_ONLY", "role": "INNER"}
+                    for i in self._slice(AppBackend.reader_total, q)]
+            self._send(200, rows, {"X-Total-Count": str(AppBackend.reader_total), "X-Sort-Key": q.get("sort") or "created",
+                                      "X-Sort-Dir": q.get("dir") or "desc"})
+        elif u.path == "/api/v1/alerts":
+            rows = [{"alert_id": f"AL-{i:03d}", "type": "MISSING_ANIMAL", "state": "OPEN", "animal_id": f"VB-{i:04d}",
+                     "barn_id": "BARN-DL-011", "barn_code": "DL-BARN-011", "farm_name": "Dak Lak",
+                     "raised_at": "2026-11-25T03:00:00Z", "evidence": {}} for i in self._slice(AppBackend.alert_total, q)]
+            self._send(200, {"alerts": rows, "total": AppBackend.alert_total, "page": int(q.get("page", 1)),
+                             "size": int(q.get("size", 100)),
+                             "stats": {"openCount": AppBackend.alert_total, "acknowledgedCount": 0, "missingCount": AppBackend.alert_total,
+                                       "unexpectedCount": 0, "wrongBarnCount": 0}})
         elif u.path == "/api/v1/barns":
             self._send(200, [dict(b, farmId=f["farmId"]) for f in AppBackend.farms for b in f["barns"]])
         elif u.path == "/api/v1/facilities/distribution":
@@ -560,6 +589,7 @@ def app_portal(monkeypatch):
     threading.Thread(target=server.serve_forever, daemon=True).start()
     monkeypatch.setattr(main, "BACKEND_BASE_URL", f"http://127.0.0.1:{server.server_port}/api/v1")
     AppBackend.asked, AppBackend.farms, AppBackend.fail, AppBackend.health_rows = [], FARMS, False, [EVENT]
+    AppBackend.reader_total = AppBackend.alert_total = 0
     role = {"role": "SYSTEM_ADMIN"}
     main.app.dependency_overrides[main.get_current_user] = lambda: {"username": "u", "token": "t", **role}
     client = TestClient(main.app, follow_redirects=False)
@@ -760,3 +790,207 @@ def test_a_supervisor_sees_the_codes_of_the_assigned_barns_in_the_header(app_por
     html = app_portal.get("/").text
     scope = re.search(r"Facility Scope:\s*<strong[^>]*>(.*?)</strong>", html, re.S).group(1).strip()
     assert scope == "DL-BARN-011"
+
+
+# ---- pages of 25: Gate Readers and Anomaly Alerts ------------------------------------------------------------------
+
+def test_the_pager_numbers_follow_the_row_count():
+    assert main.PAGE_SIZE == 25
+    p = main.page_numbers(60, 2)
+    assert (p["total_pages"], p["start_item"], p["end_item"], p["per_page"]) == (3, 26, 50, 25)
+    p = main.page_numbers(60, 3)
+    assert (p["start_item"], p["end_item"]) == (51, 60)
+    assert main.page_numbers(25, 1)["total_pages"] == 1 and main.page_numbers(26, 1)["total_pages"] == 2
+    none = main.page_numbers(0, 1)
+    assert (none["total"], none["total_pages"], none["start_item"], none["end_item"]) == (0, 1, 0, 0)
+    assert main.page_numbers(60, 9)["page"] == 3 and main.page_numbers(60, -4)["page"] == 1   # kept inside 1..last
+
+
+def test_a_page_number_that_is_not_a_number_is_page_one():
+    assert [main.whole_number(v) for v in ("3", " 2 ", "x", "", None, "2.5")] == [3, 2, 1, 1, 1, 1]
+
+
+def current_page(html):
+    """The page number the pager marks as the one on screen."""
+    found = re.findall(r'aria-current="page"[^>]*>\s*(\d+)\s*<', html)
+    return int(found[0]) if found else None
+
+
+def test_gate_readers_are_listed_25_at_a_time_with_the_total_in_the_header(app_portal):
+    AppBackend.reader_total = 60
+    r = app_portal.get("/readers")
+    assert r.status_code == 200
+    assert app_portal.asked("/readers")[0]["page"] == "1" and app_portal.asked("/readers")[0]["size"] == "25"
+    assert 'Gate Readers (<span id="reader-total">60</span>)' in r.text
+    assert r.text.count("GATE-0") >= 25 and "GATE-025" not in r.text
+    assert re.search(r"Showing\s*</span>\s*<strong[^>]*>1</strong>.*?>25</strong>.*?>60</strong>", r.text, re.S)
+    assert "(25 per page)" in r.text
+    assert 'id="reader-page" name="page" value="1"' in r.text
+
+
+def test_the_reader_pager_offers_the_other_pages_and_keeps_the_search_and_filters(app_portal):
+    AppBackend.reader_total = 60
+    html = app_portal.get("/htmx/readers-list?page=2&q=gate&sort=label&dir=asc").text
+    ask = app_portal.asked("/readers")[-1]
+    assert (ask["page"], ask["size"], ask["q"], ask["sort"], ask["dir"]) == ("2", "25", "gate", "label", "asc")
+    assert "GATE-025" in html and "GATE-049" in html and "GATE-050" not in html and "GATE-024" not in html
+    assert 'hx-get="/htmx/readers-list?page=1"' in html and 'hx-get="/htmx/readers-list?page=3"' in html
+    assert current_page(html) == 2
+    # the buttons carry the search, the order and the filters, but not the page: the page is the button's own
+    includes = set(re.findall(r'hx-get="/htmx/readers-list\?page=\d+" hx-include="([^"]*)"', html))
+    assert includes == {"#reader-search,#reader-sort,#reader-dir,#reader-filters"}
+    assert 'id="reader-page" name="page" value="2"' in html
+
+
+def test_the_last_reader_page_has_no_next_page(app_portal):
+    AppBackend.reader_total = 60
+    html = app_portal.get("/htmx/readers-list?page=3").text
+    assert "GATE-050" in html and "GATE-059" in html and "GATE-060" not in html
+    assert re.search(r">51</strong>.*?>60</strong>.*?>60</strong>", html, re.S)
+    assert re.search(r'disabled aria-label="Next page"', html) and 'aria-label="Previous page"' in html
+    assert 'hx-get="/htmx/readers-list?page=4"' not in html
+
+
+def test_a_page_past_the_end_shows_the_last_page_instead_of_an_empty_one(app_portal):
+    AppBackend.reader_total = 60
+    html = app_portal.get("/htmx/readers-list?page=9").text
+    assert [q["page"] for q in app_portal.asked("/readers")] == ["9", "3"]
+    assert "GATE-059" in html and current_page(html) == 3 and 'name="page" value="3"' in html
+
+
+def test_one_page_of_readers_has_no_page_buttons(app_portal):
+    AppBackend.reader_total = 10
+    html = app_portal.get("/htmx/readers-list").text
+    assert "<nav" not in html and "Next page" not in html
+    assert re.search(r">1</strong>.*?>10</strong>.*?>10</strong>", html, re.S) and "10</strong>\n        <span>readers" in html
+
+
+def test_the_header_count_of_readers_follows_every_refresh_of_the_list(app_portal):
+    AppBackend.reader_total = 60
+    assert re.search(r'Gate Readers \(<span id="reader-total">60</span>\)', app_portal.get("/readers").text)
+    # a search, a page or a removal replaces the list; the number in the header is swapped along with it
+    assert '<span id="reader-total" hx-swap-oob="true">60</span>' in app_portal.get("/htmx/readers-list?page=2").text
+    removed = app_portal.post("/htmx/readers/GATE-001/delete", data={"q": "", "sort": "", "dir": "", "page": "1"})
+    assert '<span id="reader-total" hx-swap-oob="true">59</span>' in removed.text
+    # ...and the full page does not carry a second element with that id
+    assert app_portal.get("/readers").text.count('id="reader-total"') == 1
+
+
+def test_no_readers_says_zero_not_one_to_zero(app_portal):
+    html = app_portal.get("/htmx/readers-list").text
+    assert re.search(r">0</strong>.*?>0</strong>.*?>0</strong>", html, re.S) and "No gate readers match" in html and "<nav" not in html
+
+
+def test_removing_the_last_reader_of_the_last_page_lands_on_the_page_before(app_portal):
+    AppBackend.reader_total = 51      # three pages: 25 + 25 + 1
+    r = app_portal.post("/htmx/readers/GATE-050/delete", data={"q": "", "sort": "", "dir": "", "page": "3"})
+    assert r.status_code == 200
+    assert [q["page"] for q in app_portal.asked("/readers")] == ["3", "2"]
+    assert current_page(r.text) == 2 and 'name="page" value="2"' in r.text
+    assert "GATE-049" in r.text
+
+
+def test_removing_a_reader_keeps_the_page_the_person_was_on(app_portal):
+    AppBackend.reader_total = 60
+    r = app_portal.post("/htmx/readers/GATE-030/delete", data={"q": "", "sort": "", "dir": "", "page": "2"})
+    assert r.status_code == 200 and app_portal.asked("/readers")[-1]["page"] == "2" and current_page(r.text) == 2
+    assert 'name="page" value="2"' in r.text
+
+
+def test_the_delete_button_sends_the_page_and_the_refresh_of_a_reader_page_keeps_it(app_portal):
+    AppBackend.reader_total = 60
+    html = app_portal.get("/htmx/readers-list?page=2").text
+    assert "#reader-search,#reader-sort,#reader-dir,#reader-page,#reader-filters" in html
+    page = app_portal.get("/readers?page=2").text
+    assert "readers-list" in page and 'id="reader-page" name="page" value="2"' in page
+
+
+def test_a_role_that_sees_no_readers_in_the_portal_is_not_told_there_are_some(app_portal):
+    AppBackend.reader_total = 60
+    app_portal.as_role("VETERINARIAN")
+    r = app_portal.get("/readers")
+    assert 'Gate Readers (<span id="reader-total">0</span>)' in r.text and "GATE-000" not in r.text
+
+
+def test_anomaly_alerts_are_listed_25_at_a_time(app_portal):
+    AppBackend.alert_total = 60
+    r = app_portal.get("/alerts?state=OPEN&type=ALL&page=2")
+    assert r.status_code == 200
+    ask = app_portal.asked("/alerts")[0]
+    assert (ask["page"], ask["size"], ask["state"], ask["type"]) == ("2", "25", "OPEN", "ALL")
+    assert "AL-025" in r.text and "AL-049" in r.text and "AL-050" not in r.text and "AL-024" not in r.text
+    assert re.search(r">26</strong>.*?>50</strong>.*?>60</strong>", r.text, re.S) and "(25 per page)" in r.text
+    assert 'id="alert-page" name="page" value="2"' in r.text
+    assert 'hx-get="/htmx/alerts-list?page=3"' in r.text and current_page(r.text) == 2
+
+
+def test_alert_pager_buttons_keep_the_state_type_and_search_but_not_the_page(app_portal):
+    AppBackend.alert_total = 60
+    html = app_portal.get("/htmx/alerts-list?state=OPEN&type=MISSING_ANIMAL&q=VB&page=1").text
+    includes = set(re.findall(r'hx-get="/htmx/alerts-list\?page=\d+" hx-include="([^"]*)"', html))
+    assert includes == {"#alert-state-filter, #alert-type-filter, #alert-search-input"}
+    assert "matching the filters" in html
+    assert "matching the filters" not in app_portal.get("/htmx/alerts-list").text       # the open alerts are the default view
+    ask = app_portal.asked("/alerts")[-2]
+    assert (ask["type"], ask["q"], ask["page"]) == ("MISSING_ANIMAL", "VB", "1")
+
+
+def test_the_alert_refresh_and_the_buttons_stay_on_the_page_on_screen(app_portal):
+    AppBackend.alert_total = 60
+    page = app_portal.get("/alerts?page=2").text
+    refresh = re.search(r'id="alerts-table-container"[^>]*hx-trigger="every 5s"[^>]*hx-include="([^"]*)"', page, re.S) \
+        or re.search(r'hx-trigger="every 5s"[^>]*hx-include="([^"]*)"', page, re.S)
+    assert refresh and "#alert-page" in refresh.group(1)
+    ack = re.search(r'hx-post="/htmx/alerts/AL-025/acknowledge"\s+hx-include="([^"]*)"', page)
+    assert ack and "#alert-page" in ack.group(1) and "#alert-state-filter" in ack.group(1)
+    assert re.search(r'id="resolve-alert-form"[^>]*hx-include="[^"]*#alert-page', page, re.S)
+
+
+def test_a_page_of_alerts_past_the_end_shows_the_last_page(app_portal):
+    AppBackend.alert_total = 30
+    html = app_portal.get("/htmx/alerts-list?page=7").text
+    assert [q["page"] for q in app_portal.asked("/alerts")] == ["7", "2"]
+    assert "AL-029" in html and current_page(html) == 2
+
+
+def test_acknowledging_an_alert_keeps_the_filters_and_the_page(app_portal):
+    AppBackend.alert_total = 60
+    r = app_portal.post("/htmx/alerts/AL-030/acknowledge", data={"state": "OPEN", "type": "MISSING_ANIMAL", "q": "VB", "page": "2"})
+    assert r.status_code == 200
+    ask = app_portal.asked("/alerts")[-1]
+    assert (ask["state"], ask["type"], ask["q"], ask["page"]) == ("OPEN", "MISSING_ANIMAL", "VB", "2")
+    assert current_page(r.text) == 2
+
+
+def test_resolving_an_alert_keeps_the_filters_and_the_page(app_portal):
+    AppBackend.alert_total = 60
+    r = app_portal.post("/htmx/alerts/AL-030/resolve",
+                        data={"note": "checked", "state": "ACKNOWLEDGED", "type": "ALL", "q": "", "page": "3"})
+    assert r.status_code == 200
+    ask = app_portal.asked("/alerts")[-1]
+    assert (ask["state"], ask["type"], ask["page"]) == ("ACKNOWLEDGED", "ALL", "3")
+
+
+def test_a_roll_call_shows_the_open_alerts_from_the_first_page(app_portal):
+    AppBackend.alert_total = 60
+    r = app_portal.post("/htmx/alerts/reconcile", data={"barn_id": "BARN-DL-011", "threshold_minutes": "30"})
+    assert r.status_code == 200
+    ask = app_portal.asked("/alerts")[-1]
+    assert (ask["state"], ask["type"], ask["page"]) == ("OPEN", "ALL", "1")
+
+
+def test_the_alert_badge_only_asks_for_the_counter(app_portal):
+    AppBackend.alert_total = 60
+    r = app_portal.get("/htmx/alerts/badge")
+    assert ">60<" in r.text and app_portal.asked("/alerts")[-1]["size"] == "1"
+
+
+def test_no_alerts_says_zero(app_portal):
+    html = app_portal.get("/htmx/alerts-list").text
+    assert re.search(r">0</strong>.*?>0</strong>.*?>0</strong>", html, re.S) and "<nav" not in html
+
+
+def test_the_left_menu_stays_in_view_while_the_page_scrolls(app_portal):
+    html = app_portal.get("/readers").text
+    aside = re.search(r"<aside class=\"([^\"]*)\"", html).group(1).split()
+    assert {"sticky", "top-0", "h-screen", "overflow-y-auto", "self-start"} <= set(aside) and "min-h-screen" not in aside

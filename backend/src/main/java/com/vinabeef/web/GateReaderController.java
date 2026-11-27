@@ -59,8 +59,12 @@ public class GateReaderController {
                                       @RequestParam(required = false, defaultValue = "") String direction,
                                       @RequestParam(required = false, defaultValue = "") String pairing,
                                       @RequestParam(required = false, defaultValue = "") String activity,
-                                      @RequestParam(required = false, defaultValue = "") String passes) {
+                                      @RequestParam(required = false, defaultValue = "") String passes,
+                                      @RequestParam(required = false, defaultValue = "1") int page,
+                                      @RequestParam(required = false, defaultValue = "100") int size) {
         var scope = currentScope.getCurrentScope();
+        int safePage = Math.max(1, page);
+        int safeSize = Math.min(Math.max(1, size), 100);
 
         ReportQueries.Scope visible;
         if (scope.isGlobal()) {
@@ -70,7 +74,8 @@ public class GateReaderController {
         } else if (scope.isBarnScoped()) {
             visible = ReportQueries.Scope.barns(scope.barnIds());
             if (visible.seesNothing()) {
-                return ResponseEntity.ok(List.of());
+                return ResponseEntity.ok().header("X-Total-Count", "0")
+                        .header("Access-Control-Expose-Headers", "X-Total-Count").body(List.of());
             }
         } else {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
@@ -80,12 +85,17 @@ public class GateReaderController {
         var today = clock.today();
         // the column filters only narrow what the person may see: their scope is applied first, inside the statement
         var filter = ListQueries.ReaderFilter.parse(farmId, barnId, direction, pairing, activity, passes);
-        var query = ListQueries.readers(visible, q, filter, sort, dir, today.fromInclusive(), today.toExclusive(), clock.now());
+        var now = clock.now();
+        var count = ListQueries.readerCount(visible, q, filter, today.fromInclusive(), today.toExclusive(), now);
+        Long total = jdbcTemplate.queryForObject(count.sql(), Long.class, count.params().toArray());
+        var query = ListQueries.readersPage(visible, q, filter, sort, dir, today.fromInclusive(), today.toExclusive(), now,
+                safeSize, (safePage - 1) * safeSize);
         var readers = jdbcTemplate.queryForList(query.sql(), query.params().toArray());
         return ResponseEntity.ok()
+                .header("X-Total-Count", String.valueOf(total != null ? total : readers.size()))
                 .header("X-Sort-Key", SortSpec.effectiveKey(sort, ListQueries.READER_SORT, "created"))
                 .header("X-Sort-Dir", SortSpec.effectiveDir(sort, dir, ListQueries.READER_SORT, "created", "desc"))
-                .header("Access-Control-Expose-Headers", "X-Sort-Key, X-Sort-Dir")
+                .header("Access-Control-Expose-Headers", "X-Total-Count, X-Sort-Key, X-Sort-Dir")
                 .body(readers);
     }
 

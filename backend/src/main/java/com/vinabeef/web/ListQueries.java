@@ -290,6 +290,30 @@ final class ListQueries {
      */
     static ReportQueries.Query readers(ReportQueries.Scope scope, String search, ReaderFilter filter, String sort, String dir,
                                        Instant dayStart, Instant dayEnd, Instant now) {
+        ReportQueries.Query base = readersUnordered(scope, search, filter, dayStart, dayEnd, now);
+        return new ReportQueries.Query(base.sql() + " ORDER BY "
+                + SortSpec.orderBy(sort, dir, READER_SORT, "created", "desc", "g.gate_id"), base.params());
+    }
+
+    /** One page of the same list: rows {@code offset + 1} to {@code offset + limit} in the order of {@code sort}. */
+    static ReportQueries.Query readersPage(ReportQueries.Scope scope, String search, ReaderFilter filter, String sort, String dir,
+                                           Instant dayStart, Instant dayEnd, Instant now, int limit, int offset) {
+        ReportQueries.Query ordered = readers(scope, search, filter, sort, dir, dayStart, dayEnd, now);
+        List<Object> params = new ArrayList<>(ordered.params());
+        params.add(Math.max(1, limit));
+        params.add(Math.max(0, offset));
+        return new ReportQueries.Query(ordered.sql() + " LIMIT ? OFFSET ?", params);
+    }
+
+    /** How many readers the list has for this scope, search and filters (so the pager knows the number of pages). */
+    static ReportQueries.Query readerCount(ReportQueries.Scope scope, String search, ReaderFilter filter,
+                                           Instant dayStart, Instant dayEnd, Instant now) {
+        ReportQueries.Query base = readersUnordered(scope, search, filter, dayStart, dayEnd, now);
+        return new ReportQueries.Query("SELECT COUNT(*) FROM (" + base.sql() + "\n) counted", base.params());
+    }
+
+    private static ReportQueries.Query readersUnordered(ReportQueries.Scope scope, String search, ReaderFilter filter,
+                                                        Instant dayStart, Instant dayEnd, Instant now) {
         List<Object> params = new ArrayList<>();
         Timestamp from = Timestamp.from(dayStart);
         Timestamp to = Timestamp.from(dayEnd);
@@ -359,7 +383,6 @@ final class ListQueries {
                 params.add(pattern);
             }
         }
-        sql.append(" ORDER BY ").append(SortSpec.orderBy(sort, dir, READER_SORT, "created", "desc", "g.gate_id"));
         return new ReportQueries.Query(sql.toString(), params);
     }
 

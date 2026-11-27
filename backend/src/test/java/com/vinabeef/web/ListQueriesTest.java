@@ -150,4 +150,30 @@ class ListQueriesTest {
         assertTrue(q.sql().endsWith("ORDER BY last_seen DESC NULLS LAST, g.gate_id ASC"));
         assertTrue(ListQueries.ReaderFilter.parse(null, "", "x", "x", "x", "x").isEmpty());
     }
+
+    @Test
+    void aReadersPageIsTheOrderedListWithALimitAndTheCountIsTheSameListWithoutOne() {
+        var now = Instant.parse("2026-11-21T10:00:00Z");
+        var f = ListQueries.ReaderFilter.parse("FARM-DAK-LAK", "", "", "paired", "silent", "");
+        var ordered = ListQueries.readers(ReportQueries.Scope.ALL, "dr", f, "barn", "asc", DAY_START, DAY_END, now);
+        var page = ListQueries.readersPage(ReportQueries.Scope.ALL, "dr", f, "barn", "asc", DAY_START, DAY_END, now, 25, 50);
+        var count = ListQueries.readerCount(ReportQueries.Scope.ALL, "dr", f, DAY_START, DAY_END, now);
+
+        assertBound(page);
+        assertBound(count);
+        assertEquals(ordered.sql() + " LIMIT ? OFFSET ?", page.sql());
+        assertEquals(ordered.params(), page.params().subList(0, ordered.params().size()), "the page filters exactly as the list does");
+        assertEquals(List.of(25, 50), page.params().subList(ordered.params().size(), page.params().size()));
+        assertTrue(count.sql().startsWith("SELECT COUNT(*) FROM ("));
+        assertFalse(count.sql().contains("ORDER BY"), "counting needs no order");
+        assertFalse(count.sql().contains("LIMIT"), "the total is not limited to a page");
+        assertEquals(ordered.params(), count.params(), "the total counts exactly what the pages hold");
+    }
+
+    @Test
+    void aNegativeOffsetOrAZeroLimitCannotReachTheStatement() {
+        var page = ListQueries.readersPage(ReportQueries.Scope.ALL, "", ListQueries.ReaderFilter.NONE, null, null,
+                DAY_START, DAY_END, DAY_END, 0, -25);
+        assertEquals(List.of(1, 0), page.params().subList(page.params().size() - 2, page.params().size()));
+    }
 }

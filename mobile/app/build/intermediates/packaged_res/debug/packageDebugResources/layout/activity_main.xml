@@ -135,7 +135,7 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:hint="Barn ID (empty = your barn, ALL = every barn)"
+                        android:hint="Barn code (empty = your barn, ALL = every barn)"
                         android:inputType="textNoSuggestions|textCapCharacters"
                         android:textSize="13sp" />
 

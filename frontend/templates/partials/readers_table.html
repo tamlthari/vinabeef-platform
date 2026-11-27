@@ -1,6 +1,9 @@
 {% from "partials/macros.html" import sort_th %}
+{% from "partials/pager.html" import pager %}
 <input type="hidden" id="reader-sort" name="sort" value="{{ sort }}">
 <input type="hidden" id="reader-dir" name="dir" value="{{ dir }}">
+<input type="hidden" id="reader-page" name="page" value="{{ page }}">
+{% if oob_update %}<span id="reader-total" hx-swap-oob="true">{{ total }}</span>{% endif %}
 <div class="overflow-x-auto">
     <table class="w-full text-left text-xs text-gray-700">
         <thead class="bg-gray-50/70 border-b border-gray-200 text-gray-600">
@@ -23,7 +26,6 @@
         </tbody>
     </table>
 </div>
-<div class="px-5 py-3 border-t border-gray-100 text-xs text-gray-500 flex justify-between items-center">
-    <span>{{ readers|length }} reader{{ '' if readers|length == 1 else 's' }}{% if q %} matching "{{ q }}"{% endif %}{% if filters_active %}{{ ' with' if q else ' matching' }} the filters{% endif %}</span>
-    <span class="text-gray-400">Newest first by default. IN / OUT are all recorded gate passes; today's are shown under each number.</span>
-</div>
+{{ pager('/htmx/readers-list', page, total_pages, page_range, start_item, end_item, total, 'readers', per_page,
+         '#readers-table-container', '#reader-search,#reader-sort,#reader-dir,#reader-filters', q or filters_active) }}
+<div class="px-5 pb-3 text-[11px] text-gray-400">Newest first by default. IN / OUT are all recorded gate passes; today's are shown under each number.</div>

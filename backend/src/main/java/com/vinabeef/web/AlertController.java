@@ -37,84 +37,42 @@ public class AlertController {
         private String note;
     }
 
+    /**
+     * One page of the alerts a person may see, newest first, with the total number that match so the page can draw its pager.
+     * {@code size} defaults to 100 (what this list always returned) and is at most 100.
+     */
     @GetMapping
     public ResponseEntity<?> listAlerts(
             @RequestParam(required = false, defaultValue = "OPEN") String state,
             @RequestParam(required = false, defaultValue = "ALL") String type,
-            @RequestParam(required = false, defaultValue = "") String q) {
+            @RequestParam(required = false, defaultValue = "") String q,
+            @RequestParam(required = false, defaultValue = "1") int page,
+            @RequestParam(required = false, defaultValue = "100") int size) {
 
         var scope = currentScope.getCurrentScope();
-        String stateFilter = state.trim().toUpperCase();
-        String typeFilter = type.trim().toUpperCase();
-        String searchPattern = "%" + q.trim().toLowerCase() + "%";
+        ReportQueries.Scope visible = ReportQueries.Scope.of(scope);
+        int safePage = Math.max(1, page);
+        int safeSize = AlertQueries.pageSize(size);
 
-        StringBuilder scopeClause = new StringBuilder();
-        List scopeParams = new ArrayList();
-
-        if (scope.isFarmScoped()) {
-            scopeClause.append(" AND b.farm_id = ? ");
-            scopeParams.add(scope.farmId());
-        } else if (scope.isBarnScoped()) {
-            if (scope.barnIds().isEmpty()) {
-                return ResponseEntity.ok(Map.of(
-                        "alerts", List.of(),
-                        "stats", Map.of("openCount", 0, "acknowledgedCount", 0, "missingCount", 0, "unexpectedCount", 0, "wrongBarnCount", 0)
-                ));
-            }
-            String placeholders = String.join(",", Collections.nCopies(scope.barnIds().size(), "?"));
-            scopeClause.append(" AND al.barn_id IN (").append(placeholders).append(") ");
-            scopeParams.addAll(scope.barnIds());
+        if (visible.seesNothing()) {
+            return ResponseEntity.ok(Map.of(
+                    "alerts", List.of(),
+                    "total", 0,
+                    "page", safePage,
+                    "size", safeSize,
+                    "stats", Map.of("openCount", 0, "acknowledgedCount", 0, "missingCount", 0, "unexpectedCount", 0, "wrongBarnCount", 0)
+            ));
         }
 
-        List queryParams = new ArrayList();
-        queryParams.add(stateFilter);
-        queryParams.add(stateFilter);
-        queryParams.add(typeFilter);
-        queryParams.add(typeFilter);
-        queryParams.add(searchPattern);
-        queryParams.add(searchPattern);
-        queryParams.add(searchPattern);
-        queryParams.add(searchPattern);
-        queryParams.add(searchPattern);
-        queryParams.addAll(scopeParams);
+        var count = AlertQueries.count(visible, state, type, q);
+        Long total = jdbcTemplate.queryForObject(count.sql(), Long.class, count.params().toArray());
+        var pageQuery = AlertQueries.page(visible, state, type, q, safeSize, (safePage - 1) * safeSize);
+        var alerts = jdbcTemplate.queryForList(pageQuery.sql(), pageQuery.params().toArray());
 
-        String sql = """
-            SELECT 
-                al.alert_id,
-                al.type,
-                COALESCE(al.severity, 'HIGH') AS severity,
-                al.animal_id,
-                al.barn_id,
-                b.code AS barn_code,
-                f.farm_id,
-                f.name AS farm_name,
-                al.state,
-                al.evidence::text AS evidence,
-                al.raised_at,
-                al.acknowledged_by,
-                al.acknowledged_at,
-                al.resolved_by,
-                al.resolved_at,
-                al.resolution_note
-            FROM alerts al
-            LEFT JOIN barns b ON al.barn_id = b.barn_id
-            LEFT JOIN farms f ON b.farm_id = f.farm_id
-            WHERE (? = 'ALL' OR al.state = ?)
-              AND (? = 'ALL' OR al.type = ?)
-              AND (
-                  ? = '%%'
-                  OR LOWER(al.alert_id) LIKE ?
-                  OR LOWER(COALESCE(al.animal_id, '')) LIKE ?
-                  OR LOWER(COALESCE(b.code, al.barn_id, '')) LIKE ?
-                  OR LOWER(al.evidence::text) LIKE ?
-              )
-        """ + scopeClause + """
-            ORDER BY al.raised_at DESC
-            LIMIT 100
-        """;
-
-        var alerts = jdbcTemplate.queryForList(sql, queryParams.toArray());
-
+        // the counters at the top of the page ignore the filters but respect who is asking
+        StringBuilder scopeClause = new StringBuilder();
+        List<Object> scopeParams = new ArrayList<>();
+        ReportQueries.scope(scopeClause, scopeParams, visible, "b");
         String baseCountSql = "SELECT COUNT(*) FROM alerts al LEFT JOIN barns b ON al.barn_id = b.barn_id WHERE 1=1 " + scopeClause;
         Object[] sArgs = scopeParams.toArray();
 
@@ -131,6 +89,9 @@ public class AlertController {
 
         return ResponseEntity.ok(Map.of(
                 "alerts", alerts,
+                "total", total != null ? total : alerts.size(),
+                "page", safePage,
+                "size", safeSize,
                 "stats", Map.of(
                         "openCount", openCount != null ? openCount : 0,
                         "acknowledgedCount", ackCount != null ? ackCount : 0,
