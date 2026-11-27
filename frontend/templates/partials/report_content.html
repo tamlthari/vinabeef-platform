@@ -308,7 +308,9 @@
       </tbody>
     </table>
   </div>
-  {% endif %} {% if report_type in ('passages', 'reads') and total_pages > 1 %}
+  {% elif report_type in ('vaccinations', 'treatments', 'history', 'quarantine') %}
+  {% include "partials/report_health.html" %}
+  {% endif %} {% if report_type in ('passages', 'reads', 'vaccinations', 'treatments', 'history', 'quarantine') and total_pages > 1 %}
   <div
     class="flex flex-wrap justify-between items-center gap-3 text-xs text-gray-500"
   >

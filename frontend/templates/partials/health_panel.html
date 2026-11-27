@@ -1,0 +1,147 @@
+{% from "partials/macros.html" import health_badge, presence_badge, record_badge, record_what %}
+{# Dashboard: animal health. Rendered whole each time (outerHTML) and carries its own refresh address, so the tab stays. #}
+<section id="health-panel"
+         hx-get="/htmx/health-panel?tab={{ tab }}"
+         hx-trigger="every 15s"
+         hx-swap="outerHTML"
+         class="bg-white border border-gray-200 rounded-lg shadow-sm">
+    <div class="flex flex-wrap justify-between items-start gap-3 px-6 pt-5">
+        <div>
+            <h2 class="text-base font-bold text-gray-800">Animal Health</h2>
+            <p class="text-xs text-gray-500">Quarantine, treatment and vaccination records. The counters on the tabs are the last {{ summary.recentDays or 7 }} days.</p>
+        </div>
+        <button type="button"
+                hx-get="/htmx/health-panel?tab={{ tab }}" hx-target="#health-panel" hx-swap="outerHTML"
+                class="px-3 py-1.5 text-xs font-semibold text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50">Refresh</button>
+    </div>
+
+    {% if error %}
+    <div class="m-6 px-5 py-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold">{{ error }}</div>
+    {% else %}
+    {% set now = summary.now or {} %}
+    {% set recent = summary.recent or {} %}
+
+    <!-- The numbers that matter first: how many animals are in quarantine or under treatment right now -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 px-6 pt-4">
+        <button type="button" hx-get="/htmx/health-panel?tab=now" hx-target="#health-panel" hx-swap="outerHTML" hx-sync="#health-panel:replace"
+                class="text-left rounded-lg border p-4 {{ 'border-rose-200 bg-rose-50 hover:bg-rose-100' if now.quarantineNow else 'border-gray-200 bg-white hover:bg-gray-50' }}">
+            <span class="text-[10px] uppercase tracking-wider text-gray-500">In quarantine now</span>
+            <div class="text-2xl font-extrabold font-mono {{ 'text-rose-700' if now.quarantineNow else 'text-gray-800' }}">{{ now.quarantineNow or 0 }}</div>
+            <div class="text-[11px] {{ 'text-rose-700 font-semibold' if now.quarantineAtPasture else 'text-gray-400' }}">
+                {% if now.quarantineAtPasture %}{{ now.quarantineAtPasture }} at pasture{% else %}none at pasture{% endif %}
+            </div>
+        </button>
+        <a href="/herd?health=UNDER_TREATMENT"
+           class="rounded-lg border p-4 {{ 'border-amber-200 bg-amber-50 hover:bg-amber-100' if now.treatmentNow else 'border-gray-200 bg-white hover:bg-gray-50' }}">
+            <span class="text-[10px] uppercase tracking-wider text-gray-500">Under treatment now</span>
+            <div class="text-2xl font-extrabold font-mono {{ 'text-amber-700' if now.treatmentNow else 'text-gray-800' }}">{{ now.treatmentNow or 0 }}</div>
+            <div class="text-[11px] text-gray-400">open in the Herd list</div>
+        </a>
+        <button type="button" hx-get="/htmx/health-panel?tab=vaccination" hx-target="#health-panel" hx-swap="outerHTML" hx-sync="#health-panel:replace"
+                class="text-left rounded-lg border border-gray-200 bg-white hover:bg-gray-50 p-4">
+            <span class="text-[10px] uppercase tracking-wider text-gray-500">Vaccinations</span>
+            <div class="text-2xl font-extrabold font-mono text-emerald-700">{{ recent.vaccinations or 0 }}</div>
+            <div class="text-[11px] text-gray-400">last {{ summary.recentDays or 7 }} days</div>
+        </button>
+        <button type="button" hx-get="/htmx/health-panel?tab=all" hx-target="#health-panel" hx-swap="outerHTML" hx-sync="#health-panel:replace"
+                class="text-left rounded-lg border border-gray-200 bg-white hover:bg-gray-50 p-4">
+            <span class="text-[10px] uppercase tracking-wider text-gray-500">Health events</span>
+            <div class="text-2xl font-extrabold font-mono text-gray-800">{{ recent.events or 0 }}</div>
+            <div class="text-[11px] text-gray-400">last {{ summary.recentDays or 7 }} days</div>
+        </button>
+    </div>
+
+    <!-- Tabs -->
+    <div class="flex flex-wrap gap-1 px-6 pt-5 border-b border-gray-200" role="tablist">
+        {% for name, label in tabs %}
+        <button type="button" role="tab" aria-selected="{{ 'true' if name == tab else 'false' }}"
+                hx-get="/htmx/health-panel?tab={{ name }}" hx-target="#health-panel" hx-swap="outerHTML" hx-sync="#health-panel:replace"
+                class="px-3 py-2 text-xs font-semibold -mb-px border-b-2 {{ 'border-blue-600 text-blue-700' if name == tab else 'border-transparent text-gray-500 hover:text-gray-800' }}">
+            {{ label }}
+            <span class="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-mono {{ 'bg-rose-100 text-rose-700' if name == 'now' and tab_counts[name] else 'bg-gray-100 text-gray-600' }}">{{ tab_counts[name] }}</span>
+        </button>
+        {% endfor %}
+    </div>
+
+    <div class="overflow-x-auto px-2 pb-2">
+        {% if tab == 'now' %}
+        <table class="w-full text-left text-xs text-gray-700">
+            <thead class="text-gray-500 border-b border-gray-100">
+                <tr>
+                    <th class="px-4 py-2.5 font-semibold">Animal</th>
+                    <th class="px-4 py-2.5 font-semibold">Barn</th>
+                    {% if is_global %}<th class="px-4 py-2.5 font-semibold">Facility</th>{% endif %}
+                    <th class="px-4 py-2.5 font-semibold">Where</th>
+                    <th class="px-4 py-2.5 font-semibold">Since</th>
+                    <th class="px-4 py-2.5 font-semibold">Reason</th>
+                    <th class="px-4 py-2.5 font-semibold">Recorded by</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100">
+                {% for r in rows %}
+                <tr class="hover:bg-blue-50/40">
+                    <td class="px-4 py-2.5 font-bold"><a class="text-blue-700 hover:underline" href="/herd/{{ r.animal_id | urlencode }}">{{ r.animal_id }}</a></td>
+                    <td class="px-4 py-2.5 font-mono">{{ r.barn_code or '-' }}</td>
+                    {% if is_global %}<td class="px-4 py-2.5">{{ r.farm_name or '' }}</td>{% endif %}
+                    <td class="px-4 py-2.5">{{ presence_badge(r.presence_status) }}</td>
+                    <td class="px-4 py-2.5 whitespace-nowrap">
+                        {% if r.since %}{{ r.since | localtime('%Y-%m-%d') }} <span class="text-gray-400">&middot; {{ r.days or 0 }} day{{ '' if r.days == 1 else 's' }}</span>
+                        {% else %}<span class="text-gray-400">no record</span>{% endif %}
+                    </td>
+                    <td class="px-4 py-2.5">{{ r.title or r.quarantine_notes or '-' }}{% if r.notes %}<div class="text-[11px] text-gray-400">{{ r.notes }}</div>{% endif %}</td>
+                    <td class="px-4 py-2.5 text-gray-500">{{ r.administered_by or '' }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="7" class="py-10 text-center text-gray-400">No animals are in quarantine.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <table class="w-full text-left text-xs text-gray-700">
+            <thead class="text-gray-500 border-b border-gray-100">
+                <tr>
+                    <th class="px-4 py-2.5 font-semibold">Time</th>
+                    <th class="px-4 py-2.5 font-semibold">Animal</th>
+                    <th class="px-4 py-2.5 font-semibold">Record</th>
+                    <th class="px-4 py-2.5 font-semibold">What</th>
+                    <th class="px-4 py-2.5 font-semibold">Barn</th>
+                    {% if is_global %}<th class="px-4 py-2.5 font-semibold">Facility</th>{% endif %}
+                    <th class="px-4 py-2.5 font-semibold">Animal now</th>
+                    <th class="px-4 py-2.5 font-semibold">By</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100">
+                {% for e in rows %}
+                <tr class="hover:bg-blue-50/40">
+                    <td class="px-4 py-2.5 font-mono text-gray-500 whitespace-nowrap">{{ e.event_at | localtime('%Y-%m-%d %H:%M') }}</td>
+                    <td class="px-4 py-2.5 font-bold"><a class="text-blue-700 hover:underline" href="/herd/{{ e.animal_id | urlencode }}">{{ e.animal_id }}</a></td>
+                    <td class="px-4 py-2.5">
+                        {{ record_badge(e.record_type) }}
+                        {% if e.resulting_status == 'QUARANTINE' and e.record_type != 'QUARANTINE' %}<span class="ml-1 text-[10px] font-semibold text-rose-700">&rarr; quarantine</span>{% endif %}
+                    </td>
+                    <td class="px-4 py-2.5">{{ record_what(e) }}{% if e.notes %}<div class="text-[11px] text-gray-400">{{ e.notes }}</div>{% endif %}</td>
+                    <td class="px-4 py-2.5 font-mono">{{ e.barn_code or '-' }}</td>
+                    {% if is_global %}<td class="px-4 py-2.5">{{ e.farm_name or '' }}</td>{% endif %}
+                    <td class="px-4 py-2.5">{{ health_badge(e.current_status) }}</td>
+                    <td class="px-4 py-2.5 text-gray-500">{{ e.administered_by or '' }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="8" class="py-10 text-center text-gray-400">No such events recorded yet.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+    </div>
+
+    <div class="flex flex-wrap items-center justify-between gap-3 px-6 py-3 border-t border-gray-100 text-xs">
+        <span class="text-gray-400">Newest 12 shown.</span>
+        <span class="flex items-center gap-4">
+            {% if tab == 'now' %}<a href="/herd?health=QUARANTINE" class="font-semibold text-blue-700 hover:underline">All quarantined animals in the Herd list</a>{% endif %}
+            {% if can_report %}
+            {% set report = {'now': 'quarantine', 'quarantine': 'history&record_type=QUARANTINE', 'treatment': 'treatments', 'vaccination': 'vaccinations', 'all': 'history'}[tab] %}
+            <a href="/reports?type={{ report }}" class="font-semibold text-blue-700 hover:underline">Open the full report</a>
+            {% endif %}
+        </span>
+    </div>
+    {% endif %}
+</section>

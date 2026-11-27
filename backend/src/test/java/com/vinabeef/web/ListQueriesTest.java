@@ -112,4 +112,42 @@ class ListQueriesTest {
 
         assertTrue(ListQueries.recentMovements(ReportQueries.Scope.NONE, 15).sql().contains("1 = 0"));
     }
+
+    // ------------------------------------------------------------------------------------------------ column filters
+
+    @Test
+    void cattleFiltersAreBoundAndApplyTogether() {
+        var f = ListQueries.CattleFilter.parse("FARM-DAK-LAK", "BARN-DL-01,BARN-DL-02", "UNDER_TREATMENT,QUARANTINE",
+                "OUT_PASTURE", "with", "none", "seen");
+        var q = ListQueries.cattlePage(ReportQueries.Scope.farm("FARM-DAK-LAK"), "vb", f, "barn", "asc", 100, 0);
+        assertBound(q);
+        assertBound(ListQueries.cattleCount(ReportQueries.Scope.ALL, "", f));
+        for (String part : new String[]{"b.farm_id = ?", "a.assigned_barn_id IN (?, ?)", "health_status, 'HEALTHY') IN (?, ?)",
+                "presence_status, 'OUT_PASTURE') IN (?)", "NOT EXISTS (SELECT 1 FROM health_records", "EXISTS (SELECT 1 FROM movements"}) {
+            assertTrue(q.sql().contains(part), part);
+        }
+        // the person's own farm comes first in the parameters: the filter can only narrow
+        assertEquals("FARM-DAK-LAK", q.params().get(0));
+        assertEquals("FARM-DAK-LAK", q.params().get(1));
+    }
+
+    @Test
+    void noFilterLeavesTheOldStatementUnchanged() {
+        assertEquals(ListQueries.cattlePage(ReportQueries.Scope.ALL, "x", "id", "asc", 100, 0).sql(),
+                ListQueries.cattlePage(ReportQueries.Scope.ALL, "x", ListQueries.CattleFilter.NONE, "id", "asc", 100, 0).sql());
+        assertTrue(ListQueries.CattleFilter.parse("ALL", " , ", "nope", "nope", "nope", "nope", "nope").isEmpty());
+    }
+
+    @Test
+    void readerFiltersAreBoundAndUseTheSuppliedClock() {
+        var now = Instant.parse("2026-11-21T10:00:00Z");
+        var f = ListQueries.ReaderFilter.parse("FARM-DAK-LAK", "BARN-DL-01", "in_only", "paired", "silent", "never_used");
+        var q = ListQueries.readers(ReportQueries.Scope.ALL, "dr", f, "last_seen", "desc", DAY_START, DAY_END, now);
+        assertBound(q);
+        assertTrue(q.params().contains(java.sql.Timestamp.from(now.minusSeconds(86_400))));
+        assertTrue(q.sql().contains("g.direction_mode = ?"));
+        assertTrue(q.sql().contains("ls.last_seen IS NULL OR ls.last_seen < ?"));
+        assertTrue(q.sql().endsWith("ORDER BY last_seen DESC NULLS LAST, g.gate_id ASC"));
+        assertTrue(ListQueries.ReaderFilter.parse(null, "", "x", "x", "x", "x").isEmpty());
+    }
 }

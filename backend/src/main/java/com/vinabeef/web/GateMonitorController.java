@@ -86,17 +86,7 @@ public class GateMonitorController {
     }
 
     private ReportQueries.Scope currentReportScope() {
-        var s = currentScope.getCurrentScope();
-        if (s.isGlobal()) {
-            return ReportQueries.Scope.ALL;
-        }
-        if (s.isFarmScoped()) {
-            return ReportQueries.Scope.farm(s.farmId());
-        }
-        if (s.isBarnScoped()) {
-            return ReportQueries.Scope.barns(s.barnIds());
-        }
-        return ReportQueries.Scope.NONE;
+        return ReportQueries.Scope.of(currentScope.getCurrentScope());
     }
 
     @PostMapping("/gates/simulate-read")

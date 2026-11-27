@@ -65,15 +65,38 @@ def build_page_range(current_page: int, total_pages: int) -> list:
     return [1, "...", current_page - 1, current_page, current_page + 1, "...", total_pages]
 
 
+# The column filters of the list pages. The form field and the page's query string use these names; the backend gets
+# camelCase for facility and barn (farmId, barnId). A blank filter is not sent.
+HERD_FILTERS = ("farm", "barn", "health", "presence", "tags", "vaccination", "passes")
+READER_FILTERS = ("farm", "barn", "direction", "pairing", "activity", "passes")
+BACKEND_FILTER_NAMES = {"farm": "farmId", "barn": "barnId"}
+
+
+def pick_filters(names, source) -> dict:
+    """The filters of a list page out of a query string or a form; a missing one is empty text.
+    Words (health, presence, ...) are made upper case so a typed link still matches the drop-downs; facility and barn are ids and keep their case."""
+    out = {}
+    for n in names:
+        v = str(source.get(n) or "").strip()
+        out[n] = v if n in ("farm", "barn") else v.upper()
+    return out
+
+
+def backend_filters(filters: dict) -> dict:
+    """What the backend is asked for: its own names for facility and barn, and no blank filter."""
+    return {BACKEND_FILTER_NAMES.get(k, k): v for k, v in (filters or {}).items() if v}
+
+
 async def fetch_paginated_cattle(client: httpx.AsyncClient, headers: dict, q: str = "", page: int = 1, size: int = 100,
-                                 sort: str = "", dir: str = "") -> dict:
+                                 sort: str = "", dir: str = "", filters: dict | None = None) -> dict:
     page = max(1, page)
     size = 100
     sort_key, sort_dir = sort, dir
+    filters = {n: (filters or {}).get(n, "") for n in HERD_FILTERS}
     try:
         res = await client.get(
             f"{BACKEND_BASE_URL}/cattle",
-            params={"q": q, "page": page, "size": size, "sort": sort, "dir": dir},
+            params={"q": q, "page": page, "size": size, "sort": sort, "dir": dir, **backend_filters(filters)},
             headers=headers
         )
         if res.status_code == 200:
@@ -107,7 +130,9 @@ async def fetch_paginated_cattle(client: httpx.AsyncClient, headers: dict, q: st
         "page_range": build_page_range(page, total_pages),
         "q": q,
         "sort": sort_key,
-        "dir": sort_dir
+        "dir": sort_dir,
+        "filters": filters,
+        "filters_active": any(filters.values()),
     }
 
 
@@ -399,6 +424,22 @@ async def login_page(request: Request):
     return templates.TemplateResponse("login.html", {"request": request, "error": None})
 
 
+async def assigned_barn_codes(client: httpx.AsyncClient, login: dict) -> list:
+    """The codes of the barns a supervisor is assigned to. The login answer carries their keys, which are not what the rest of
+    the portal shows; a barn whose code cannot be found keeps its key, and a failure leaves the list empty (the header then falls back)."""
+    ids = [i for i in (login.get("assignedBarns") or []) if isinstance(i, str)]
+    if not ids or not login.get("token"):
+        return []
+    try:
+        res = await client.get(f"{BACKEND_BASE_URL}/barns", headers={"Authorization": f"Bearer {login['token']}"})
+        if res.status_code != 200:
+            return []
+        code_of = {b.get("barnId"): b.get("code") for b in res.json() if isinstance(b, dict)}
+    except (httpx.HTTPError, ValueError):
+        return []
+    return [code_of.get(i) or i for i in ids]
+
+
 @app.post("/login")
 async def login_submit(request: Request, username: str = Form(...), password: str = Form(...)):
     async with httpx.AsyncClient(timeout=5.0) as client:
@@ -415,6 +456,7 @@ async def login_submit(request: Request, username: str = Form(...), password: st
         data = res.json()
         farm_id = data.get("farmId", "ALL")
         farm_scopes = data.get("farm_scopes") or ([farm_id] if farm_id and farm_id != "ALL" else [])
+        barn_codes = await assigned_barn_codes(client, data)
 
         request.session["user"] = {
             "username": data.get("username", username),
@@ -423,6 +465,7 @@ async def login_submit(request: Request, username: str = Form(...), password: st
             "farmId": farm_id,
             "farm_scopes": farm_scopes,
             "assignedBarns": data.get("assignedBarns", []),
+            "assignedBarnCodes": barn_codes,
             "token": data.get("token")
         }
     return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
@@ -560,6 +603,58 @@ async def htmx_movements(request: Request, user: dict = Depends(get_current_user
     )
 
 
+# The dashboard's animal-health panel. Each tab is one list; the numbers beside the tab names are the events of the last days.
+HEALTH_TABS = (
+    ("now", "In quarantine now"),
+    ("quarantine", "Quarantine events"),
+    ("treatment", "Treatments"),
+    ("vaccination", "Vaccinations"),
+    ("all", "All health events"),
+)
+HEALTH_TAB_COUNT = {"now": ("now", "quarantineNow"), "quarantine": ("recent", "quarantineEvents"),
+                    "treatment": ("recent", "treatments"), "vaccination": ("recent", "vaccinations"), "all": ("recent", "events")}
+
+
+def pick_health_tab(tab: str, summary: dict) -> str:
+    """The tab to show. 'auto' (the first load) opens on the animals in quarantine when there are any, else on all events."""
+    names = [t for t, _ in HEALTH_TABS]
+    if tab in names:
+        return tab
+    return "now" if (summary.get("now") or {}).get("quarantineNow", 0) else "all"
+
+
+@app.get("/htmx/health-panel", response_class=HTMLResponse)
+async def htmx_health_panel(request: Request, tab: str = "auto", user: dict = Depends(get_current_user)):
+    """Dashboard: animals in quarantine / under treatment now, and the newest vaccination, treatment and quarantine events."""
+    if not user:
+        return HTMLResponse("<div class='text-rose-500 p-4 text-xs'>Session expired. Please sign in again.</div>", status_code=401)
+
+    headers = get_auth_headers(user)
+    ctx = {"request": request, "user": user, "tabs": HEALTH_TABS, "tab": "all", "summary": {}, "rows": [], "error": "",
+           "tab_counts": {}, "is_global": user.get("role") in ("SYSTEM_ADMIN", "EXECUTIVE"),
+           "can_report": user.get("role") in ("SYSTEM_ADMIN", "EXECUTIVE", "FARM_MANAGER")}
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            res = await client.get(f"{BACKEND_BASE_URL}/health/summary", headers=headers)
+            res.raise_for_status()
+            summary = res.json()
+            tab = pick_health_tab(tab, summary)
+            if tab == "now":
+                res = await client.get(f"{BACKEND_BASE_URL}/health/quarantine", params={"status": "QUARANTINE", "limit": 12}, headers=headers)
+            else:
+                kind = {"quarantine": "QUARANTINE", "treatment": "TREATMENT", "vaccination": "VACCINATION", "all": "ALL"}[tab]
+                res = await client.get(f"{BACKEND_BASE_URL}/health/events", params={"kind": kind, "limit": 12}, headers=headers)
+            res.raise_for_status()
+            rows = res.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        ctx["error"] = f"Animal health could not be loaded: {exc}"
+        return templates.TemplateResponse("partials/health_panel.html", ctx)     # 200: htmx does not show an error status, and the next poll retries
+
+    ctx.update({"tab": tab, "summary": summary, "rows": rows,
+                "tab_counts": {name: (summary.get(group) or {}).get(key, 0) for name, (group, key) in HEALTH_TAB_COUNT.items()}})
+    return templates.TemplateResponse("partials/health_panel.html", ctx)
+
+
 def summarize_audit(entry: dict) -> dict:
     """Input / output columns of the audit table, made from the stored `details` JSON (see AuditLoggingAspect).
     Only the request is stored, so the output column states the outcome and, for a failure, the error."""
@@ -657,7 +752,11 @@ async def htmx_ingestion_status(request: Request, user: dict = Depends(get_curre
     )
 
 
-REPORT_FILTERS = ("farm_id", "barn_id", "reader", "animal", "direction", "method", "event", "result", "preset")
+REPORT_FILTERS = ("farm_id", "barn_id", "reader", "animal", "direction", "method", "event", "result", "preset",
+                  "text", "outcome", "record_type", "current_status", "presence")
+
+# The health reports, by the word that ends their address on the backend.
+HEALTH_REPORTS = ("vaccinations", "treatments", "history", "quarantine")
 
 
 def report_params(type: str, filters: dict, date_from: str, date_to: str, sort: str, dir: str, page: int, size: int) -> tuple:
@@ -671,6 +770,17 @@ def report_params(type: str, filters: dict, date_from: str, date_to: str, sort: 
         return "/reports/reads", {**common, "barnId": filters["barn_id"], "reader": filters["reader"], "animal": filters["animal"],
                                   "event": filters["event"], "result": filters["result"],
                                   "sort": sort, "dir": dir, "page": page, "size": size}
+    if type == "quarantine":
+        # who is in quarantine (or under treatment) now: a status, so there is no period
+        return "/reports/health/quarantine", {"farmId": filters["farm_id"], "barnId": filters["barn_id"], "animal": filters["animal"],
+                                              "status": filters["current_status"], "presence": filters["presence"],
+                                              "sort": sort, "dir": dir, "page": page, "size": size}
+    if type in HEALTH_REPORTS:
+        return f"/reports/health/{type}", {"farmId": filters["farm_id"], "barnId": filters["barn_id"], "animal": filters["animal"],
+                                           "text": filters["text"], "status": filters["outcome"],
+                                           "recordType": filters["record_type"] if type == "history" else "",
+                                           "preset": filters["preset"] or "30d", "from": date_from, "to": date_to,
+                                           "sort": sort, "dir": dir, "page": page, "size": size}
     return "/reports/herd-balance", common
 
 
@@ -680,6 +790,7 @@ async def htmx_report_data(
     type: str = "herd",
     farm_id: str = "", barn_id: str = "", reader: str = "", animal: str = "",
     direction: str = "", method: str = "", event: str = "", result: str = "", preset: str = "today",
+    text: str = "", outcome: str = "", record_type: str = "", current_status: str = "", presence: str = "",
     date_from: str = Query("", alias="from"), date_to: str = Query("", alias="to"),
     sort: str = "", dir: str = "", page: int = 1,
     user: dict = Depends(get_current_user)
@@ -690,11 +801,12 @@ async def htmx_report_data(
         msg = format_403_security_message(user, "access Reporting & Regulatory Compliance", request.url.path)
         return HTMLResponse(render_403_alert_html(msg), status_code=403)
 
-    type = type if type in ("herd", "passages", "reads") else "herd"
+    type = type if type in ("herd", "passages", "reads", *HEALTH_REPORTS) else "herd"
     page = max(1, page)
     size = 25
     filters = {"farm_id": farm_id, "barn_id": barn_id, "reader": reader.strip(), "animal": animal.strip(), "direction": direction,
-               "method": method, "event": event.strip(), "result": result, "preset": preset}
+               "method": method, "event": event.strip(), "result": result, "preset": preset,
+               "text": text.strip(), "outcome": outcome, "record_type": record_type, "current_status": current_status, "presence": presence}
     path, params = report_params(type, filters, date_from, date_to, sort, dir, page, size)
 
     ctx = {"request": request, "report_type": type, "tz": DISPLAY_TIMEZONE, "error": "", "period_label": "", "export_url": ""}
@@ -723,35 +835,49 @@ async def htmx_report_data(
         ctx.update({
             "items": body.get("items", []), "total": total, "in_count": int(body.get("inCount", 0)),
             "out_count": int(body.get("outCount", 0)), "with_movement": int(body.get("withMovement", 0)),
+            "animals": int(body.get("animals", 0)), "quarantine_count": int(body.get("quarantineCount", 0)),
+            "treatment_count": int(body.get("treatmentCount", 0)), "at_pasture_count": int(body.get("atPastureCount", 0)),
             "page": page, "total_pages": total_pages, "page_range": build_page_range(page, total_pages),
             "start_item": ((page - 1) * size + 1) if total else 0, "end_item": min(page * size, total),
             "sort": body.get("sort", ""), "dir": body.get("dir", ""),
         })
-        if type == "passages":
-            qs = {k: v for k, v in {**filters, "from": date_from, "to": date_to}.items() if v}
+        if type == "passages" or type in HEALTH_REPORTS:
+            qs = {k: v for k, v in {**filters, "type": type, "from": date_from, "to": date_to}.items() if v}
             ctx["export_url"] = "/reports/export?" + "&".join(f"{k}={quote(str(v))}" for k, v in qs.items())
     return templates.TemplateResponse("partials/report_content.html", ctx)
 
 
 @app.get("/reports/export")
 async def reports_export(
+    type: str = "passages",
     farm_id: str = "", barn_id: str = "", reader: str = "", animal: str = "", direction: str = "", method: str = "",
+    text: str = "", outcome: str = "", record_type: str = "", current_status: str = "", presence: str = "",
     preset: str = "today", date_from: str = Query("", alias="from"), date_to: str = Query("", alias="to"),
     user: dict = Depends(get_current_user)
 ):
-    """CSV of the gate passes of the current filters (the file the backend builds; nothing is rebuilt here)."""
+    """CSV of the current filters of the gate passages or of a health report (the file the backend builds; nothing is rebuilt here)."""
     if not user:
         return RedirectResponse(url="/login")
     if user.get("role") not in ["EXECUTIVE", "FARM_MANAGER", "SYSTEM_ADMIN"]:
         raise HTTPException(status_code=403, detail="Access denied: Insufficient privileges for reporting.")
+    if type in HEALTH_REPORTS:
+        filters = {"farm_id": farm_id, "barn_id": barn_id, "reader": "", "animal": animal, "direction": "", "method": "", "event": "",
+                   "result": "", "preset": preset, "text": text, "outcome": outcome, "record_type": record_type,
+                   "current_status": current_status, "presence": presence}
+        path, params = report_params(type, filters, date_from, date_to, "", "", 1, 25)
+        for paging in ("sort", "dir", "page", "size"):
+            params.pop(paging, None)
+        url, fallback = f"{BACKEND_BASE_URL}{path}/export", f'attachment; filename="vinabeef_health_{type}.csv"'
+    else:
+        params = {"farmId": farm_id, "barnId": barn_id, "reader": reader, "animal": animal, "direction": direction,
+                  "method": method, "preset": preset or "today", "from": date_from, "to": date_to}
+        url, fallback = f"{BACKEND_BASE_URL}/reports/passages/export", 'attachment; filename="vinabeef_gate_passages.csv"'
     async with httpx.AsyncClient(timeout=60.0) as client:
-        res = await client.get(f"{BACKEND_BASE_URL}/reports/passages/export", headers=get_auth_headers(user), params={
-            "farmId": farm_id, "barnId": barn_id, "reader": reader, "animal": animal, "direction": direction,
-            "method": method, "preset": preset or "today", "from": date_from, "to": date_to})
+        res = await client.get(url, headers=get_auth_headers(user), params=params)
     if res.status_code != 200:
         raise HTTPException(status_code=res.status_code, detail=extract_backend_error(res, "The export failed."))
     return Response(content=res.content, media_type="text/csv; charset=utf-8",
-                    headers={"Content-Disposition": res.headers.get("content-disposition", 'attachment; filename="vinabeef_gate_passages.csv"')})
+                    headers={"Content-Disposition": res.headers.get("content-disposition", fallback)})
 
 
 @app.post("/htmx/transfer-action", response_class=HTMLResponse)
@@ -807,24 +933,36 @@ async def htmx_transfer_action(
 
 # ================= CATTLE & RFID TAG MANAGEMENT =================
 
+async def fetch_scoped_farms(client: httpx.AsyncClient, headers: dict, user: dict) -> list:
+    """Facilities with their barns, limited to what this person may see (for the facility / barn filters)."""
+    try:
+        res = await client.get(f"{BACKEND_BASE_URL}/facilities/distribution", headers=headers)
+        return filter_farms_by_scope(res.json(), user) if res.status_code == 200 else []
+    except Exception:
+        return []
+
+
 @app.get("/herd", response_class=HTMLResponse)
 async def herd_page(request: Request, page: int = 1, q: str = "", sort: str = "", dir: str = "", user: dict = Depends(get_current_user)):
     if not user:
         return RedirectResponse(url="/login")
 
     headers = get_auth_headers(user)
+    filters = pick_filters(HERD_FILTERS, request.query_params)      # a bookmark or a dashboard link can open the list already filtered
     async with httpx.AsyncClient(timeout=10.0) as client:
-        pagination = await fetch_paginated_cattle(client, headers, q=q, page=page, size=100, sort=sort, dir=dir)
+        pagination = await fetch_paginated_cattle(client, headers, q=q, page=page, size=100, sort=sort, dir=dir, filters=filters)
         try:
             barns_res = await client.get(f"{BACKEND_BASE_URL}/barns", headers=headers)
             barns = filter_barns_by_scope(barns_res.json() if barns_res.status_code == 200 else [], user)
         except Exception:
             barns = []
+        farms = await fetch_scoped_farms(client, headers, user)
 
     return templates.TemplateResponse("herd.html", {
         "request": request,
         "user": user,
         "barns": barns,
+        "farms": farms,
         **pagination
     })
 
@@ -832,8 +970,9 @@ async def herd_page(request: Request, page: int = 1, q: str = "", sort: str = ""
 @app.get("/htmx/herd-list", response_class=HTMLResponse)
 async def htmx_herd_list(request: Request, page: int = 1, q: str = "", sort: str = "", dir: str = "", user: dict = Depends(get_current_user)):
     headers = get_auth_headers(user) if user else {}
+    filters = pick_filters(HERD_FILTERS, request.query_params)
     async with httpx.AsyncClient(timeout=10.0) as client:
-        pagination = await fetch_paginated_cattle(client, headers, q=q, page=page, size=100, sort=sort, dir=dir)
+        pagination = await fetch_paginated_cattle(client, headers, q=q, page=page, size=100, sort=sort, dir=dir, filters=filters)
 
     return templates.TemplateResponse("partials/herd_table_content.html", {
         "request": request,
@@ -841,6 +980,16 @@ async def htmx_herd_list(request: Request, page: int = 1, q: str = "", sort: str
         "oob_update": True,
         **pagination
     })
+
+
+async def herd_view_from_form(request: Request) -> dict:
+    """The search, order and filters the herd list had on screen, sent along with a create or remove so the list keeps its view."""
+    try:
+        form = await request.form()
+    except Exception:
+        form = {}
+    return {"q": str(form.get("q") or ""), "sort": str(form.get("sort") or ""), "dir": str(form.get("dir") or ""),
+            "filters": pick_filters(HERD_FILTERS, form)}
 
 
 @app.post("/htmx/herd/create", response_class=HTMLResponse)
@@ -878,7 +1027,8 @@ async def htmx_herd_create(
             err = extract_backend_error(res, "Failed to register cattle")
             return f"<div class='p-4 rounded bg-red-50 border border-red-200 text-red-700 text-xs'>{err}</div>"
 
-        pagination = await fetch_paginated_cattle(client, headers, q="", page=1, size=100)
+        view = await herd_view_from_form(request)
+        pagination = await fetch_paginated_cattle(client, headers, page=1, size=100, **view)
 
     return templates.TemplateResponse("partials/herd_table_content.html", {
         "request": request,
@@ -909,7 +1059,8 @@ async def htmx_herd_delete(request: Request, animal_id: str, user: dict = Depend
             message, kind = extract_backend_error(res, "Failed to remove cattle"), "error"
         else:
             message = describe_removal(res, "Cattle", animal_id)
-        pagination = await fetch_paginated_cattle(client, headers, q="", page=1, size=100)
+        view = await herd_view_from_form(request)
+        pagination = await fetch_paginated_cattle(client, headers, page=1, size=100, **view)
 
     return templates.TemplateResponse("partials/herd_table_content.html", {
         "request": request,
@@ -1167,10 +1318,12 @@ async def cattle_download_dossier(animal_id: str, user: dict = Depends(get_curre
 
 # ================= GATE READER MANAGEMENT =================
 
-async def fetch_readers(client: httpx.AsyncClient, headers: dict, user: dict, q: str = "", sort: str = "", dir: str = "") -> dict:
+async def fetch_readers(client: httpx.AsyncClient, headers: dict, user: dict, q: str = "", sort: str = "", dir: str = "",
+                        filters: dict | None = None) -> dict:
     """Readers in the order the server applied (newest first by default), with the order for the table headers."""
     readers, sort_key, sort_dir = [], sort, dir
-    res = await client.get(f"{BACKEND_BASE_URL}/readers", params={"q": q, "sort": sort, "dir": dir}, headers=headers)
+    filters = {n: (filters or {}).get(n, "") for n in READER_FILTERS}
+    res = await client.get(f"{BACKEND_BASE_URL}/readers", params={"q": q, "sort": sort, "dir": dir, **backend_filters(filters)}, headers=headers)
     if res.status_code == 401:
         raise HTTPException(status_code=401, detail="Session expired")
     if res.status_code == 403:
@@ -1179,7 +1332,8 @@ async def fetch_readers(client: httpx.AsyncClient, headers: dict, user: dict, q:
         readers = filter_readers_by_scope(res.json(), user)
         sort_key = res.headers.get("X-Sort-Key", sort_key)
         sort_dir = res.headers.get("X-Sort-Dir", sort_dir)
-    return {"readers": readers, "sort": sort_key, "dir": sort_dir, "q": q}
+    return {"readers": readers, "sort": sort_key, "dir": sort_dir, "q": q,
+            "filters": filters, "filters_active": any(filters.values())}
 
 
 @app.get("/readers", response_class=HTMLResponse)
@@ -1188,26 +1342,29 @@ async def readers_page(request: Request, q: str = "", sort: str = "", dir: str =
         return RedirectResponse(url="/login")
 
     headers = get_auth_headers(user)
+    filters = pick_filters(READER_FILTERS, request.query_params)
     async with httpx.AsyncClient(timeout=6.0) as client:
         try:
-            listing = await fetch_readers(client, headers, user, q, sort, dir)
+            listing = await fetch_readers(client, headers, user, q, sort, dir, filters)
         except HTTPException as exc:
             if exc.status_code == 401:
                 return RedirectResponse(url="/login")
             raise
         except Exception:
-            listing = {"readers": [], "sort": sort, "dir": dir, "q": q}
+            listing = {"readers": [], "sort": sort, "dir": dir, "q": q, "filters": filters, "filters_active": any(filters.values())}
 
         try:
             barns_res = await client.get(f"{BACKEND_BASE_URL}/barns", headers=headers)
             barns = filter_barns_by_scope(barns_res.json() if barns_res.status_code == 200 else [], user)
         except Exception:
             barns = []
+        farms = await fetch_scoped_farms(client, headers, user)
 
     return templates.TemplateResponse("readers.html", {
         "request": request,
         "user": user,
         "barns": barns,
+        "farms": farms,
         **listing
     })
 
@@ -1215,11 +1372,12 @@ async def readers_page(request: Request, q: str = "", sort: str = "", dir: str =
 @app.get("/htmx/readers-list", response_class=HTMLResponse)
 async def htmx_readers_list(request: Request, q: str = "", sort: str = "", dir: str = "", user: dict = Depends(get_current_user)):
     headers = get_auth_headers(user) if user else {}
+    filters = pick_filters(READER_FILTERS, request.query_params)
     async with httpx.AsyncClient(timeout=6.0) as client:
         try:
-            listing = await fetch_readers(client, headers, user, q, sort, dir)
+            listing = await fetch_readers(client, headers, user, q, sort, dir, filters)
         except Exception:
-            listing = {"readers": [], "sort": sort, "dir": dir, "q": q}
+            listing = {"readers": [], "sort": sort, "dir": dir, "q": q, "filters": filters, "filters_active": any(filters.values())}
     return templates.TemplateResponse("partials/readers_table.html", {"request": request, "user": user, **listing})
 
 
@@ -1261,8 +1419,12 @@ async def htmx_readers_create(
         elif res.status_code != 200:
             message, kind = extract_backend_error(res, "Failed to register the reader"), "error"
 
-        # newest first, so the reader just added is the first row
-        listing = await fetch_readers(client, get_auth_headers(user), user)
+        # newest first, so the reader just added is the first row (the filters on screen still apply)
+        try:
+            form = await request.form()
+        except Exception:
+            form = {}
+        listing = await fetch_readers(client, get_auth_headers(user), user, filters=pick_filters(READER_FILTERS, form))
     return templates.TemplateResponse("partials/readers_table.html", {"request": request, "user": user, **listing},
                                       headers=flash_header(message, kind))
 
@@ -1290,7 +1452,11 @@ async def htmx_readers_delete(request: Request, gate_id: str, q: str = Form(""),
         else:
             message = describe_removal(res, "Reader", gate_id)
 
-        listing = await fetch_readers(client, headers, user, q, sort, dir)
+        try:
+            form = await request.form()
+        except Exception:
+            form = {}
+        listing = await fetch_readers(client, headers, user, q, sort, dir, pick_filters(READER_FILTERS, form))
     return templates.TemplateResponse("partials/readers_table.html", {"request": request, "user": user, **listing},
                                       headers=flash_header(message, kind))
 
@@ -1798,15 +1964,17 @@ async def htmx_verify_barn_return(request: Request, barn_id: str, user: dict = D
             msg = format_403_security_message(user or {}, err, request.url.path)
             await log_security_violation_best_effort(user or {}, request.url.path, msg)
             return HTMLResponse(content=render_403_alert_html(msg), status_code=403)
+        res = await client.get(f"{BACKEND_BASE_URL}/facilities/distribution", headers=headers)
+        farms = filter_farms_by_scope(res.json() if res.status_code == 200 else [], user)
         if v_res.status_code == 200:
             body = v_res.json()
+            # people know the barn by its code (the key in the address is not shown)
+            barn_name = next((b.get("code") for f in farms for b in f.get("barns", []) if b.get("barnId") == barn_id and b.get("code")), barn_id)
             verify_banner = (
-                f"Return check for {barn_id}: today {body.get('exitedCount', 0)} passed OUT and "
+                f"Return check for {barn_name}: today {body.get('exitedCount', 0)} passed OUT and "
                 f"{body.get('returnedCount', 0)} passed IN; {body.get('deficit', 0)} are at pasture now; "
                 f"{body.get('newlyFlaggedAlerts', 0)} missing-cattle alert(s) raised."
             )
-        res = await client.get(f"{BACKEND_BASE_URL}/facilities/distribution", headers=headers)
-        farms = filter_farms_by_scope(res.json() if res.status_code == 200 else [], user)
 
     return templates.TemplateResponse("partials/headcount_cards.html", {
         "request": request,

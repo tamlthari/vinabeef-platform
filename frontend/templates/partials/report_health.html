@@ -1,0 +1,105 @@
+{% from "partials/macros.html" import sort_th, health_badge, presence_badge, record_badge, record_what %}
+{# Reporting: vaccinations, treatments, health history and quarantine status. Included by report_content.html. #}
+{% set url = '/htmx/report-data' %}
+{% set target = '#report-data-container' %}
+{% set form = '#report-form' %}
+
+{% if report_type == 'quarantine' %}
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+  {% for label, value, color in [('Animals listed', total, 'text-gray-900'), ('In quarantine', quarantine_count, 'text-rose-700'), ('Under treatment', treatment_count, 'text-amber-600'), ('At pasture', at_pasture_count, 'text-amber-600')] %}
+  <div class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+    <span class="text-[10px] uppercase tracking-wider text-gray-400">{{ label }}</span>
+    <div class="text-2xl font-extrabold font-mono {{ color }}">{{ "{:,}".format(value) }}</div>
+  </div>
+  {% endfor %}
+</div>
+<div class="bg-white border border-gray-200 rounded-lg shadow-sm overflow-x-auto">
+  <table class="w-full text-left text-xs text-gray-700">
+    <thead class="bg-gray-50 border-b border-gray-200 text-gray-600">
+      <tr>
+        {{ sort_th('Animal', 'animal', sort, dir, url, target, form, 'asc', 'px-4 py-2.5') }}
+        {{ sort_th('Status', 'status', sort, dir, url, target, form, 'asc', 'px-4 py-2.5') }}
+        {{ sort_th('Where', 'presence', sort, dir, url, target, form, 'asc', 'px-4 py-2.5') }}
+        {{ sort_th('Since', 'since', sort, dir, url, target, form, 'asc', 'px-4 py-2.5') }}
+        <th class="px-4 py-2.5 font-semibold">Reason</th>
+        {{ sort_th('Barn', 'barn', sort, dir, url, target, form, 'asc', 'px-4 py-2.5') }}
+        {{ sort_th('Facility', 'farm', sort, dir, url, target, form, 'asc', 'px-4 py-2.5') }}
+        <th class="px-4 py-2.5 font-semibold">Recorded by</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-gray-100">
+      {% for r in items %}
+      <tr>
+        <td class="px-4 py-2 font-bold"><a class="text-blue-700 hover:underline" href="/herd/{{ r.animal_id | urlencode }}">{{ r.animal_id }}</a></td>
+        <td class="px-4 py-2">{{ health_badge(r.health_status) }}</td>
+        <td class="px-4 py-2">{{ presence_badge(r.presence_status) }}</td>
+        <td class="px-4 py-2 whitespace-nowrap">
+          {% if r.since %}{{ r.since | localtime('%Y-%m-%d') }} <span class="text-gray-400">&middot; {{ r.days or 0 }} day{{ '' if r.days == 1 else 's' }}</span>
+          {% else %}<span class="text-gray-400">no record</span>{% endif %}
+        </td>
+        <td class="px-4 py-2">{{ r.title or r.quarantine_notes or '-' }}{% if r.product and r.product != r.title %} <span class="text-gray-500">&middot; {{ r.product }}</span>{% endif %}{% if r.notes %}<div class="text-[11px] text-gray-400">{{ r.notes }}</div>{% endif %}</td>
+        <td class="px-4 py-2 font-mono">{{ r.barn_code or '' }}</td>
+        <td class="px-4 py-2">{{ r.farm_name or '' }}</td>
+        <td class="px-4 py-2 text-gray-500">{{ r.administered_by or '' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="py-10 text-center text-gray-400">No animals match these filters.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="text-[11px] text-gray-400">
+  The status is the one on the animal now. "Since" is the first record after the animal was last recorded healthy.
+</p>
+
+{% else %}
+<div class="grid grid-cols-2 gap-4 max-w-md">
+  <div class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+    <span class="text-[10px] uppercase tracking-wider text-gray-400">Records</span>
+    <div class="text-2xl font-extrabold font-mono text-gray-900">{{ "{:,}".format(total) }}</div>
+  </div>
+  <div class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+    <span class="text-[10px] uppercase tracking-wider text-gray-400">Animals</span>
+    <div class="text-2xl font-extrabold font-mono text-gray-900">{{ "{:,}".format(animals) }}</div>
+  </div>
+</div>
+<div class="bg-white border border-gray-200 rounded-lg shadow-sm overflow-x-auto">
+  <table class="w-full text-left text-xs text-gray-700">
+    <thead class="bg-gray-50 border-b border-gray-200 text-gray-600">
+      <tr>
+        {{ sort_th('Time', 'time', sort, dir, url, target, form, 'desc', 'px-4 py-2.5') }}
+        {{ sort_th('Animal', 'animal', sort, dir, url, target, form, 'asc', 'px-4 py-2.5') }}
+        {% if report_type == 'history' %}{{ sort_th('Record', 'type', sort, dir, url, target, form, 'asc', 'px-4 py-2.5') }}{% endif %}
+        {{ sort_th('What', 'product', sort, dir, url, target, form, 'asc', 'px-4 py-2.5') }}
+        {{ sort_th('Animal after', 'result', sort, dir, url, target, form, 'asc', 'px-4 py-2.5') }}
+        {% if report_type == 'vaccinations' %}<th class="px-4 py-2.5 font-semibold">Next due</th>{% endif %}
+        {{ sort_th('Barn', 'barn', sort, dir, url, target, form, 'asc', 'px-4 py-2.5') }}
+        {{ sort_th('Facility', 'farm', sort, dir, url, target, form, 'asc', 'px-4 py-2.5') }}
+        {{ sort_th('By', 'by', sort, dir, url, target, form, 'asc', 'px-4 py-2.5') }}
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-gray-100">
+      {% for e in items %}
+      <tr>
+        <td class="px-4 py-2 font-mono text-gray-500 whitespace-nowrap">{{ e.event_at | localtime }}</td>
+        <td class="px-4 py-2 font-bold"><a class="text-blue-700 hover:underline" href="/herd/{{ e.animal_id | urlencode }}">{{ e.animal_id }}</a></td>
+        {% if report_type == 'history' %}<td class="px-4 py-2">{{ record_badge(e.record_type) }}</td>{% endif %}
+        <td class="px-4 py-2">{{ record_what(e) }}{% if e.notes %}<div class="text-[11px] text-gray-400">{{ e.notes }}</div>{% endif %}</td>
+        <td class="px-4 py-2">{% if e.resulting_status %}{{ health_badge(e.resulting_status) }}{% else %}<span class="text-gray-300">-</span>{% endif %}</td>
+        {% if report_type == 'vaccinations' %}<td class="px-4 py-2 font-mono text-gray-500">{{ e.next_due_date or '' }}</td>{% endif %}
+        <td class="px-4 py-2 font-mono">{{ e.barn_code or '' }}</td>
+        <td class="px-4 py-2">{{ e.farm_name or '' }}</td>
+        <td class="px-4 py-2 text-gray-500">{{ e.administered_by or '' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="9" class="py-10 text-center text-gray-400">No records match these filters in this period.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="text-[11px] text-gray-400">
+  {% if report_type == 'treatments' %}A treatment is a treatment record, or any record after which the animal was under treatment.
+  {% elif report_type == 'history' %}Every health record of the animals in scope. A record can be listed under two types in the other reports (a treatment that ended in quarantine); here each record is listed once.
+  {% else %}A vaccination is a vaccination record. "Next due" is shown only when the field app recorded it.{% endif %}
+</p>
+{% endif %}

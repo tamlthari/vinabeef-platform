@@ -84,23 +84,21 @@ public class CattleManagementController {
             @RequestParam(required = false, defaultValue = "1") int page,
             @RequestParam(required = false, defaultValue = "100") int size,
             @RequestParam(required = false, defaultValue = "") String sort,
-            @RequestParam(required = false, defaultValue = "") String dir) {
+            @RequestParam(required = false, defaultValue = "") String dir,
+            @RequestParam(required = false, defaultValue = "") String farmId,
+            @RequestParam(required = false, defaultValue = "") String barnId,
+            @RequestParam(required = false, defaultValue = "") String health,
+            @RequestParam(required = false, defaultValue = "") String presence,
+            @RequestParam(required = false, defaultValue = "") String tags,
+            @RequestParam(required = false, defaultValue = "") String vaccination,
+            @RequestParam(required = false, defaultValue = "") String passes) {
         try {
             var scope = currentScope.getCurrentScope();
             int safePage = Math.max(1, page);
             int safeSize = Math.min(Math.max(1, size), 100);
             int offset = (safePage - 1) * safeSize;
 
-            ReportQueries.Scope visible;
-            if (scope.isGlobal()) {
-                visible = ReportQueries.Scope.ALL;
-            } else if (scope.isFarmScoped()) {
-                visible = ReportQueries.Scope.farm(scope.farmId());
-            } else if (scope.isBarnScoped()) {
-                visible = ReportQueries.Scope.barns(scope.barnIds());
-            } else {
-                visible = ReportQueries.Scope.NONE;
-            }
+            ReportQueries.Scope visible = ReportQueries.Scope.of(scope);
             String sortKey = SortSpec.effectiveKey(sort, ListQueries.CATTLE_SORT, "created");
             String sortDir = SortSpec.effectiveDir(sort, dir, ListQueries.CATTLE_SORT, "created", "desc");
             if (visible.seesNothing()) {
@@ -112,10 +110,12 @@ public class CattleManagementController {
                         .body(List.of());
             }
 
-            var count = ListQueries.cattleCount(visible, q);
+            // the column filters only narrow what the person may see: their scope is applied first, inside the statement
+            var filter = ListQueries.CattleFilter.parse(farmId, barnId, health, presence, tags, vaccination, passes);
+            var count = ListQueries.cattleCount(visible, q, filter);
             Long totalCount = jdbcTemplate.queryForObject(count.sql(), Long.class, count.params().toArray());
 
-            var pageQuery = ListQueries.cattlePage(visible, q, sort, dir, safeSize, offset);
+            var pageQuery = ListQueries.cattlePage(visible, q, filter, sort, dir, safeSize, offset);
             var cattle = jdbcTemplate.queryForList(pageQuery.sql(), pageQuery.params().toArray());
 
             return ResponseEntity.ok()

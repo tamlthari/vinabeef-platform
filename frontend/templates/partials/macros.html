@@ -16,3 +16,41 @@
     </button>
 </th>
 {%- endmacro %}
+
+
+{# Health status of an animal, drawn the same way everywhere (herd list, dashboard, reports). #}
+{% macro health_badge(status) -%}
+{% if status == 'HEALTHY' or not status -%}
+<span class="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-gray-50 text-gray-600 border border-gray-200">Healthy</span>
+{%- elif status == 'QUARANTINE' -%}
+<span class="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">Quarantine</span>
+{%- else -%}
+<span class="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">{{ status | replace('_', ' ') | title }}</span>
+{%- endif %}
+{%- endmacro %}
+
+{# Where the animal is now. #}
+{% macro presence_badge(status) -%}
+{% if status == 'IN_BARN' -%}
+<span class="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">In barn</span>
+{%- else -%}
+<span class="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">At pasture</span>
+{%- endif %}
+{%- endmacro %}
+
+{# Kind of a health record (vaccination, treatment, quarantine, health check). #}
+{% macro record_badge(record_type) -%}
+{% set styles = {'VACCINATION': 'bg-emerald-50 text-emerald-700 border-emerald-200',
+                 'TREATMENT': 'bg-amber-50 text-amber-700 border-amber-200',
+                 'QUARANTINE': 'bg-rose-50 text-rose-700 border-rose-200',
+                 'HEALTH_CHECK': 'bg-sky-50 text-sky-700 border-sky-200'} -%}
+<span class="inline-block px-2 py-0.5 rounded text-[11px] font-semibold border {{ styles.get(record_type, 'bg-gray-50 text-gray-600 border-gray-200') }}">{{ (record_type or 'RECORD') | replace('_', ' ') | title }}</span>
+{%- endmacro %}
+
+{# What a health record was about, in one line: the diagnosis or vaccine, then the product and the batch when they add something. #}
+{% macro record_what(e) -%}
+<span class="font-medium text-gray-800">{{ e.title or e.product or '-' }}</span>
+{%- if e.product and e.product != e.title %} <span class="text-gray-500">&middot; {{ e.product }}</span>{% endif %}
+{%- if e.batch %} <span class="text-gray-400 font-mono">batch {{ e.batch }}</span>{% endif %}
+{%- if e.dose %} <span class="text-gray-400">&middot; {{ e.dose }}</span>{% endif %}
+{%- endmacro %}

@@ -25,21 +25,34 @@ final class SurveillanceQueries {
     }
 
     /**
-     * One transmission for its detail view. Eight parameters, in order: (allFarms, farmId) for body_visible, (allFarms, farmId)
-     * for the excerpt, excerptChars, transmissionId, then (allFarms, farmId) for which rows may be seen at all.
-     * The row is visible like the list (own farm or an all-farm report), but the BODY only when the caller may see every
-     * farm in it: an all-farm report carries other farms' animals, so a farm-scoped account gets the metadata and
-     * {@code body_excerpt = NULL}. Deciding this in SQL keeps a restricted body out of the application entirely.
+     * The transmission log of the overview, newest first. Parameters: (allFarms, farmId).
+     * A farm-scoped account sees only the transmissions of its own farm. A report sent for ALL farms is not part of any one
+     * farm's log: it describes every farm, and that includes farms this account has no right to know about.
+     */
+    static final String TRANSMISSION_LIST = """
+        SELECT transmission_id, target_system, endpoint_url, report_type, farm_scope,
+               record_count, payload_format, http_status, delivery_status, response_summary, transmitted_by, transmitted_at
+        FROM external_transmissions
+        WHERE (? = TRUE OR farm_scope = ?)
+        ORDER BY transmitted_at DESC
+        LIMIT 25
+        """;
+
+    /**
+     * One transmission for its detail view. Four parameters, in order: excerptChars, transmissionId, (allFarms, farmId).
+     * The row is visible by the same rule as the list, and so is its body, so {@code body_visible} is always TRUE for a row
+     * that is returned (the column stays because the portal reads it). Deciding who may see a row in SQL keeps a row of
+     * another farm out of the application entirely.
      */
     static final String TRANSMISSION_DETAIL = """
         SELECT transmission_id, target_system, endpoint_url, report_type, farm_scope, record_count, payload_format,
                http_status, delivery_status, response_summary, transmitted_by, transmitted_at,
                payload_bytes, payload_sha256, payload_truncated,
-               (? = TRUE OR farm_scope = ?) AS body_visible,
+               TRUE AS body_visible,
                COALESCE(length(payload_snapshot), 0) AS stored_chars,
-               CASE WHEN (? = TRUE OR farm_scope = ?) THEN left(payload_snapshot, ?) END AS body_excerpt
+               left(payload_snapshot, ?) AS body_excerpt
         FROM external_transmissions
-        WHERE transmission_id = ? AND (? = TRUE OR farm_scope = ? OR farm_scope = 'ALL')
+        WHERE transmission_id = ? AND (? = TRUE OR farm_scope = ?)
         """;
 
     /** The whole stored body, same visibility rule. Parameters: (transmissionId, allFarms, farmId). */

@@ -6,6 +6,7 @@
     <title>VinaFarm - Connected Livestock Platform</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/htmx.org@2.0.2"></script>
+    <script src="/static/filters.js" defer></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
         body { font-family: 'Inter', sans-serif; }
@@ -195,7 +196,7 @@
                                 Facility Scope:
                                 <strong class="text-gray-800">
                                     {% if user.role == 'BARN_SUPERVISOR' %}
-                                        {{ user.assignedBarns | join(', ') if user.assignedBarns else (user.farmId or 'Assigned Barns') }}
+                                        {{ (user.assignedBarnCodes or user.assignedBarns) | join(', ') if (user.assignedBarnCodes or user.assignedBarns) else (user.farmId or 'Assigned Barns') }}
                                     {% elif user.role == 'FARM_MANAGER' %}
                                         {{ user.farmId if (user.farmId and user.farmId != 'ALL') else (user.farm_scopes | join(', ') if user.farm_scopes else 'Assigned Farm') }}
                                     {% else %}

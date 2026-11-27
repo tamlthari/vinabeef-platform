@@ -63,7 +63,7 @@
                 hx-post="/htmx/readers/{{ r.gate_id | urlencode }}/delete"
                 hx-target="#readers-table-container"
                 hx-swap="innerHTML"
-                hx-include="#reader-search,#reader-sort,#reader-dir"
+                hx-include="#reader-search,#reader-sort,#reader-dir,#reader-filters"
                 hx-confirm="Remove reader {{ r.reader_name }}? A reader with recorded passages is retired (history kept); one without is deleted."
                 onclick="event.stopPropagation()"
                 class="inline-block ml-1 px-2.5 py-1 rounded border border-rose-200 bg-white text-rose-700 font-semibold hover:bg-rose-50">Remove</button>
@@ -72,6 +72,6 @@
 </tr>
 {% else %}
 <tr>
-    <td colspan="11" class="py-12 text-center text-gray-400">No gate readers match.</td>
+    <td colspan="11" class="py-12 text-center text-gray-400">{% if filters_active %}No gate readers match these filters. Change a filter or use "Clear filters" above.{% else %}No gate readers match.{% endif %}</td>
 </tr>
 {% endfor %}

@@ -2,7 +2,6 @@ package com.vinabeef.web;
 
 import com.vinabeef.audit.Audited;
 import com.vinabeef.security.CurrentScopeProvider;
-import com.vinabeef.security.UserScope;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -52,7 +51,7 @@ public class SurveillanceReportController {
     @PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'FARM_MANAGER', 'EXECUTIVE')")
     public ResponseEntity getSurveillanceOverview() {
         var scope = currentScope.getCurrentScope();
-        String effectiveFarm = resolveEffectiveFarm(scope, "ALL");
+        String effectiveFarm = SurveillanceFarmScope.resolve(scope, "ALL");
         boolean allFarms = "ALL".equalsIgnoreCase(effectiveFarm);
 
         Long totalHerd = jdbcTemplate.queryForObject("""
@@ -87,14 +86,7 @@ public class SurveillanceReportController {
             WHERE (? = TRUE OR from_farm_id = ? OR to_farm_id = ?)
         """, Long.class, allFarms, effectiveFarm, effectiveFarm);
 
-        var transmissions = jdbcTemplate.queryForList("""
-            SELECT transmission_id, target_system, endpoint_url, report_type, farm_scope,
-                   record_count, payload_format, http_status, delivery_status, response_summary, transmitted_by, transmitted_at
-            FROM external_transmissions
-            WHERE (? = TRUE OR farm_scope = ? OR farm_scope = 'ALL')
-            ORDER BY transmitted_at DESC
-            LIMIT 25
-        """, allFarms, effectiveFarm);
+        var transmissions = jdbcTemplate.queryForList(SurveillanceQueries.TRANSMISSION_LIST, allFarms, effectiveFarm);
 
         List<Map<String, Object>> dataChecks = new ArrayList<>();
         for (var check : SurveillanceQueries.checks().values()) {
@@ -138,7 +130,7 @@ public class SurveillanceReportController {
 
         var scope = currentScope.getCurrentScope();
         String cleanType = reportType.trim().toUpperCase();
-        String cleanFarm = resolveEffectiveFarm(scope, farmId.trim());
+        String cleanFarm = SurveillanceFarmScope.resolve(scope, farmId);
         String cleanFormat = format.trim().toUpperCase();
 
         ReportRows data = queryReportRows(cleanType, cleanFarm);
@@ -176,7 +168,7 @@ public class SurveillanceReportController {
         }
         String requestedFarm = (req.getFarmScope() != null && !req.getFarmScope().isBlank())
                 ? req.getFarmScope().trim() : "ALL";
-        String farmScope = resolveEffectiveFarm(scope, requestedFarm);
+        String farmScope = SurveillanceFarmScope.resolve(scope, requestedFarm);
         String format = (req.getPayloadFormat() != null && !req.getPayloadFormat().isBlank())
                 ? req.getPayloadFormat().trim().toUpperCase() : "JSON";
 
@@ -226,19 +218,19 @@ public class SurveillanceReportController {
     /**
      * One row of the transmission log with the body that was sent (or, in SIMULATION, would have been sent).
      * {@code maxChars} limits the excerpt returned here; the whole stored body is at {@code /transmissions/{id}/body}.
-     * A farm-scoped account sees the metadata of an all-farm report but not its body (it holds other farms' animals).
+     * A farm-scoped account sees only the transmissions of its own farm; a report sent for all farms is not in its log.
      */
     @GetMapping("/transmissions/{transmissionId}")
     @PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'FARM_MANAGER', 'EXECUTIVE')")
     public ResponseEntity getTransmission(@PathVariable String transmissionId,
                                           @RequestParam(defaultValue = "120000") int maxChars) {
         var scope = currentScope.getCurrentScope();
-        String farm = resolveEffectiveFarm(scope, "ALL");
+        String farm = SurveillanceFarmScope.resolve(scope, "ALL");
         boolean allFarms = "ALL".equalsIgnoreCase(farm);
         int excerpt = Math.min(Math.max(maxChars, 0), 500_000);
 
         var rows = jdbcTemplate.queryForList(SurveillanceQueries.TRANSMISSION_DETAIL,
-                allFarms, farm, allFarms, farm, excerpt, transmissionId, allFarms, farm);
+                excerpt, transmissionId, allFarms, farm);
         if (rows.isEmpty()) {
             return ResponseEntity.status(404).body(Map.of("error", "No transmission '" + transmissionId + "' is visible to this account."));
         }
@@ -279,7 +271,7 @@ public class SurveillanceReportController {
     @PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'FARM_MANAGER', 'EXECUTIVE')")
     public ResponseEntity getTransmissionBody(@PathVariable String transmissionId) {
         var scope = currentScope.getCurrentScope();
-        String farm = resolveEffectiveFarm(scope, "ALL");
+        String farm = SurveillanceFarmScope.resolve(scope, "ALL");
         boolean allFarms = "ALL".equalsIgnoreCase(farm);
         var rows = jdbcTemplate.queryForList(SurveillanceQueries.TRANSMISSION_BODY, transmissionId, allFarms, farm);
         if (rows.isEmpty()) {
@@ -299,11 +291,10 @@ public class SurveillanceReportController {
         return ok.body(text.getBytes(StandardCharsets.UTF_8));
     }
 
-    private String resolveEffectiveFarm(UserScope scope, String requestedFarm) {
-        if (scope.isFarmScoped() && scope.farmId() != null) {
-            return scope.farmId();
-        }
-        return requestedFarm;
+    /** A request the account's farm scope does not allow: 403 with the reason, in the {"error": ...} shape the portal reads. */
+    @ExceptionHandler(SurveillanceFarmScope.Denied.class)
+    public ResponseEntity<Map<String, String>> scopeDenied(SurveillanceFarmScope.Denied e) {
+        return ResponseEntity.status(403).body(Map.of("error", e.getMessage()));
     }
 
     /** Rows of a report, and whether the cap cut it. */

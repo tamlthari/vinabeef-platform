@@ -58,6 +58,12 @@
         </div>
     </div>
 
+    <!-- Animal health: quarantine and treatment now, and the newest health events -->
+    <div id="health-panel" hx-get="/htmx/health-panel?tab=auto" hx-trigger="load" hx-swap="outerHTML"
+         class="bg-white border border-gray-200 rounded-lg shadow-sm px-6 py-10 text-center text-xs text-gray-400">
+        Loading animal health...
+    </div>
+
     <!-- Live Gate Movement Stream -->
     <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-6">
         <div class="flex justify-between items-center mb-4">

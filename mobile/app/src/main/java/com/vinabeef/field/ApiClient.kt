@@ -22,9 +22,19 @@ class SessionStore(context: Context) {
         get() = prefs.getString("username", "") ?: ""
         set(value) = prefs.edit().putString("username", value).apply()
 
+    /** The barn's key as the server knows it. Kept for the sync; people are shown [barnLabel], the barn code. */
     var barnId: String
         get() = prefs.getString("barn_id", "") ?: ""
         set(value) = prefs.edit().putString("barn_id", value).apply()
+
+    /** The name of the barn on the screen: its code, the same as on the web portal ("ALL" for every barn). */
+    var barnLabel: String
+        get() = prefs.getString("barn_label", "") ?: ""
+        set(value) = prefs.edit().putString("barn_label", value).apply()
+
+    /** What to show and to send when loading: the code when known, else the key a phone saved before codes were used. */
+    val barnShown: String
+        get() = barnLabel.ifEmpty { barnId }
 
     fun signOut() {
         prefs.edit().remove("token").apply()

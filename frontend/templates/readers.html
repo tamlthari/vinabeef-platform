@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "partials/list_filters.html" import pick, facility_barn, bar_end %}
 {% block header_title %}
 <span>Gate Readers ({{ readers|length }})</span>
 {% endblock %}
@@ -15,7 +16,7 @@
                    value="{{ q }}"
                    placeholder="Search by reader name, label, gate id, barn or facility..."
                    hx-get="/htmx/readers-list"
-                   hx-include="#reader-sort,#reader-dir"
+                   hx-include="#reader-sort,#reader-dir,#reader-filters"
                    hx-trigger="keyup changed delay:250ms"
                    hx-target="#readers-table-container"
                    class="w-full border border-gray-300 rounded-md pl-3.5 pr-9 py-2 text-xs text-gray-800 placeholder-gray-400 focus:outline-none focus:border-blue-500">
@@ -27,7 +28,7 @@
         <div class="flex items-center space-x-2.5">
             <button type="button"
                     hx-get="/htmx/readers-list"
-                    hx-include="#reader-search,#reader-sort,#reader-dir"
+                    hx-include="#reader-search,#reader-sort,#reader-dir,#reader-filters"
                     hx-target="#readers-table-container"
                     class="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-white hover:bg-gray-50 border border-gray-300 rounded-md text-xs font-semibold text-gray-700 transition">
                 <svg class="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
@@ -43,6 +44,21 @@
             {% endif %}
         </div>
     </div>
+
+    <!-- Column filters: they apply together, like the ones on the Herd list -->
+    <form id="reader-filters" data-filter-bar
+          hx-get="/htmx/readers-list"
+          hx-include="#reader-search,#reader-sort,#reader-dir"
+          hx-target="#readers-table-container"
+          hx-trigger="change"
+          class="bg-white border border-gray-200 rounded-lg shadow-sm px-4 py-3 grid grid-cols-2 md:grid-cols-4 gap-3">
+        {{ facility_barn(farms, filters.farm, filters.barn) }}
+        {{ pick('direction', 'Direction rule', [('', 'Any'), ('BIDIRECTIONAL', 'Both ways'), ('IN_ONLY', 'IN only'), ('OUT_ONLY', 'OUT only')], filters.direction) }}
+        {{ pick('pairing', 'Readers on the gate', [('', 'Any'), ('PAIRED', 'Paired (inner + outer)'), ('SINGLE', 'Single reader')], filters.pairing) }}
+        {{ pick('activity', 'Heard from', [('', 'Any time'), ('RECENT', 'In the last hour'), ('DAY', 'In the last 24 hours'), ('SILENT', 'Silent over 24 hours'), ('NEVER', 'Never (no heartbeat)')], filters.activity) }}
+        {{ pick('passes', 'Gate passes', [('', 'Any'), ('TODAY', 'Passes today'), ('QUIET_TODAY', 'No passes today'), ('NEVER_USED', 'Never used')], filters.passes) }}
+        {{ bar_end() }}
+    </form>
 
     <!-- Sortable readers table: newest first until a header is clicked -->
     <div id="readers-table-container" class="bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
@@ -60,6 +76,7 @@
         </div>
 
         <form hx-post="/htmx/readers/create"
+              hx-include="#reader-filters"
               hx-target="#readers-table-container"
               hx-swap="innerHTML"
               onsubmit="document.getElementById('add-reader-modal').classList.add('hidden')"

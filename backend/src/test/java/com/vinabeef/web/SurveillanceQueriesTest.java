@@ -53,4 +53,15 @@ class SurveillanceQueriesTest {
             assertTrue(c.sql().startsWith("SELECT COUNT(*)"), c.code());
         }
     }
+
+    @Test
+    void transmissionLogAndDetailShowOnlyTheCallersOwnFarmToAFarmScopedAccount() {
+        // an all-farm report describes every farm: it must not be visible through the "own farm" branch
+        assertFalse(SurveillanceQueries.TRANSMISSION_LIST.contains("'ALL'"));
+        assertFalse(SurveillanceQueries.TRANSMISSION_DETAIL.contains("'ALL'"));
+        assertFalse(SurveillanceQueries.TRANSMISSION_BODY.contains("'ALL'"));
+        assertEquals(2, marks(SurveillanceQueries.TRANSMISSION_LIST));
+        assertEquals(4, marks(SurveillanceQueries.TRANSMISSION_DETAIL));
+        assertEquals(3, marks(SurveillanceQueries.TRANSMISSION_BODY));
+    }
 }

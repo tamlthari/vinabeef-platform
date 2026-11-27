@@ -1,5 +1,7 @@
 package com.vinabeef.web;
 
+import com.vinabeef.security.UserScope;
+
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -61,6 +63,23 @@ final class ReportQueries {
 
         static Scope farm(String farmId) {
             return farmId == null ? NONE : new Scope(Kind.FARM, farmId, List.of());
+        }
+
+        /**
+         * What a signed-in person may see. A farm manager with no farm, a supervisor with no barn and any unknown role see
+         * nothing (never everything).
+         */
+        static Scope of(UserScope user) {
+            if (user.isGlobal()) {
+                return ALL;
+            }
+            if (user.isFarmScoped()) {
+                return farm(user.farmId());
+            }
+            if (user.isBarnScoped()) {
+                return barns(user.barnIds());
+            }
+            return NONE;
         }
 
         static Scope barns(List<String> barnIds) {
@@ -295,6 +314,22 @@ final class ReportQueries {
         scope.kind().restrict(sql, params, scope, barnAlias);
     }
 
+    /** A header line and one line per row, cells quoted and made safe for a spreadsheet; times as ISO instants. */
+    static String csv(String[] columns, List<Map<String, Object>> rows) {
+        StringBuilder out = new StringBuilder(String.join(",", columns)).append("\n");
+        for (Map<String, Object> row : rows) {
+            for (int i = 0; i < columns.length; i++) {
+                if (i > 0) {
+                    out.append(',');
+                }
+                Object v = row.get(columns[i]);
+                out.append(csvCell(v instanceof Timestamp t ? t.toInstant().toString() : v));
+            }
+            out.append("\n");
+        }
+        return out.toString();
+    }
+
     static String csvCell(Object value) {
         if (value == null) {
             return "";
@@ -307,19 +342,19 @@ final class ReportQueries {
         return "\"" + s.replace("\"", "\"\"") + "\"";
     }
 
-    private static Timestamp ts(Instant instant) {
+    static Timestamp ts(Instant instant) {
         return Timestamp.from(instant);
     }
 
-    private static boolean isSet(String s) {
+    static boolean isSet(String s) {
         return s != null && !s.isBlank();
     }
 
-    private static String like(String s) {
+    static String like(String s) {
         return "%" + s.trim().toLowerCase(Locale.ROOT).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%";
     }
 
-    private static String upper(String s) {
+    static String upper(String s) {
         return s == null ? "" : s.trim().toUpperCase(Locale.ROOT);
     }
 }

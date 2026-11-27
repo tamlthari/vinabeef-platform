@@ -53,7 +53,13 @@ public class GateReaderController {
     @GetMapping
     public ResponseEntity listReaders(@RequestParam(required = false, defaultValue = "") String q,
                                       @RequestParam(required = false, defaultValue = "") String sort,
-                                      @RequestParam(required = false, defaultValue = "") String dir) {
+                                      @RequestParam(required = false, defaultValue = "") String dir,
+                                      @RequestParam(required = false, defaultValue = "") String farmId,
+                                      @RequestParam(required = false, defaultValue = "") String barnId,
+                                      @RequestParam(required = false, defaultValue = "") String direction,
+                                      @RequestParam(required = false, defaultValue = "") String pairing,
+                                      @RequestParam(required = false, defaultValue = "") String activity,
+                                      @RequestParam(required = false, defaultValue = "") String passes) {
         var scope = currentScope.getCurrentScope();
 
         ReportQueries.Scope visible;
@@ -72,7 +78,9 @@ public class GateReaderController {
         }
 
         var today = clock.today();
-        var query = ListQueries.readers(visible, q, sort, dir, today.fromInclusive(), today.toExclusive());
+        // the column filters only narrow what the person may see: their scope is applied first, inside the statement
+        var filter = ListQueries.ReaderFilter.parse(farmId, barnId, direction, pairing, activity, passes);
+        var query = ListQueries.readers(visible, q, filter, sort, dir, today.fromInclusive(), today.toExclusive(), clock.now());
         var readers = jdbcTemplate.queryForList(query.sql(), query.params().toArray());
         return ResponseEntity.ok()
                 .header("X-Sort-Key", SortSpec.effectiveKey(sort, ListQueries.READER_SORT, "created"))

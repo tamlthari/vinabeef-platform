@@ -38,6 +38,61 @@ final class ListQueries {
     private ListQueries() {
     }
 
+    // ---------------------------------------------------------------------------------------------------- filters
+
+    static final String[] HEALTH = {"HEALTHY", "UNDER_TREATMENT", "QUARANTINE"};
+    static final String[] PRESENCE = {"IN_BARN", "OUT_PASTURE"};
+
+    /**
+     * What the Herd list is narrowed to, besides the search box. Every part is optional and all parts apply together
+     * (AND): barn, then health, then presence narrows the same list three times. {@code health} and {@code presence} may carry
+     * several values, which are alternatives inside that column (health UNDER_TREATMENT or QUARANTINE).
+     */
+    record CattleFilter(String farmId, List<String> barnIds, List<String> health, List<String> presence,
+                        String tags, String vaccination, String passes) {
+
+        static final CattleFilter NONE = new CattleFilter(null, List.of(), List.of(), List.of(), null, null, null);
+
+        /** From the request text. Unknown words are dropped; ids are kept and bound later. */
+        static CattleFilter parse(String farm, String barn, String health, String presence,
+                                  String tags, String vaccination, String passes) {
+            String f = farm == null || farm.isBlank() || "ALL".equalsIgnoreCase(farm.trim()) ? null : farm.trim();
+            return new CattleFilter(f, ListFilters.ids(barn), ListFilters.manyOf(health, HEALTH),
+                    ListFilters.manyOf(presence, PRESENCE),
+                    ListFilters.oneOf(tags, "WITH", "WITHOUT", "MULTIPLE"),
+                    ListFilters.oneOf(vaccination, "DONE", "NONE"),
+                    ListFilters.oneOf(passes, "SEEN", "NEVER"));
+        }
+
+        boolean isEmpty() {
+            return farmId == null && barnIds.isEmpty() && health.isEmpty() && presence.isEmpty()
+                    && tags == null && vaccination == null && passes == null;
+        }
+    }
+
+    /**
+     * What the Gate Readers list is narrowed to, besides the search box (all parts apply together).
+     * {@code activity}: RECENT (heard from in the last hour), DAY (last 24 hours), SILENT (nothing for over 24 hours, or never),
+     * NEVER. {@code passes}: TODAY, QUIET_TODAY, NEVER_USED. {@code pairing}: PAIRED (has an outer reader), SINGLE.
+     */
+    record ReaderFilter(String farmId, List<String> barnIds, String direction, String pairing, String activity, String passes) {
+
+        static final ReaderFilter NONE = new ReaderFilter(null, List.of(), null, null, null, null);
+
+        static ReaderFilter parse(String farm, String barn, String direction, String pairing, String activity, String passes) {
+            String f = farm == null || farm.isBlank() || "ALL".equalsIgnoreCase(farm.trim()) ? null : farm.trim();
+            return new ReaderFilter(f, ListFilters.ids(barn),
+                    ListFilters.oneOf(direction, "BIDIRECTIONAL", "IN_ONLY", "OUT_ONLY"),
+                    ListFilters.oneOf(pairing, "PAIRED", "SINGLE"),
+                    ListFilters.oneOf(activity, "RECENT", "DAY", "SILENT", "NEVER"),
+                    ListFilters.oneOf(passes, "TODAY", "QUIET_TODAY", "NEVER_USED"));
+        }
+
+        boolean isEmpty() {
+            return farmId == null && barnIds.isEmpty() && direction == null && pairing == null && activity == null && passes == null;
+        }
+    }
+
     // -------------------------------------------------------------------------------------------------------- cattle
 
     private static final String CATTLE_FROM = """
@@ -49,7 +104,11 @@ final class ListQueries {
         """;
 
     static ReportQueries.Query cattleCount(ReportQueries.Scope scope, String search) {
-        ReportQueries.Query where = cattleWhere(scope, search);
+        return cattleCount(scope, search, CattleFilter.NONE);
+    }
+
+    static ReportQueries.Query cattleCount(ReportQueries.Scope scope, String search, CattleFilter filter) {
+        ReportQueries.Query where = cattleWhere(scope, search, filter);
         return new ReportQueries.Query("SELECT COUNT(*) " + where.sql(), where.params());
     }
 
@@ -59,7 +118,12 @@ final class ListQueries {
      */
     static ReportQueries.Query cattlePage(ReportQueries.Scope scope, String search, String sort, String dir,
                                           int size, int offset) {
-        ReportQueries.Query where = cattleWhere(scope, search);
+        return cattlePage(scope, search, CattleFilter.NONE, sort, dir, size, offset);
+    }
+
+    static ReportQueries.Query cattlePage(ReportQueries.Scope scope, String search, CattleFilter filter, String sort, String dir,
+                                          int size, int offset) {
+        ReportQueries.Query where = cattleWhere(scope, search, filter);
         String order = SortSpec.orderBy(sort, dir, CATTLE_SORT, "created", "desc", "a.animal_id");
         List<Object> params = new ArrayList<>(where.params());
         params.add(size);
@@ -113,10 +177,12 @@ final class ListQueries {
         """, params);
     }
 
-    private static ReportQueries.Query cattleWhere(ReportQueries.Scope scope, String search) {
+    private static ReportQueries.Query cattleWhere(ReportQueries.Scope scope, String search, CattleFilter filter) {
         List<Object> params = new ArrayList<>();
         StringBuilder sql = new StringBuilder(CATTLE_FROM);
+        // the person's scope first: a filter can only narrow what they may see, never widen it
         ReportQueries.scope(sql, params, scope, "b");
+        cattleFilter(sql, params, filter == null ? CattleFilter.NONE : filter);
         String trimmed = search == null ? "" : search.trim().toLowerCase(Locale.ROOT);
         if (!trimmed.isEmpty()) {
             String pattern = "%" + trimmed.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%";
@@ -139,6 +205,44 @@ final class ListQueries {
             }
         }
         return new ReportQueries.Query(sql.toString(), params);
+    }
+
+    /** The column filters of the Herd list. Each adds one AND condition; values are bound, the words come from fixed sets. */
+    private static void cattleFilter(StringBuilder sql, List<Object> params, CattleFilter f) {
+        if (f.farmId() != null) {
+            sql.append(" AND b.farm_id = ? ");
+            params.add(f.farmId());
+        }
+        if (!f.barnIds().isEmpty()) {
+            sql.append(" AND a.assigned_barn_id IN (").append(ListFilters.marks(f.barnIds().size())).append(") ");
+            params.addAll(f.barnIds());
+        }
+        if (!f.health().isEmpty()) {
+            sql.append(" AND COALESCE(a.health_status, 'HEALTHY') IN (").append(ListFilters.marks(f.health().size())).append(") ");
+            params.addAll(f.health());
+        }
+        if (!f.presence().isEmpty()) {
+            sql.append(" AND COALESCE(ps.presence_status, 'OUT_PASTURE') IN (").append(ListFilters.marks(f.presence().size())).append(") ");
+            params.addAll(f.presence());
+        }
+        String activeTags = "(SELECT COUNT(*) FROM tag_assignments ta WHERE ta.animal_id = a.animal_id AND ta.valid_to IS NULL)";
+        if ("WITH".equals(f.tags())) {
+            sql.append(" AND ").append(activeTags).append(" > 0 ");
+        } else if ("WITHOUT".equals(f.tags())) {
+            sql.append(" AND ").append(activeTags).append(" = 0 ");
+        } else if ("MULTIPLE".equals(f.tags())) {
+            sql.append(" AND ").append(activeTags).append(" > 1 ");
+        }
+        if ("DONE".equals(f.vaccination())) {
+            sql.append(" AND EXISTS (SELECT 1 FROM health_records hr WHERE hr.animal_id = a.animal_id AND hr.record_type = 'VACCINATION') ");
+        } else if ("NONE".equals(f.vaccination())) {
+            sql.append(" AND NOT EXISTS (SELECT 1 FROM health_records hr WHERE hr.animal_id = a.animal_id AND hr.record_type = 'VACCINATION') ");
+        }
+        if ("SEEN".equals(f.passes())) {
+            sql.append(" AND EXISTS (SELECT 1 FROM movements mv WHERE mv.animal_id = a.animal_id) ");
+        } else if ("NEVER".equals(f.passes())) {
+            sql.append(" AND NOT EXISTS (SELECT 1 FROM movements mv WHERE mv.animal_id = a.animal_id) ");
+        }
     }
 
     // ------------------------------------------------------------------------------------------------ recent movements
@@ -177,6 +281,15 @@ final class ListQueries {
     /** All active readers in scope. {@code dayStart}/{@code dayEnd} bound "today" for the today_in / today_out counts. */
     static ReportQueries.Query readers(ReportQueries.Scope scope, String search, String sort, String dir,
                                        Instant dayStart, Instant dayEnd) {
+        return readers(scope, search, ReaderFilter.NONE, sort, dir, dayStart, dayEnd, dayEnd);
+    }
+
+    /**
+     * The same, narrowed by the column filters. {@code now} is the reference for "heard from in the last hour / 24 hours"
+     * (passed in, so a test can fix it).
+     */
+    static ReportQueries.Query readers(ReportQueries.Scope scope, String search, ReaderFilter filter, String sort, String dir,
+                                       Instant dayStart, Instant dayEnd, Instant now) {
         List<Object> params = new ArrayList<>();
         Timestamp from = Timestamp.from(dayStart);
         Timestamp to = Timestamp.from(dayEnd);
@@ -200,10 +313,7 @@ final class ListQueries {
                 f.farm_id,
                 f.name AS farm_name,
                 (SELECT gr.reader_name FROM gate_readers gr WHERE gr.gate_id = g.gate_id AND gr.side = 'OUTER') AS outer_reader_name,
-                (SELECT MAX(re.observed_at) FROM rfid_read_events re
-                  WHERE re.read_source = 'SAFETRUST'   -- a USB read on the barn gateway says nothing about the wall reader
-                    AND re.reader_name IN (SELECT g.reader_name
-                                           UNION SELECT gr.reader_name FROM gate_readers gr WHERE gr.gate_id = g.gate_id)) AS last_seen,
+                ls.last_seen AS last_seen,
                 (SELECT gr.gate_id FROM gate_readers gr WHERE gr.reader_name = g.reader_name AND gr.gate_id <> g.gate_id) AS linked_to_gate_id,
                 (SELECT gr.side FROM gate_readers gr WHERE gr.reader_name = g.reader_name AND gr.gate_id <> g.gate_id) AS linked_side,
                 (SELECT lg.label FROM gate_readers gr JOIN gates lg ON lg.gate_id = gr.gate_id
@@ -217,6 +327,12 @@ final class ListQueries {
             LEFT JOIN barns b ON g.barn_id = b.barn_id
             LEFT JOIN farms f ON b.farm_id = f.farm_id
             LEFT JOIN LATERAL (
+                SELECT MAX(re.observed_at) AS last_seen FROM rfid_read_events re
+                 WHERE re.read_source = 'SAFETRUST'   -- a USB read on the barn gateway says nothing about the wall reader
+                   AND re.reader_name IN (SELECT g.reader_name
+                                          UNION SELECT gr.reader_name FROM gate_readers gr WHERE gr.gate_id = g.gate_id)
+            ) ls ON TRUE
+            LEFT JOIN LATERAL (
                 SELECT COUNT(*) FILTER (WHERE m.direction = 'IN')  AS in_count,
                        COUNT(*) FILTER (WHERE m.direction = 'OUT') AS out_count,
                        COUNT(*) FILTER (WHERE m.direction = 'IN'  AND m.occurred_at >= ? AND m.occurred_at < ?) AS today_in,
@@ -226,6 +342,7 @@ final class ListQueries {
             WHERE g.retired_at IS NULL
         """);
         ReportQueries.scope(sql, params, scope, "b");
+        readerFilter(sql, params, filter == null ? ReaderFilter.NONE : filter, now);
         String trimmed = search == null ? "" : search.trim().toLowerCase(Locale.ROOT);
         if (!trimmed.isEmpty()) {
             String pattern = "%" + trimmed.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%";
@@ -244,5 +361,45 @@ final class ListQueries {
         }
         sql.append(" ORDER BY ").append(SortSpec.orderBy(sort, dir, READER_SORT, "created", "desc", "g.gate_id"));
         return new ReportQueries.Query(sql.toString(), params);
+    }
+
+    /** The column filters of the Gate Readers list; same rules as {@link #cattleFilter}. */
+    private static void readerFilter(StringBuilder sql, List<Object> params, ReaderFilter f, Instant now) {
+        if (f.farmId() != null) {
+            sql.append(" AND b.farm_id = ? ");
+            params.add(f.farmId());
+        }
+        if (!f.barnIds().isEmpty()) {
+            sql.append(" AND g.barn_id IN (").append(ListFilters.marks(f.barnIds().size())).append(") ");
+            params.addAll(f.barnIds());
+        }
+        if (f.direction() != null) {
+            sql.append(" AND g.direction_mode = ? ");
+            params.add(f.direction());
+        }
+        if ("PAIRED".equals(f.pairing())) {
+            sql.append(" AND EXISTS (SELECT 1 FROM gate_readers gr WHERE gr.gate_id = g.gate_id AND gr.side = 'OUTER') ");
+        } else if ("SINGLE".equals(f.pairing())) {
+            sql.append(" AND NOT EXISTS (SELECT 1 FROM gate_readers gr WHERE gr.gate_id = g.gate_id AND gr.side = 'OUTER') ");
+        }
+        if ("RECENT".equals(f.activity())) {
+            sql.append(" AND ls.last_seen >= ? ");
+            params.add(Timestamp.from(now.minusSeconds(3600)));
+        } else if ("DAY".equals(f.activity())) {
+            sql.append(" AND ls.last_seen >= ? ");
+            params.add(Timestamp.from(now.minusSeconds(86_400)));
+        } else if ("SILENT".equals(f.activity())) {
+            sql.append(" AND (ls.last_seen IS NULL OR ls.last_seen < ?) ");
+            params.add(Timestamp.from(now.minusSeconds(86_400)));
+        } else if ("NEVER".equals(f.activity())) {
+            sql.append(" AND ls.last_seen IS NULL ");
+        }
+        if ("TODAY".equals(f.passes())) {
+            sql.append(" AND COALESCE(mc.today_in, 0) + COALESCE(mc.today_out, 0) > 0 ");
+        } else if ("QUIET_TODAY".equals(f.passes())) {
+            sql.append(" AND COALESCE(mc.today_in, 0) + COALESCE(mc.today_out, 0) = 0 ");
+        } else if ("NEVER_USED".equals(f.passes())) {
+            sql.append(" AND COALESCE(mc.in_count, 0) + COALESCE(mc.out_count, 0) = 0 ");
+        }
     }
 }

@@ -471,3 +471,292 @@ def test_the_reason_a_repeat_read_time_is_refused_by_the_backend_is_shown(reader
     ReaderBackend.answer = (400, {"error": "The repeat-read time must be between 0.5 s and 60 s (it was 120 s)."})
     r = reader_portal.post("/readers/GATE-T-1/update", data=dict(FORM, repeat_debounce_s="120"))
     assert r.status_code == 303 and "problem=" in r.headers["location"] and "between%200.5%20s%20and%2060%20s" in r.headers["location"]
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Update 13: list filters, health reports and the dashboard health panel
+# ---------------------------------------------------------------------------------------------------------------------
+from urllib.parse import parse_qs, urlparse  # noqa: E402
+
+FARMS = [{"farmId": "FARM-1", "farmName": "Dak Lak", "barns": [{"barnId": "BARN-DL-011", "code": "DL-BARN-011"},
+                                                               {"barnId": "BARN-DL-012", "code": "DL-BARN-012"}]},
+         {"farmId": "FARM-2", "farmName": "Gia Lai", "barns": [{"barnId": "BARN-GL-001", "code": "GL-BARN-001"}]}]
+ONE_FARM = FARMS[:1]
+EVENT = {"health_id": 7, "event_at": "2026-11-25T03:00:00Z", "record_type": "TREATMENT", "administered_by": "vet.an", "animal_id": "VB-0007",
+         "current_status": "QUARANTINE", "barn_id": "BARN-DL-011", "barn_code": "DL-BARN-011", "farm_id": "FARM-1", "farm_name": "Dak Lak",
+         "title": "Foot rot", "product": "Penicillin", "batch": "B-100", "dose": "10 ml", "resulting_status": "QUARANTINE",
+         "next_due_date": "2026-12-01", "notes": "<b>isolate</b>"}
+HELD = {"animal_id": "VB-0007", "health_status": "QUARANTINE", "quarantine_notes": "", "barn_id": "BARN-DL-011", "barn_code": "DL-BARN-011",
+        "farm_id": "FARM-1", "farm_name": "Dak Lak", "presence_status": "OUT_PASTURE", "since": "2026-11-20T03:00:00Z", "days": 6,
+        "last_event_at": "2026-11-25T03:00:00Z", "administered_by": "vet.an", "title": "Foot rot", "product": "Penicillin", "notes": ""}
+SUMMARY = {"now": {"quarantineNow": 2, "treatmentNow": 3, "quarantineAtPasture": 1},
+           "recent": {"events": 9, "vaccinations": 4, "treatments": 3, "quarantineEvents": 2}, "recentDays": 7}
+
+
+class AppBackend(BaseHTTPRequestHandler):
+    """Stands in for the Spring backend and remembers what the portal asked it, as (path, query)."""
+    asked, farms, fail = [], FARMS, False
+    health_rows = [EVENT]
+
+    def log_message(self, *a):
+        pass
+
+    def _send(self, code, body, headers=None):
+        raw = json.dumps(body).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        for k, v in (headers or {}).items():
+            self.send_header(k, v)
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def do_POST(self):
+        u = urlparse(self.path)
+        if u.path.endswith("/verify-return"):
+            self._send(200, {"exitedCount": 2, "returnedCount": 1, "deficit": 1, "newlyFlaggedAlerts": 0})
+        else:
+            self._send(404, {})
+
+    def do_GET(self):
+        u = urlparse(self.path)
+        q = {k: v[0] for k, v in parse_qs(u.query).items()}
+        AppBackend.asked.append((u.path, q))
+        if AppBackend.fail and u.path.startswith("/api/v1/health"):
+            return self._send(500, {"error": "boom"})
+        if u.path == "/api/v1/cattle":
+            self._send(200, [], {"X-Total-Count": "0"})
+        elif u.path == "/api/v1/readers":
+            self._send(200, [])
+        elif u.path == "/api/v1/barns":
+            self._send(200, [dict(b, farmId=f["farmId"]) for f in AppBackend.farms for b in f["barns"]])
+        elif u.path == "/api/v1/facilities/distribution":
+            self._send(200, AppBackend.farms)
+        elif u.path == "/api/v1/health/summary":
+            self._send(200, SUMMARY)
+        elif u.path == "/api/v1/health/quarantine":
+            self._send(200, [HELD])
+        elif u.path == "/api/v1/health/events":
+            self._send(200, AppBackend.health_rows)
+        elif u.path == "/api/v1/reports/health/quarantine":
+            self._send(200, {"periodLabel": "Current status (no period)", "items": [HELD], "total": 1, "quarantineCount": 1,
+                             "treatmentCount": 0, "atPastureCount": 1, "page": 1, "size": 25, "sort": "since", "dir": "asc"})
+        elif u.path.startswith("/api/v1/reports/health/") and u.path.endswith("/export"):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/csv")
+            self.send_header("Content-Disposition", 'attachment; filename="vinabeef_health.csv"')
+            self.end_headers()
+            self.wfile.write(b"\xef\xbb\xbfanimal\r\nVB-0007\r\n")
+        elif u.path.startswith("/api/v1/reports/health/"):
+            self._send(200, {"periodLabel": "Last 30 days", "items": [EVENT], "total": 1, "animals": 1, "page": 1, "size": 25,
+                             "sort": "time", "dir": "desc"})
+        else:
+            self._send(404, {})
+
+
+@pytest.fixture
+def app_portal(monkeypatch):
+    server = ThreadingHTTPServer(("127.0.0.1", 0), AppBackend)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    monkeypatch.setattr(main, "BACKEND_BASE_URL", f"http://127.0.0.1:{server.server_port}/api/v1")
+    AppBackend.asked, AppBackend.farms, AppBackend.fail, AppBackend.health_rows = [], FARMS, False, [EVENT]
+    role = {"role": "SYSTEM_ADMIN"}
+    main.app.dependency_overrides[main.get_current_user] = lambda: {"username": "u", "token": "t", **role}
+    client = TestClient(main.app, follow_redirects=False)
+    client.as_role = lambda r: role.update(role=r)
+    client.asked = lambda path: [q for p, q in AppBackend.asked if p == "/api/v1" + path]
+    yield client
+    main.app.dependency_overrides.clear()
+    server.shutdown()
+
+
+def test_the_herd_list_asks_the_backend_with_every_filter_at_once(app_portal):
+    """Barn, then health 'under treatment', then 'at pasture': all three narrow the same list."""
+    r = app_portal.get("/htmx/herd-list?barn=BARN-DL-011&health=under_treatment&presence=out_pasture&q=VB&sort=animal&dir=asc")
+    assert r.status_code == 200
+    q = app_portal.asked("/cattle")[-1]
+    assert q["barnId"] == "BARN-DL-011" and q["health"] == "UNDER_TREATMENT" and q["presence"] == "OUT_PASTURE"
+    assert q["q"] == "VB" and q["sort"] == "animal" and q["dir"] == "asc"
+    assert "farmId" not in q and "tags" not in q and "vaccination" not in q and "passes" not in q          # a blank filter is not sent
+
+
+def test_the_herd_page_opens_already_filtered_and_shows_the_choices(app_portal):
+    r = app_portal.get("/herd?barn=BARN-DL-011&health=QUARANTINE&presence=OUT_PASTURE")
+    assert r.status_code == 200
+    q = app_portal.asked("/cattle")[-1]
+    assert q["barnId"] == "BARN-DL-011" and q["health"] == "QUARANTINE" and q["presence"] == "OUT_PASTURE"
+    html = r.text
+    assert re.search(r'<option value="BARN-DL-011" selected>', html) and re.search(r'<option value="QUARANTINE" selected>', html)
+    assert re.search(r'<option value="OUT_PASTURE" selected>', html)
+    assert 'hx-trigger="change"' in html and "/static/filters.js" in html
+    assert "Facility" in html                                                            # two facilities: the facility list is offered
+    assert "No cattle match these filters" in html                                        # the empty list says it is the filters, and how to undo them
+    assert "No cattle match these filters" not in app_portal.get("/herd").text            # without a filter it is the plain empty message
+
+
+def test_the_herd_filter_bar_leaves_out_the_facility_when_there_is_only_one(app_portal):
+    AppBackend.farms = ONE_FARM
+    html = app_portal.get("/herd").text
+    assert 'id="filter-farm"' not in html and 'id="filter-barn"' in html
+
+
+def test_the_herd_filters_offer_vaccination_tags_and_gate_passes(app_portal):
+    html = app_portal.get("/herd").text
+    for name in ("health", "presence", "tags", "vaccination", "passes"):
+        assert f'name="{name}"' in html
+
+
+def test_the_reader_list_asks_the_backend_with_every_filter_at_once(app_portal):
+    r = app_portal.get("/htmx/readers-list?barn=BARN-DL-011&direction=bidirectional&pairing=paired&activity=silent&passes=never_used&q=g1")
+    assert r.status_code == 200
+    q = app_portal.asked("/readers")[-1]
+    assert q["barnId"] == "BARN-DL-011" and q["direction"] == "BIDIRECTIONAL" and q["pairing"] == "PAIRED"
+    assert q["activity"] == "SILENT" and q["passes"] == "NEVER_USED" and q["q"] == "g1"
+
+
+def test_the_reader_page_shows_the_filter_bar(app_portal):
+    html = app_portal.get("/readers?pairing=single&activity=recent").text
+    assert 'id="reader-filters"' in html and re.search(r'<option value="SINGLE" selected>', html) and re.search(r'<option value="RECENT" selected>', html)
+
+
+def test_the_reports_page_lists_the_four_health_reports(app_portal):
+    html = app_portal.get("/reports").text
+    for kind in ("vaccinations", "treatments", "history", "quarantine"):
+        assert f'<option value="{kind}">' in html
+    assert 'name="record_type"' in html and 'name="current_status"' in html and 'name="presence"' in html
+    assert "type=quarantine" in html or "URLSearchParams" in html                        # a dashboard link opens the report chosen
+
+
+def test_the_quarantine_report_asks_for_status_not_for_a_period(app_portal):
+    r = app_portal.get("/htmx/report-data?type=quarantine&barn_id=BARN-DL-011&current_status=BOTH&presence=OUT_PASTURE&preset=today")
+    assert r.status_code == 200
+    q = app_portal.asked("/reports/health/quarantine")[-1]
+    assert q["barnId"] == "BARN-DL-011" and q["status"] == "BOTH" and q["presence"] == "OUT_PASTURE"
+    assert "preset" not in q and "from" not in q
+    html = r.text
+    assert "VB-0007" in html and "DL-BARN-011" in html and "6 days" in html and "At pasture" in html
+    assert "/reports/export?" in html and "type=quarantine" in html
+    assert re.search(r"In quarantine</span>\s*<div[^>]*>\s*1\s*</div>", html) and re.search(r"At pasture</span>\s*<div[^>]*>\s*1\s*</div>", html)
+
+
+@pytest.mark.parametrize("kind", ["vaccinations", "treatments", "history"])
+def test_a_health_report_sends_its_filters_and_shows_the_records(app_portal, kind):
+    r = app_portal.get(f"/htmx/report-data?type={kind}&animal=VB-0007&text=foot&outcome=QUARANTINE&record_type=TREATMENT&preset=30d")
+    assert r.status_code == 200
+    q = app_portal.asked(f"/reports/health/{kind}")[-1]
+    assert q["animal"] == "VB-0007" and q["text"] == "foot" and q["status"] == "QUARANTINE" and q["preset"] == "30d"
+    assert q.get("recordType", "") == ("TREATMENT" if kind == "history" else "")             # only the history report has a record type
+    html = r.text
+    assert "Foot rot" in html and "Penicillin" in html and "B-100" in html and "DL-BARN-011" in html and "vet.an" in html
+    assert "&lt;b&gt;isolate&lt;/b&gt;" in html and "<b>isolate</b>" not in html            # note text is never run
+    assert f"type={kind}" in html                                                           # CSV link
+    assert ("Next due" in html) == (kind == "vaccinations")
+    assert ("Record</th>" in html or ">Record<" in html) == (kind == "history")
+
+
+def test_the_health_report_csv_is_the_file_the_backend_builds(app_portal):
+    r = app_portal.get("/reports/export?type=treatments&barn_id=BARN-DL-011&text=foot&preset=30d")
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/csv")
+    assert 'filename="vinabeef_health.csv"' in r.headers["content-disposition"] and r.content.startswith(b"\xef\xbb\xbf")
+    q = app_portal.asked("/reports/health/treatments/export")[-1]
+    assert q["barnId"] == "BARN-DL-011" and q["text"] == "foot" and "sort" not in q and "page" not in q
+
+
+def test_a_barn_supervisor_cannot_open_the_health_reports(app_portal):
+    app_portal.as_role("BARN_SUPERVISOR")
+    assert app_portal.get("/htmx/report-data?type=history").status_code == 403
+    r = app_portal.get("/reports/export?type=history")                  # refused (403, or sent to sign in when there is no session)
+    assert r.status_code in (403, 303) and not r.content.startswith(b"\xef\xbb\xbf")
+    assert app_portal.asked("/reports/health/history") == [] and app_portal.asked("/reports/health/history/export") == []
+
+
+def test_the_dashboard_has_a_place_for_the_health_panel(app_portal):
+    html = app_portal.get("/").text
+    assert 'id="health-panel"' in html and 'hx-get="/htmx/health-panel?tab=auto"' in html
+
+
+def test_the_health_panel_opens_on_quarantine_and_shows_the_counters(app_portal):
+    r = app_portal.get("/htmx/health-panel?tab=auto")
+    assert r.status_code == 200
+    html = r.text
+    assert 'id="health-panel"' in html and 'hx-get="/htmx/health-panel?tab=now"' in html
+    assert "In quarantine now" in html and "Under treatment now" in html and "1 at pasture" in html
+    assert "VB-0007" in html and "DL-BARN-011" in html and "6 days" in html and "Foot rot" in html
+    assert 'href="/herd?health=UNDER_TREATMENT"' in html and 'href="/herd?health=QUARANTINE"' in html
+    assert "last 7 days" in html and "/reports?type=quarantine" in html
+    assert app_portal.asked("/health/quarantine")[-1]["status"] == "QUARANTINE"
+
+
+def test_the_health_panel_event_tabs_ask_for_their_kind(app_portal):
+    for tab, kind in (("vaccination", "VACCINATION"), ("treatment", "TREATMENT"), ("quarantine", "QUARANTINE"), ("all", "ALL")):
+        r = app_portal.get(f"/htmx/health-panel?tab={tab}")
+        assert r.status_code == 200 and "Foot rot" in r.text and "Record" in r.text
+        assert app_portal.asked("/health/events")[-1]["kind"] == kind
+    assert "&rarr; quarantine" in r.text                          # a record after which the animal went into quarantine says so
+    assert "&lt;b&gt;isolate&lt;/b&gt;" in r.text and "<b>isolate</b>" not in r.text
+
+
+def test_the_health_panel_opens_on_all_events_when_nothing_is_in_quarantine(app_portal, monkeypatch):
+    monkeypatch.setitem(SUMMARY["now"], "quarantineNow", 0)
+    app_portal.get("/htmx/health-panel?tab=auto")
+    assert app_portal.asked("/health/events")[-1]["kind"] == "ALL"
+
+
+def test_the_health_panel_shows_the_facility_only_to_people_who_see_several(app_portal):
+    assert "Facility" in app_portal.get("/htmx/health-panel?tab=all").text
+    app_portal.as_role("FARM_MANAGER")
+    html = app_portal.get("/htmx/health-panel?tab=all").text
+    assert "Facility" not in html and "/reports?type=history" in html
+    app_portal.as_role("BARN_SUPERVISOR")
+    html = app_portal.get("/htmx/health-panel?tab=all").text
+    assert "/reports?type=" not in html                           # a supervisor cannot open Reporting, so no link to it
+
+
+def test_a_health_panel_that_cannot_load_says_so_in_a_page_htmx_will_show(app_portal):
+    AppBackend.fail = True
+    r = app_portal.get("/htmx/health-panel?tab=all")
+    assert r.status_code == 200 and "Animal health could not be loaded" in r.text and 'id="health-panel"' in r.text   # still polls, so it recovers
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Update 13: a barn is shown by its code, never by its key
+# ---------------------------------------------------------------------------------------------------------------------
+DIST = [{"farmId": "FARM-1", "farmName": "Dak Lak", "barns": [
+    {"barnId": "BARN-DL-011", "code": "DL-BARN-011", "capacity": 250, "currentHeadcount": 3, "assignedAnimals": 4, "outPasture": 1,
+     "inCount": 0, "outCount": 0, "utilizationRate": 1.2, "vaccinatedAnimals": 2, "vaccinationRate": 50}]}]
+
+
+def test_the_dashboard_shows_the_barn_code_and_not_its_key(app_portal):
+    AppBackend.farms = DIST
+    html = app_portal.get("/htmx/barns").text
+    assert "DL-BARN-011" in html
+    assert "BARN-DL-011" not in html.replace('data-barn-id="BARN-DL-011"', "").replace('id="barn-row-FARM-1-BARN-DL-011"', "") \
+        .replace("/htmx/barns/BARN-DL-011/verify-return", ""), "the key is only in attributes the page uses, never as text"
+    assert "card-id-" not in html
+
+
+def test_the_return_check_names_the_barn_by_its_code(app_portal):
+    AppBackend.farms = DIST
+    r = app_portal.post("/htmx/barns/BARN-DL-011/verify-return")
+    assert r.status_code == 200 and "Return check for DL-BARN-011:" in r.text and "Return check for BARN-DL-011" not in r.text
+
+
+def test_a_supervisor_sees_the_codes_of_the_assigned_barns_in_the_header(app_portal):
+    """The login answer carries barn keys; the header shows what the rest of the portal shows, the codes."""
+    import asyncio
+    import httpx
+
+    async def codes(login):
+        async with httpx.AsyncClient() as client:
+            return await main.assigned_barn_codes(client, login)
+
+    AppBackend.farms = FARMS
+    assert asyncio.run(codes({"token": "t", "assignedBarns": ["BARN-DL-011", "BARN-DL-012"]})) == ["DL-BARN-011", "DL-BARN-012"]
+    assert asyncio.run(codes({"token": "t", "assignedBarns": ["BARN-GONE"]})) == ["BARN-GONE"]            # not found: keeps the key
+    assert asyncio.run(codes({"token": "t", "assignedBarns": []})) == [] and asyncio.run(codes({"assignedBarns": ["X"]})) == []
+    app_portal.as_role("BARN_SUPERVISOR")
+    main.app.dependency_overrides[main.get_current_user] = lambda: {
+        "username": "sup", "token": "t", "role": "BARN_SUPERVISOR", "assignedBarns": ["BARN-DL-011"], "assignedBarnCodes": ["DL-BARN-011"]}
+    html = app_portal.get("/").text
+    scope = re.search(r"Facility Scope:\s*<strong[^>]*>(.*?)</strong>", html, re.S).group(1).strip()
+    assert scope == "DL-BARN-011"

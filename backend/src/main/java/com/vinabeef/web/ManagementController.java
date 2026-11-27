@@ -33,7 +33,7 @@ public class ManagementController {
 
     /**
      * Approves an animal transfer.
-     * Enforces that the actor is a FARM_MANAGER assigned to the target farm[cite: 10, 40].
+     * Enforces that the actor is a FARM_MANAGER assigned to the target farm.
      */
     @PostMapping("/farms/{farmId}/transfers")
     @PreAuthorize("hasRole('FARM_MANAGER') and @securityService.isFarmAssigned(authentication, #farmId)")
@@ -51,7 +51,7 @@ public class ManagementController {
 
     /**
      * Reports on a specific farm's movement count and barn status.
-     * Accessible by EXECUTIVES (all farms) or FARM_MANAGERS assigned to this farm[cite: 10, 40].
+     * Accessible by EXECUTIVES (all farms) or FARM_MANAGERS assigned to this farm.
      */
     @GetMapping("/farms/{farmId}/report")
     @PreAuthorize("hasRole('EXECUTIVE') or (hasRole('FARM_MANAGER') and @securityService.isFarmAssigned(authentication, #farmId))")
@@ -76,7 +76,7 @@ public class ManagementController {
 
     /**
      * Cross-farm executive summary.
-     * Restricted to EXECUTIVE role[cite: 10, 40].
+     * Restricted to EXECUTIVE role.
      */
     @GetMapping("/executive/summary")
     @PreAuthorize("hasAnyRole('EXECUTIVE', 'SYSTEM_ADMIN')")

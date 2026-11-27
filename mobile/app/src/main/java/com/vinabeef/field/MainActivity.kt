@@ -130,7 +130,7 @@ class MainActivity : AppCompatActivity() {
 
         etServerUrl.setText(session.serverUrl)
         etUsername.setText(session.username)
-        etBarnId.setText(session.barnId)
+        etBarnId.setText(session.barnShown)
 
         spRecordType.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, RECORD_TYPES)
         spHealthStatus.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, HEALTH_STATUSES)
@@ -306,7 +306,7 @@ class MainActivity : AppCompatActivity() {
 
         tvAnimalCard.text = if (animal != null) {
             val flag = if (animal.healthStatus != "HEALTHY") "\nNOTE: this animal is ${animal.healthStatus}." else ""
-            "ANIMAL: ${animal.animalId}\nTAG: ${animal.tagEpc}\nBARN: ${animal.barnCode} (${animal.barnId})\n" +
+            "ANIMAL: ${animal.animalId}\nTAG: ${animal.tagEpc}\nBARN: ${animal.barnCode.ifBlank { animal.barnId }}\n" +
                     "BREED: ${animal.breed} | WEIGHT: ${animal.weightKg} kg | STATUS: ${animal.healthStatus}$flag"
         } else {
             "Tag $clean is not in the herd loaded on this phone. You can still save: the server checks the tag " +
@@ -436,13 +436,11 @@ class MainActivity : AppCompatActivity() {
                         // The server's spelling of the name is what the records are matched against.
                         session.username = json.optString("username", "").ifBlank { user }
                         session.token = token
-                        val assigned = json.optJSONArray("assignedBarns")
-                        if (session.barnId.isEmpty() && assigned != null && assigned.length() > 0) {
-                            session.barnId = assigned.getString(0)
-                        }
+                        // No barn key is filled in here: an empty box means "your barn" and the server answers with its
+                        // code, which is what the box and the header then show (the key is not for people to read).
                         runOnUiThread {
                             etPassword.setText("")
-                            etBarnId.setText(session.barnId)
+                            etBarnId.setText(session.barnShown)
                             syncNote = ""
                             updateSessionViews()
                             loadBarn()
@@ -475,7 +473,7 @@ class MainActivity : AppCompatActivity() {
         llSignIn.visibility = if (signedIn) View.GONE else View.VISIBLE
         llSession.visibility = if (signedIn) View.VISIBLE else View.GONE
         tvSession.text = if (signedIn) {
-            "Signed in as ${session.username} | Barn: ${session.barnId.ifEmpty { "your barn" }}"
+            "Signed in as ${session.username} | Barn: ${session.barnShown.ifEmpty { "your barn" }}"
         } else {
             "Not signed in - records can still be saved and are sent after you sign in"
         }
@@ -498,18 +496,31 @@ class MainActivity : AppCompatActivity() {
                 if (resp.code == 401 || resp.code == 403) {
                     note = expireSession(token)
                 } else if (resp.code !in 200..299) {
-                    note = "Could not load the barn (HTTP ${resp.code})."
+                    // 400 carries a sentence for the person (a barn code used by two facilities); other codes only a number
+                    val said = if (resp.code == 400) {
+                        try {
+                            JSONObject(resp.body).optString("error", "")
+                        } catch (e: Exception) {
+                            ""
+                        }
+                    } else {
+                        ""
+                    }
+                    note = said.ifBlank { "Could not load the barn (HTTP ${resp.code})." }
                 } else {
                     val json = JSONObject(resp.body)
                     val cattle = json.optJSONArray("cattle") ?: JSONArray()
                     val selected = json.optString("selectedBarnId", requested)
+                    val shown = json.optString("selectedBarnLabel", "").ifEmpty { selected }
                     if (cattle.length() == 0) {
-                        note = "The server returned no cattle for '$selected'. The herd on the phone was not changed."
+                        note = "The server returned no cattle for '$shown'. The herd on the phone was not changed."
                     } else {
                         db.replaceCachedCattle(cattle)
                         db.replaceProtocols(json.optJSONArray("protocols") ?: JSONArray())
                         db.replaceVaccinationHistory(json.optJSONArray("recentVaccinations") ?: JSONArray())
-                        session.barnId = if (requested.equals("ALL", ignoreCase = true)) "ALL" else selected
+                        val everyBarn = requested.equals("ALL", ignoreCase = true)
+                        session.barnId = if (everyBarn) "ALL" else selected
+                        session.barnLabel = if (everyBarn) "ALL" else shown
                         val total = json.optInt("cattleTotal", cattle.length())
                         note = if (json.optBoolean("cattleTruncated", false)) {
                             "Loaded the first ${cattle.length()} of $total cattle. Pick a single barn to get them all."
@@ -525,7 +536,7 @@ class MainActivity : AppCompatActivity() {
                 syncNote = note
                 protocols = db.getProtocols()
                 refreshProtocolSpinner()
-                etBarnId.setText(session.barnId)
+                etBarnId.setText(session.barnShown)
                 updateSessionViews()
                 refreshStatus()
             }

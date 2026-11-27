@@ -57,4 +57,17 @@ class ReportScopeKindTest {
         ReportQueries.scope(sql, new ArrayList<>(), ReportQueries.Scope.ALL, "b");
         assertEquals("", sql.toString());
     }
+
+    @Test
+    void aPersonWithoutAScopeSeesNothingNeverEverything() {
+        var none = java.util.List.<String>of();
+        assertEquals(ReportQueries.Scope.ALL, ReportQueries.Scope.of(new com.vinabeef.security.UserScope("a", "SYSTEM_ADMIN", null, none)));
+        assertEquals(ReportQueries.Scope.ALL, ReportQueries.Scope.of(new com.vinabeef.security.UserScope("e", "EXECUTIVE", null, none)));
+        assertEquals(ReportQueries.Scope.farm("F1"), ReportQueries.Scope.of(new com.vinabeef.security.UserScope("m", "FARM_MANAGER", "F1", none)));
+        assertTrue(ReportQueries.Scope.of(new com.vinabeef.security.UserScope("m", "FARM_MANAGER", null, none)).seesNothing());
+        assertTrue(ReportQueries.Scope.of(new com.vinabeef.security.UserScope("s", "BARN_SUPERVISOR", "F1", none)).seesNothing());
+        assertEquals(ReportQueries.Scope.barns(java.util.List.of("B1")),
+                ReportQueries.Scope.of(new com.vinabeef.security.UserScope("s", "BARN_SUPERVISOR", "F1", java.util.List.of("B1"))));
+        assertTrue(ReportQueries.Scope.of(new com.vinabeef.security.UserScope("x", "NONE", null, none)).seesNothing());
+    }
 }

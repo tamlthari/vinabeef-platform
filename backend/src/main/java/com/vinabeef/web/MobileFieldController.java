@@ -69,7 +69,8 @@ public class MobileFieldController {
 
     /**
      * Barn herd, RFID tags, protocols and recent vaccinations for offline use in the barn the user may access.
-     * {@code barnId} may be empty (first barn of the user), a barn id, or {@code ALL} (every barn of the user).
+     * {@code barnId} may be empty (first barn of the user), a barn code (what the web portal shows), a barn id (older phones),
+     * or {@code ALL} (every barn of the user); see {@link BarnLookup}. A code used by two facilities is answered with 400 and a message.
      */
     @GetMapping("/sync-bundle")
     @PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'FARM_MANAGER', 'BARN_SUPERVISOR')")
@@ -92,21 +93,17 @@ public class MobileFieldController {
             }
         }
 
-        String requested = barnId.trim();
+        BarnLookup.Result chosen = BarnLookup.resolve(barnId, barns);
+        if (chosen.kind() == BarnLookup.Kind.AMBIGUOUS) {
+            return ResponseEntity.badRequest().body(Map.of("error", chosen.message()));
+        }
         List<String> barnIds = new ArrayList<>();
-        String targetBarn;
-        if ("ALL".equalsIgnoreCase(requested)) {
-            targetBarn = "ALL";
+        String targetBarn = chosen.kind() == BarnLookup.Kind.NONE ? barnId.trim() : chosen.barnId();
+        String targetLabel = chosen.kind() == BarnLookup.Kind.NONE ? barnId.trim() : chosen.label();
+        if (chosen.kind() == BarnLookup.Kind.ALL) {
             barns.forEach(b -> barnIds.add(String.valueOf(b.get("barn_id"))));
-        } else {
-            targetBarn = requested;
-            if (targetBarn.isEmpty() && !barns.isEmpty()) {
-                targetBarn = String.valueOf(barns.get(0).get("barn_id"));
-            }
-            final String wanted = targetBarn;
-            if (barns.stream().anyMatch(b -> wanted.equals(String.valueOf(b.get("barn_id"))))) {
-                barnIds.add(targetBarn);
-            }
+        } else if (chosen.kind() == BarnLookup.Kind.FOUND) {
+            barnIds.add(targetBarn);
         }
 
         List<Map<String, Object>> cattle = List.of();
@@ -163,7 +160,8 @@ public class MobileFieldController {
 
         Map<String, Object> bundle = new LinkedHashMap<>();
         bundle.put("syncedAt", Instant.now().toString());
-        bundle.put("selectedBarnId", targetBarn);
+        bundle.put("selectedBarnId", targetBarn);          // the key (older phones read this one)
+        bundle.put("selectedBarnLabel", targetLabel);      // the name to show: the barn code
         bundle.put("barns", barns);
         bundle.put("cattle", cattle);
         bundle.put("cattleTotal", cattleTotal);

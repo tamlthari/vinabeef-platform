@@ -1,0 +1,44 @@
+{# Pieces of the filter bar above a list (Herd, Gate Readers). All the drop-downs of a bar sit in one form: a change in any
+   of them asks the server for the list again with every filter, so they narrow it together (barn, then health, then
+   presence...). static/filters.js links facility to barn, marks the chosen filters and clears them. #}
+
+{# One drop-down. `options` is a list of (value, text); the first one (value '') is "no filter". #}
+{% macro pick(name, label, options, selected='') -%}
+<div>
+    <label class="block text-[10px] font-semibold text-gray-500 mb-1" for="filter-{{ name }}">{{ label }}</label>
+    <select id="filter-{{ name }}" name="{{ name }}"
+            class="w-full border border-gray-300 rounded px-2.5 py-1.5 text-xs bg-white focus:outline-none focus:border-blue-500">
+        {% for value, text in options %}<option value="{{ value }}"{% if value == selected %} selected{% endif %}>{{ text }}</option>{% endfor %}
+    </select>
+</div>
+{%- endmacro %}
+
+{# Facility and barn. The facility list is left out when the person can see only one facility. The barn list holds the barns
+   of the chosen facility (all of them when none is chosen); a barn is named by its code, with its facility when several are shown. #}
+{% macro facility_barn(farms, farm_sel='', barn_sel='') -%}
+{% set many = farms | length > 1 %}
+{% if many %}
+{% set farm_opts = [('', 'All facilities')] %}
+{% for f in farms %}{% if farm_opts.append((f.farmId, f.farmName)) %}{% endif %}{% endfor %}
+{{ pick('farm', 'Facility', farm_opts, farm_sel) }}
+{% endif %}
+{% set all_barns = [] %}
+{% for f in farms %}{% for b in f.barns %}{% if all_barns.append([b.barnId, (b.code ~ ' - ' ~ f.farmName) if many else b.code, f.farmId]) %}{% endif %}{% endfor %}{% endfor %}
+<div>
+    <label class="block text-[10px] font-semibold text-gray-500 mb-1" for="filter-barn">Barn</label>
+    <select id="filter-barn" name="barn" data-all='{{ all_barns | tojson }}'
+            class="w-full border border-gray-300 rounded px-2.5 py-1.5 text-xs bg-white focus:outline-none focus:border-blue-500">
+        <option value="">All barns</option>
+        {% for b in all_barns %}{% if not farm_sel or b[2] == farm_sel %}<option value="{{ b[0] }}"{% if b[0] == barn_sel %} selected{% endif %}>{{ b[1] }}</option>{% endif %}{% endfor %}
+    </select>
+</div>
+{%- endmacro %}
+
+{# The strip at the end of a filter bar: how many filters are on, and a way to switch them all off. #}
+{% macro bar_end() -%}
+<div class="flex items-end gap-3 pb-1.5">
+    <span data-filter-count class="text-[11px] text-gray-400">No filters</span>
+    <button type="button" data-clear-filters
+            class="hidden text-[11px] font-semibold text-blue-700 hover:underline">Clear filters</button>
+</div>
+{%- endmacro %}

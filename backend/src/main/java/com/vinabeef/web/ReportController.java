@@ -210,17 +210,7 @@ public class ReportController {
     }
 
     private ReportQueries.Scope scope() {
-        var s = currentScope.getCurrentScope();
-        if (s.isGlobal()) {
-            return ReportQueries.Scope.ALL;
-        }
-        if (s.isFarmScoped()) {
-            return ReportQueries.Scope.farm(s.farmId());
-        }
-        if (s.isBarnScoped()) {
-            return ReportQueries.Scope.barns(s.barnIds());
-        }
-        return ReportQueries.Scope.NONE;
+        return ReportQueries.Scope.of(currentScope.getCurrentScope());
     }
 
     private List<Map<String, Object>> run(ReportQueries.Query q) {
